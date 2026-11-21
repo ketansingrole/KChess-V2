@@ -199,6 +199,13 @@ pub(crate) fn connection_lost(window: &mut Window, cx: &mut App) {
     });
 }
 
+/// One of the game's actions under the moves: they share the row, each at least wide enough
+/// for its label, and wrap evenly when the panel is narrow.
+fn action_button(id: &'static str) -> Button {
+    // gpui-lints: allow(unnamed_button) each caller gives it its label
+    Button::new(id).flex_1().min_w(px(120.))
+}
+
 /// An offer or a notice above the moves.
 fn offer(glyph: &'static str, text: String, buttons: Vec<AnyElement>, palette: &Palette) -> Div {
     h_flex()
@@ -736,12 +743,10 @@ impl OnlinePage {
         palette: &Palette,
     ) -> Div {
         let playing = online.phase == Phase::Playing;
-        let finished = online.phase == Phase::Finished;
         let moves = online.moves();
         let setup = online.setup();
         let ply = online.ply();
         let sans = view::sans(setup, &moves);
-        let opponent = model.online_opponent.clone();
         let reviewing = playing && !can_play(online);
         let variant_name = (!setup.variant.is_standard()).then(|| setup.variant.label());
         let rated = model.online_game_rated;
@@ -776,6 +781,91 @@ impl OnlinePage {
                 String::new(),
             ))
         };
+        let notices = self.notices(online, model, page, palette);
+        let select = move |ply: usize, _: &mut Window, cx: &mut App| {
+            crate::online::handle(cx).update(cx, |online, cx| online.view_ply(ply, cx));
+        };
+        let flip: widgets::ClickHandler = Box::new(move |_, _, cx| flip(cx));
+        let actions = self.actions(online, model, cx);
+        widgets::side_panel(palette)
+            .flex_1()
+            .min_w(PANEL_MIN)
+            .max_w(PANEL_MAX)
+            .child(
+                h_flex()
+                    .text_size(px(12.))
+                    .text_color(palette.text_muted)
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(format!(
+                        "{}{}",
+                        variant_name
+                            .map(|name| format!("{name} · "))
+                            .unwrap_or_default(),
+                        if rated { "Rated" } else { "Casual" }
+                    ))
+                    .child(div().flex_1())
+                    .child(widgets::view_toggles(cx)),
+            )
+            .children(banner.map(|(glyph, title, detail)| {
+                widgets::StatusBanner::new(Tone::Plain, icon(glyph), title.into())
+                    .announce()
+                    .when_some(
+                        (!detail.is_empty()).then(|| detail.into()),
+                        |banner, value| banner.detail(value),
+                    )
+                    .when(online.phase == Phase::Disconnected, |banner| {
+                        banner.extra(Self::connection_actions(online).into_any_element())
+                    })
+                    .when(reviewing, |banner| {
+                        let last = moves.len();
+                        banner.extra(widgets::back_to_game(move |_, _, cx| {
+                            crate::online::handle(cx)
+                                .update(cx, |online, cx| online.view_ply(last, cx));
+                        }))
+                    })
+            }))
+            .children(notices)
+            .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
+                "online-moves",
+                widgets::MoveSheet {
+                    sans: &sans,
+                    shown: ply,
+                    first: view::first_move(setup),
+                },
+                "No moves yet".into(),
+                select,
+                crate::notation::figurine(cx),
+                palette,
+            )))
+            .child(widgets::move_controls(
+                ply,
+                moves.len(),
+                select,
+                widgets::TurnButton::Flip(flip),
+                cx,
+            ))
+            .child(
+                div()
+                    .pt(px(14.))
+                    .border_t_1()
+                    .border_color(palette.border)
+                    .child(actions),
+            )
+    }
+
+    /// What waits on a player above the moves: a move to confirm, the first move's deadline, a
+    /// draw or takeback offered either way, a gone opponent's claim and a rematch offered.
+    fn notices(
+        &self,
+        online: &OnlineState,
+        model: &Model,
+        page: WeakEntity<OnlinePage>,
+        palette: &Palette,
+    ) -> Vec<AnyElement> {
+        let playing = online.phase == Phase::Playing;
+        let moves = online.moves();
+        let setup = online.setup();
+        let opponent = model.online_opponent.clone();
         let now = crate::online::now();
         let seconds_until = |at: Option<f64>| at.map(|at| ((at - now) / 1000.).ceil().max(0.));
         let first_move_in = seconds_until(model.first_move_by).filter(|_| playing);
@@ -970,24 +1060,26 @@ impl OnlinePage {
                 .into_any_element(),
             );
         }
-        let select = move |ply: usize, _: &mut Window, cx: &mut App| {
-            crate::online::handle(cx).update(cx, |online, cx| online.view_ply(ply, cx));
-        };
-        let flip: widgets::ClickHandler = Box::new(move |_, _, cx| flip(cx));
+        notices
+    }
+
+    /// The row under the moves: a live game's Berserk, Takeback, Offer draw and Resign or Abort;
+    /// a finished one's Rematch, New opponent, Analyse, Export, Tournament and New game. Sharing
+    /// the row equally, as the computer's do, wrapping evenly in a narrow panel.
+    fn actions(&self, online: &OnlineState, model: &Model, cx: &App) -> Div {
+        let playing = online.phase == Phase::Playing;
+        let finished = online.phase == Phase::Finished;
         let live = live_actions(online);
         let tournament = model.online_tournament.clone();
         let last_game = model.last_game.is_some();
-        // Sharing the row equally, as the computer's do, wrapping evenly in a narrow panel.
-        let actions = if playing {
+        if playing {
             h_flex()
                 .flex_wrap()
                 .justify_center()
                 .gap(px(8.))
                 .when(live.contains(&LiveAction::Berserk), |row| {
                     row.child(
-                        Button::new("online-berserk")
-                            .flex_1()
-                            .min_w(px(120.))
+                        action_button("online-berserk")
                             .warning()
                             .icon(icon("flame"))
                             .label("Berserk")
@@ -996,9 +1088,7 @@ impl OnlinePage {
                 })
                 .when(live.contains(&LiveAction::Takeback), |row| {
                     row.child(
-                        Button::new("online-takeback")
-                            .flex_1()
-                            .min_w(px(120.))
+                        action_button("online-takeback")
                             .outline()
                             .icon(icon("undo-2"))
                             .label("Takeback")
@@ -1007,9 +1097,7 @@ impl OnlinePage {
                 })
                 .when(live.contains(&LiveAction::OfferDraw), |row| {
                     row.child(
-                        Button::new("online-draw")
-                            .flex_1()
-                            .min_w(px(120.))
+                        action_button("online-draw")
                             .outline()
                             .icon(icon("handshake"))
                             .label("Offer draw")
@@ -1017,18 +1105,14 @@ impl OnlinePage {
                     )
                 })
                 .child(if live.contains(&LiveAction::Resign) {
-                    Button::new("online-resign")
-                        .flex_1()
-                        .min_w(px(120.))
+                    action_button("online-resign")
                         .outline()
                         .danger()
                         .icon(icon("flag"))
                         .label("Resign")
                         .on_click(|_, window, cx| ask_resign(window, cx))
                 } else {
-                    Button::new("online-abort")
-                        .flex_1()
-                        .min_w(px(120.))
+                    action_button("online-abort")
                         .outline()
                         .danger()
                         .icon(icon("ban"))
@@ -1037,9 +1121,7 @@ impl OnlinePage {
                 })
                 .when(online.correspondence(), |row| {
                     row.child(
-                        Button::new("online-close")
-                            .flex_1()
-                            .min_w(px(120.))
+                        action_button("online-close")
                             .ghost()
                             .icon(icon("x"))
                             .label("Close game")
@@ -1056,9 +1138,7 @@ impl OnlinePage {
                 .gap(px(8.))
                 .when(live.contains(&LiveAction::Rematch), |row| {
                     row.child(
-                        Button::new("online-rematch")
-                            .flex_1()
-                            .min_w(px(120.))
+                        action_button("online-rematch")
                             .primary()
                             .icon(icon("repeat"))
                             .label("Rematch")
@@ -1071,9 +1151,7 @@ impl OnlinePage {
                 })
                 .when(live.contains(&LiveAction::NewOpponent), |row| {
                     row.child(
-                        Button::new("online-new-opponent")
-                            .flex_1()
-                            .min_w(px(120.))
+                        action_button("online-new-opponent")
                             .outline()
                             .icon(icon("users"))
                             .label("New opponent")
@@ -1085,9 +1163,7 @@ impl OnlinePage {
                 })
                 .when(live.contains(&LiveAction::Analyse), |row| {
                     row.child(
-                        Button::new("online-analyse")
-                            .flex_1()
-                            .min_w(px(120.))
+                        action_button("online-analyse")
                             .outline()
                             .icon(icon("microscope"))
                             .label("Analyse")
@@ -1107,9 +1183,7 @@ impl OnlinePage {
                 .when(finished && !tournament.is_empty(), |row| {
                     let tournament = tournament.clone();
                     row.child(
-                        Button::new("online-tournament")
-                            .flex_1()
-                            .min_w(px(120.))
+                        action_button("online-tournament")
                             .outline()
                             .icon(icon("trophy"))
                             .label("Tournament")
@@ -1119,9 +1193,7 @@ impl OnlinePage {
                     )
                 })
                 .child(
-                    Button::new("online-new")
-                        .flex_1()
-                        .min_w(px(120.))
+                    action_button("online-new")
                         .when(last_game, |button| button.outline())
                         .when(!last_game, |button| button.primary())
                         .icon(icon("plus"))
@@ -1130,71 +1202,7 @@ impl OnlinePage {
                             crate::online::handle(cx).update(cx, |online, cx| online.stop(cx))
                         }),
                 )
-        };
-        widgets::side_panel(palette)
-            .flex_1()
-            .min_w(PANEL_MIN)
-            .max_w(PANEL_MAX)
-            .child(
-                h_flex()
-                    .text_size(px(12.))
-                    .text_color(palette.text_muted)
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(format!(
-                        "{}{}",
-                        variant_name
-                            .map(|name| format!("{name} · "))
-                            .unwrap_or_default(),
-                        if rated { "Rated" } else { "Casual" }
-                    ))
-                    .child(div().flex_1())
-                    .child(widgets::view_toggles(cx)),
-            )
-            .children(banner.map(|(glyph, title, detail)| {
-                widgets::StatusBanner::new(Tone::Plain, icon(glyph), title.into())
-                    .announce()
-                    .when_some(
-                        (!detail.is_empty()).then(|| detail.into()),
-                        |banner, value| banner.detail(value),
-                    )
-                    .when(online.phase == Phase::Disconnected, |banner| {
-                        banner.extra(Self::connection_actions(online).into_any_element())
-                    })
-                    .when(reviewing, |banner| {
-                        let last = moves.len();
-                        banner.extra(widgets::back_to_game(move |_, _, cx| {
-                            crate::online::handle(cx)
-                                .update(cx, |online, cx| online.view_ply(last, cx));
-                        }))
-                    })
-            }))
-            .children(notices)
-            .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
-                "online-moves",
-                widgets::MoveSheet {
-                    sans: &sans,
-                    shown: ply,
-                    first: view::first_move(setup),
-                },
-                "No moves yet".into(),
-                select,
-                crate::notation::figurine(cx),
-                palette,
-            )))
-            .child(widgets::move_controls(
-                ply,
-                moves.len(),
-                select,
-                widgets::TurnButton::Flip(flip),
-                cx,
-            ))
-            .child(
-                div()
-                    .pt(px(14.))
-                    .border_t_1()
-                    .border_color(palette.border)
-                    .child(actions),
-            )
+        }
     }
 
     fn game_export(&self, online: &OnlineState, model: &Model) -> PlayedGame {
