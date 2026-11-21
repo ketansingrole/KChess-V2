@@ -317,7 +317,7 @@ impl Render for CreateArena {
             ))
             .child(widgets::field(
                 "Description",
-                Textarea::new(&self.description),
+                Textarea::new(&self.description).aria_label("Description"),
                 None,
                 &palette,
             ))
