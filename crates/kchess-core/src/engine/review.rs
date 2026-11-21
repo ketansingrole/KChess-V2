@@ -1091,7 +1091,7 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
     if !job.variant.is_empty() {
         review.variant = Some(job.variant.clone());
     }
-    let target = open_engine(s, &settings.engine_path, &job.variant).await?;
+    let target = open_engine(s, &settings.engine_path, &job.variant, &job.cancelled).await?;
     if review.engine.as_deref() != Some(target.key.as_str()) {
         review.engine = Some(target.key.clone());
         review.complete = false;
@@ -1157,11 +1157,19 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
 }
 
 /// The review engine for `configured`, started or reused. A variant game (`variant`, a Lichess
-/// key) gets the bundled Fairy-Stockfish.
-async fn open_engine(s: &Arc<Shared>, configured: &str, variant: &str) -> Result<OpenEngine> {
+/// key) gets the bundled Fairy-Stockfish. Refused once `cancelled` (`EngineSlot::open`): a
+/// review stopped while the engine was being found closes it, and must not find it open again.
+async fn open_engine(
+    s: &Arc<Shared>,
+    configured: &str,
+    variant: &str,
+    cancelled: &AtomicBool,
+) -> Result<OpenEngine> {
     s.engine.keep();
     let located = s.engine.locate(configured, !variant.is_empty()).await?;
-    let engine = s.engine.open(&located)?;
+    let engine = s
+        .engine
+        .open(&located, || cancelled.load(Ordering::SeqCst))?;
     engine.uci.ready().await?;
     Ok(engine)
 }

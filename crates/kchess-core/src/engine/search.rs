@@ -362,7 +362,7 @@ async fn attempt(
         .await?;
     key.clone_from(&located.key);
     wanted()?;
-    let target = shared.warm.open(&located)?.uci;
+    let target = shared.warm.open(&located, || token.is_cancelled())?.uci;
     let profile = level_profile(&request.level)?;
     shared
         .ctx
