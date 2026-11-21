@@ -10,7 +10,7 @@ use tokio::task::AbortHandle;
 use super::status::{EngineStatus, engine_identity, engine_status, variant_engine_status};
 use super::uci::UciController;
 use super::{EngineContext, after, clear_timer, replace_timer};
-use crate::tasks::lock;
+use crate::tasks::{aborted, lock};
 use kchess_contracts::error::{CoreError, ErrorKind, Result};
 
 /// The message when no engine is configured or found.
@@ -75,8 +75,18 @@ impl EngineSlot {
 
     /// The open process when it runs the located engine and is healthy; otherwise the old one is
     /// closed and a new one started. Stops the idle countdown.
-    pub fn open(&self, located: &Located) -> Result<OpenEngine> {
+    ///
+    /// Refused (aborted) once `cancelled` says the work no longer wants it, asked under the
+    /// slot's lock: every stop cancels its work before it closes the slot, so it either finds
+    /// this engine open and closes it, or this open refuses. Asked before the lock, a client that
+    /// left between the work's check and its open had its slot closed with nothing in it, then a
+    /// new engine started and an idle countdown that outlived the client. `cancelled` takes no
+    /// lock that a stop holds while it closes the slot (`Search::stop_engine` holds its state's).
+    pub fn open(&self, located: &Located, cancelled: impl FnOnce() -> bool) -> Result<OpenEngine> {
         let mut state = lock(&self.state);
+        if cancelled() {
+            return Err(aborted());
+        }
         clear_timer(&mut state.idle);
         if let Some(engine) = &state.engine
             && engine.key == located.key
@@ -135,6 +145,15 @@ impl EngineSlot {
     }
 }
 
+/// A slot dropped while counting down (the analysis of a client that left, its last work
+/// ended) stops the countdown and its engine: the countdown's task would otherwise stay alive
+/// for `idle_after` holding nothing.
+impl Drop for EngineSlot {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,12 +186,32 @@ mod tests {
         EngineSlot::new(ctx, idle_after)
     }
 
-    async fn open(slot: &EngineSlot) {
-        let located = Located {
+    async fn located(slot: &EngineSlot) -> Located {
+        Located {
             status: engine_status(&QUIET, &slot.ctx.locations, "").await,
             key: "engine".into(),
-        };
-        slot.open(&located).unwrap();
+        }
+    }
+
+    async fn open(slot: &EngineSlot) {
+        slot.open(&located(slot).await, || false).unwrap();
+    }
+
+    fn alive_tasks() -> usize {
+        tokio::runtime::Handle::current()
+            .metrics()
+            .num_alive_tasks()
+    }
+
+    /// Waits up to 5 s for the runtime to have no more than `tasks` tasks alive.
+    async fn tasks_settle_to(tasks: usize) -> bool {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while alive_tasks() > tasks {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .is_ok()
     }
 
     fn engine_open(slot: &EngineSlot) -> bool {
@@ -217,5 +256,47 @@ mod tests {
             "the stopped engine is still the open one"
         );
         slot.close();
+    }
+
+    /// The failing sequence of `analysing_clients_leaving` (memory test, CI macOS 2026-11-21): an
+    /// analysis found its engine and saw it was still wanted; its client then left, which
+    /// cancelled it and closed the slot (with nothing in it yet); then the analysis opened the
+    /// slot. The open must refuse, so nothing is left open for the idle countdown to keep.
+    #[tokio::test]
+    async fn work_stopped_before_it_opens_the_engine_starts_none() {
+        let slot = slot(Duration::from_secs(60));
+        let located = located(&slot).await;
+        let stopped = std::sync::atomic::AtomicBool::new(false);
+        // The client leaves: its work is cancelled, then the slot closed.
+        stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+        slot.close();
+        let opened = slot.open(&located, || {
+            stopped.load(std::sync::atomic::Ordering::SeqCst)
+        });
+        assert!(
+            opened.is_err_and(|error| error.aborted),
+            "refused as aborted"
+        );
+        assert!(!engine_open(&slot), "no engine started after the close");
+        slot.release();
+        assert!(lock(&slot.state).idle.is_none(), "nothing to count down");
+    }
+
+    /// The forgotten client's slot is dropped while its idle countdown runs: the countdown's
+    /// task goes with it rather than staying alive for the idle time (the memory test's one task
+    /// left after 100 cycles).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_dropped_slot_leaves_no_task_counting_down() {
+        let before = alive_tasks();
+        let slot = slot(Duration::from_secs(60));
+        open(&slot).await;
+        slot.release();
+        assert!(lock(&slot.state).idle.is_some(), "counting down");
+        drop(slot);
+        assert!(
+            tasks_settle_to(before).await,
+            "{} tasks alive after the slot went, {before} before it",
+            alive_tasks()
+        );
     }
 }

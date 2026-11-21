@@ -506,7 +506,7 @@ async fn analyse(
     }
     let located = located?;
     lock(&session.progress).engine = located.key.clone();
-    let target = shared.engine.open(&located)?.uci;
+    let target = shared.engine.open(&located, || token.is_cancelled())?.uci;
     let white_to_move = kchess_domain::rules::fen_turn(&request.fen).is_white();
     shared
         .ctx
