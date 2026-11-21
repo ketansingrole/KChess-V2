@@ -6,41 +6,54 @@
 //! full level and nothing came out, yet both were heard at once while a muted video played, and
 //! while a script only reported "playing" to Windows. So while the default output is a Bluetooth
 //! one and no other app is playing media, a sound turns the signal on: KChess shows in Windows'
-//! media controls, with no buttons, until a few minutes pass without a sound.
+//! media controls until a few minutes pass without a sound.
+//!
+//! Windows passes the speaker the state of its current session only, and lists no session whose
+//! buttons are all off: with none on, a paused browser tab stayed current and the Echo stayed
+//! silent. So Pause is on, and pressing it (keyboard, flyout or speaker) makes KChess step aside,
+//! giving the media keys back to the app that had them.
 
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
+
+use cpal::traits::{DeviceTrait as _, HostTrait as _};
+use kchess_contracts::Level;
+use windows::Foundation::TypedEventHandler;
+use windows::Media::Control::{
+    GlobalSystemMediaTransportControlsSessionManager as Sessions,
+    GlobalSystemMediaTransportControlsSessionPlaybackStatus as SessionStatus,
+};
+use windows::Media::Playback::MediaPlayer;
+use windows::Media::{MediaPlaybackStatus, MediaPlaybackType, SystemMediaTransportControls};
+use windows::core::{HSTRING, Result};
 
 /// How long the signal stays on after the last sound: long enough for the moves of a game, so
 /// only the first sound after a pause waits for the speaker.
-pub(super) const IDLE: Duration = Duration::from_secs(180);
+const IDLE: Duration = Duration::from_secs(180);
 
 /// How long the first sound waits once the signal comes on, so the speaker has started to play.
-/// The Echo Show lost a click played as the signal came on and played one 200 ms later.
-pub(super) const OPENING: Duration = Duration::from_millis(400);
+/// The Echo Show played a click sent as the signal came on, in both of two tries; this is margin.
+const OPENING: Duration = Duration::from_millis(100);
 
-/// What the signal does next. Pure, so the tests can drive it on every platform.
+/// What the signal does next. Pure, so the tests drive it without Windows' media controls.
 #[derive(Debug, Default)]
-pub(super) struct Signal {
+struct Signal {
     /// The last sound while the signal is on; `None` while it is off.
     last_sound: Option<Instant>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum Step {
+enum Step {
     Keep,
     TurnOn,
     TurnOff,
 }
 
-#[cfg_attr(
-    not(windows),
-    expect(dead_code, reason = "only Windows' sound thread drives the signal")
-)]
 impl Signal {
     /// A sound is about to play. `bluetooth`: the default output is a Bluetooth one.
     /// `others_playing` is asked only when the signal would come on: another app playing media has
     /// already told the speaker, and keeps Windows' media keys.
-    pub(super) fn sound(
+    fn sound(
         &mut self,
         now: Instant,
         bluetooth: bool,
@@ -64,13 +77,23 @@ impl Signal {
         }
     }
 
+    /// Pause was pressed while KChess was Windows' current session: whoever pressed it meant
+    /// other media, so the signal goes off and the keys reach that app again.
+    fn pressed(&mut self) -> Step {
+        if self.last_sound.take().is_some() {
+            Step::TurnOff
+        } else {
+            Step::Keep
+        }
+    }
+
     /// When the signal goes off if no sound comes first.
-    pub(super) fn deadline(&self) -> Option<Instant> {
+    fn deadline(&self) -> Option<Instant> {
         self.last_sound.map(|last| last + IDLE)
     }
 
     /// Time passed: off once [`IDLE`] has gone by without a sound.
-    pub(super) fn tick(&mut self, now: Instant) -> Step {
+    fn tick(&mut self, now: Instant) -> Step {
         if self.deadline().is_some_and(|deadline| now >= deadline) {
             self.last_sound = None;
             return Step::TurnOff;
@@ -81,209 +104,217 @@ impl Signal {
 
 /// The key under Windows' audio endpoints for an output's endpoint id (`{0.0.0.00000000}.{guid}`,
 /// as cpal's `DeviceId::id` gives it): its last braced part.
-#[cfg_attr(
-    not(windows),
-    expect(dead_code, reason = "only Windows' endpoint ids are read")
-)]
-pub(super) fn endpoint_key(endpoint: &str) -> Option<&str> {
+fn endpoint_key(endpoint: &str) -> Option<&str> {
     let start = endpoint.rfind('{')?;
     let key = &endpoint[start..];
     (key.len() > 2 && key.ends_with('}')).then_some(key)
 }
 
-#[cfg(windows)]
-pub(super) use windows_signal::{Playing, default_is_bluetooth};
-
-#[cfg(windows)]
-mod windows_signal {
-    use std::sync::mpsc;
-    use std::time::{Duration, Instant};
-
-    use cpal::traits::{DeviceTrait as _, HostTrait as _};
-    use kchess_contracts::Level;
-    use windows::Media::Control::{
-        GlobalSystemMediaTransportControlsSessionManager as Sessions,
-        GlobalSystemMediaTransportControlsSessionPlaybackStatus as SessionStatus,
+/// Whether Windows' default output is a Bluetooth one: its endpoint's enumerator, as Windows
+/// records it, is `BTHENUM` (a wired or HDMI output's is `HDAUDIO` or `USB`).
+pub(super) fn default_is_bluetooth() -> bool {
+    const ENUMERATOR: &str = "{a45c254e-df1c-4efd-8020-67d146a850e0},24";
+    let Some(device) = cpal::default_host().default_output_device() else {
+        return false;
     };
-    use windows::Media::Playback::MediaPlayer;
-    use windows::Media::{MediaPlaybackStatus, MediaPlaybackType, SystemMediaTransportControls};
-    use windows::core::{HSTRING, Result};
+    let Ok(id) = device.id() else {
+        return false;
+    };
+    let Some(key) = endpoint_key(id.id()) else {
+        return false;
+    };
+    windows_registry::LOCAL_MACHINE
+        .open(format!(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{key}\Properties"
+        ))
+        .and_then(|properties| properties.get_string(ENUMERATOR))
+        .is_ok_and(|enumerator| enumerator.eq_ignore_ascii_case("BTHENUM"))
+}
 
-    use super::{OPENING, Signal, Step, endpoint_key};
+enum Message {
+    /// A sound is about to play; the answer is how long it waits.
+    Sound {
+        bluetooth: bool,
+        reply: mpsc::Sender<Duration>,
+    },
+    /// Pause was pressed in Windows' media controls.
+    Pressed,
+}
 
-    /// Whether Windows' default output is a Bluetooth one: its endpoint's enumerator, as Windows
-    /// records it, is `BTHENUM` (a wired or HDMI output's is `HDAUDIO` or `USB`).
-    pub(in crate::sound) fn default_is_bluetooth() -> bool {
-        const ENUMERATOR: &str = "{a45c254e-df1c-4efd-8020-67d146a850e0},24";
-        let Some(device) = cpal::default_host().default_output_device() else {
-            return false;
+/// The thread that owns KChess's media session, away from the COM apartment cpal sets up on the
+/// sound thread; the sound thread asks it before each sound.
+pub(super) struct Playing(mpsc::Sender<Message>);
+
+impl Playing {
+    pub(super) fn start() -> std::io::Result<Self> {
+        let (sender, queue) = mpsc::channel();
+        let presses = sender.clone();
+        std::thread::Builder::new()
+            .name("kchess-playing".into())
+            .spawn(move || run(&queue, presses))?;
+        Ok(Self(sender))
+    }
+
+    /// A sound is about to play: how long it waits for the speaker (only when the signal has
+    /// just come on). Never longer than [`OPENING`], whatever the thread does.
+    pub(super) fn before_sound(&self, bluetooth: bool) -> Duration {
+        let (reply, answer) = mpsc::channel();
+        if self.0.send(Message::Sound { bluetooth, reply }).is_err() {
+            return Duration::ZERO;
+        }
+        answer
+            .recv_timeout(OPENING * 5)
+            .unwrap_or(Duration::ZERO)
+            .min(OPENING)
+    }
+}
+
+fn run(queue: &mpsc::Receiver<Message>, presses: mpsc::Sender<Message>) {
+    let mut signal = Signal::default();
+    let mut session = Session::new(presses);
+    loop {
+        let next = match signal.deadline() {
+            Some(deadline) => {
+                queue.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            }
+            None => queue
+                .recv()
+                .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
         };
-        let Ok(id) = device.id() else {
-            return false;
+        match next {
+            Ok(Message::Sound { bluetooth, reply }) => {
+                let step = signal.sound(Instant::now(), bluetooth, || session.others_playing());
+                let wait = if session.apply(&step) && step == Step::TurnOn {
+                    OPENING
+                } else {
+                    Duration::ZERO
+                };
+                // The sound thread stopped waiting: the sound plays without the pause.
+                reply.send(wait).ok();
+            }
+            Ok(Message::Pressed) => {
+                let step = signal.pressed();
+                session.apply(&step);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let step = signal.tick(Instant::now());
+                session.apply(&step);
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
+
+/// KChess's entry in Windows' media controls: made at the first time it is needed, so nobody
+/// whose output is not Bluetooth ever gets one.
+struct Session {
+    controls: Option<(MediaPlayer, SystemMediaTransportControls)>,
+    /// Where a press of Pause goes: the thread's own queue.
+    presses: mpsc::Sender<Message>,
+    /// A failure since the last success; said once.
+    failed: bool,
+}
+
+impl Session {
+    fn new(presses: mpsc::Sender<Message>) -> Self {
+        Self {
+            controls: None,
+            presses,
+            failed: false,
+        }
+    }
+
+    /// Carries out a step; `true` when the signal is as the step wants it.
+    fn apply(&mut self, step: &Step) -> bool {
+        let done = match step {
+            Step::Keep => return true,
+            Step::TurnOn => self.controls().and_then(|controls| {
+                controls.SetIsEnabled(true)?;
+                controls.SetPlaybackStatus(MediaPlaybackStatus::Playing)
+            }),
+            Step::TurnOff => match &self.controls {
+                Some((_, controls)) => controls
+                    .SetPlaybackStatus(MediaPlaybackStatus::Stopped)
+                    .and_then(|()| controls.SetIsEnabled(false)),
+                None => Ok(()),
+            },
         };
-        let Some(key) = endpoint_key(id.id()) else {
-            return false;
-        };
-        windows_registry::LOCAL_MACHINE
-            .open(format!(
-                r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{key}\Properties"
-            ))
-            .and_then(|properties| properties.get_string(ENUMERATOR))
-            .is_ok_and(|enumerator| enumerator.eq_ignore_ascii_case("BTHENUM"))
+        self.said(
+            done,
+            "Windows' media controls refused KChess's playing state",
+        )
     }
 
-    /// The thread that owns KChess's media session; the sound thread asks it before each sound.
-    pub(in crate::sound) struct Playing(mpsc::Sender<(bool, mpsc::Sender<Duration>)>);
-
-    impl Playing {
-        pub(in crate::sound) fn start() -> std::io::Result<Self> {
-            let (sender, queue) = mpsc::channel();
-            std::thread::Builder::new()
-                .name("kchess-playing".into())
-                .spawn(move || run(&queue))?;
-            Ok(Self(sender))
+    fn controls(&mut self) -> Result<SystemMediaTransportControls> {
+        if let Some((_, controls)) = &self.controls {
+            return Ok(controls.clone());
         }
-
-        /// A sound is about to play: how long it waits for the speaker (only when the signal has
-        /// just come on). Never longer than [`OPENING`] and a little more, whatever the thread does.
-        pub(in crate::sound) fn before_sound(&self, bluetooth: bool) -> Duration {
-            let (reply, answer) = mpsc::channel();
-            if self.0.send((bluetooth, reply)).is_err() {
-                return Duration::ZERO;
-            }
-            answer
-                .recv_timeout(OPENING * 2)
-                .unwrap_or(Duration::ZERO)
-                .min(OPENING)
+        let player = MediaPlayer::new()?;
+        // KChess plays nothing through the player: its own commands would answer the buttons.
+        player.CommandManager()?.SetIsEnabled(false)?;
+        let controls = player.SystemMediaTransportControls()?;
+        for enable in [
+            SystemMediaTransportControls::SetIsPlayEnabled,
+            SystemMediaTransportControls::SetIsStopEnabled,
+            SystemMediaTransportControls::SetIsNextEnabled,
+            SystemMediaTransportControls::SetIsPreviousEnabled,
+        ] {
+            enable(&controls, false)?;
         }
+        // Windows lists no session without a button, and a session it does not list never tells
+        // the speaker it is playing.
+        controls.SetIsPauseEnabled(true)?;
+        let presses = self.presses.clone();
+        controls.ButtonPressed(&TypedEventHandler::new(move |_, _| {
+            // The thread ended with the app: nothing left to step aside.
+            presses.send(Message::Pressed).ok();
+            Ok(())
+        }))?;
+        let display = controls.DisplayUpdater()?;
+        display.SetType(MediaPlaybackType::Music)?;
+        display
+            .MusicProperties()?
+            .SetTitle(&HSTRING::from("KChess"))?;
+        display.Update()?;
+        self.controls = Some((player, controls.clone()));
+        Ok(controls)
     }
 
-    fn run(queue: &mpsc::Receiver<(bool, mpsc::Sender<Duration>)>) {
-        let mut signal = Signal::default();
-        let mut session = Session::default();
-        loop {
-            let next = match signal.deadline() {
-                Some(deadline) => {
-                    queue.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                }
-                None => queue
-                    .recv()
-                    .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
-            };
-            match next {
-                Ok((bluetooth, reply)) => {
-                    let step = signal.sound(Instant::now(), bluetooth, || session.others_playing());
-                    let wait = if session.apply(&step) && step == Step::TurnOn {
-                        OPENING
-                    } else {
-                        Duration::ZERO
-                    };
-                    // The sound thread stopped waiting: the sound plays without the pause.
-                    reply.send(wait).ok();
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    let step = signal.tick(Instant::now());
-                    session.apply(&step);
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            }
-        }
-    }
-
-    /// KChess's entry in Windows' media controls: made at the first time it is needed, so nobody
-    /// whose output is not Bluetooth ever gets one.
-    #[derive(Default)]
-    struct Session {
-        controls: Option<(MediaPlayer, SystemMediaTransportControls)>,
-        /// A failure since the last success; said once.
-        failed: bool,
-    }
-
-    impl Session {
-        /// Carries out a step; `true` when the signal is as the step wants it.
-        fn apply(&mut self, step: &Step) -> bool {
-            let done = match step {
-                Step::Keep => return true,
-                Step::TurnOn => self.controls().and_then(|controls| {
-                    controls.SetIsEnabled(true)?;
-                    controls.SetPlaybackStatus(MediaPlaybackStatus::Playing)
-                }),
-                Step::TurnOff => match &self.controls {
-                    Some((_, controls)) => controls
-                        .SetPlaybackStatus(MediaPlaybackStatus::Stopped)
-                        .and_then(|()| controls.SetIsEnabled(false)),
-                    None => Ok(()),
-                },
-            };
-            self.said(
-                done,
-                "Windows' media controls refused KChess's playing state",
-            )
-        }
-
-        fn controls(&mut self) -> Result<SystemMediaTransportControls> {
-            if let Some((_, controls)) = &self.controls {
-                return Ok(controls.clone());
-            }
-            let player = MediaPlayer::new()?;
-            // KChess plays nothing through the player: its own commands would answer the buttons.
-            player.CommandManager()?.SetIsEnabled(false)?;
-            let controls = player.SystemMediaTransportControls()?;
-            for enable in [
-                SystemMediaTransportControls::SetIsPlayEnabled,
-                SystemMediaTransportControls::SetIsPauseEnabled,
-                SystemMediaTransportControls::SetIsStopEnabled,
-                SystemMediaTransportControls::SetIsNextEnabled,
-                SystemMediaTransportControls::SetIsPreviousEnabled,
-            ] {
-                enable(&controls, false)?;
-            }
-            let display = controls.DisplayUpdater()?;
-            display.SetType(MediaPlaybackType::Music)?;
-            display
-                .MusicProperties()?
-                .SetTitle(&HSTRING::from("KChess"))?;
-            display.Update()?;
-            self.controls = Some((player, controls.clone()));
-            Ok(controls)
-        }
-
-        /// Whether another app is playing media now. Unknown counts as no: the signal then comes
-        /// on beside it, which only costs KChess an entry in the media controls.
-        fn others_playing(&mut self) -> bool {
-            let playing = Sessions::RequestAsync()
-                .and_then(|request| request.join())
-                .and_then(|sessions| sessions.GetSessions())
-                .and_then(|sessions| {
-                    for index in 0..sessions.Size()? {
-                        let status = sessions.GetAt(index)?.GetPlaybackInfo()?.PlaybackStatus()?;
-                        if status == SessionStatus::Playing {
-                            return Ok(true);
-                        }
+    /// Whether another app is playing media now. Unknown counts as no: the signal then comes
+    /// on beside it, which only costs KChess an entry in the media controls.
+    fn others_playing(&mut self) -> bool {
+        let playing = Sessions::RequestAsync()
+            .and_then(|request| request.join())
+            .and_then(|sessions| sessions.GetSessions())
+            .and_then(|sessions| {
+                for index in 0..sessions.Size()? {
+                    let status = sessions.GetAt(index)?.GetPlaybackInfo()?.PlaybackStatus()?;
+                    if status == SessionStatus::Playing {
+                        return Ok(true);
                     }
-                    Ok(false)
-                });
-            let known = playing.as_ref().copied().unwrap_or(false);
-            self.said(
-                playing.map(|_| ()),
-                "Windows' media sessions could not be read",
-            );
-            known
-        }
+                }
+                Ok(false)
+            });
+        let known = playing.as_ref().copied().unwrap_or(false);
+        self.said(
+            playing.map(|_| ()),
+            "Windows' media sessions could not be read",
+        );
+        known
+    }
 
-        fn said(&mut self, done: Result<()>, what: &str) -> bool {
-            match done {
-                Ok(()) => {
-                    self.failed = false;
-                    true
+    fn said(&mut self, done: Result<()>, what: &str) -> bool {
+        match done {
+            Ok(()) => {
+                self.failed = false;
+                true
+            }
+            Err(cause) => {
+                if !self.failed {
+                    self.failed = true;
+                    crate::log::write(Level::Warn, "sound", &format!("{what}: {cause}"));
                 }
-                Err(cause) => {
-                    if !self.failed {
-                        self.failed = true;
-                        crate::log::write(Level::Warn, "sound", &format!("{what}: {cause}"));
-                    }
-                    false
-                }
+                false
             }
         }
     }
@@ -318,6 +349,20 @@ mod tests {
         let mut signal = Signal::default();
         assert_eq!(signal.sound(Instant::now(), true, || true), Step::Keep);
         assert_eq!(signal.deadline(), None);
+    }
+
+    /// Pause pressed to resume a paused video reached KChess, Windows' current session: KChess
+    /// steps aside so the next press reaches the video; a press with the signal off does nothing.
+    #[test]
+    fn pause_pressed_turns_the_signal_off() {
+        let now = Instant::now();
+        let mut signal = Signal::default();
+        assert_eq!(signal.pressed(), Step::Keep);
+        assert_eq!(signal.sound(now, true, || false), Step::TurnOn);
+        assert_eq!(signal.pressed(), Step::TurnOff);
+        assert_eq!(signal.deadline(), None);
+        // The video now plays: the next move leaves it the keys.
+        assert_eq!(signal.sound(now, true, || true), Step::Keep);
     }
 
     /// Wired speakers and headphones play everything: no entry in the media controls for them,

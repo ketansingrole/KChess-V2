@@ -3,6 +3,7 @@
 //! output device, opened at the first sound and again after its stream ends, and decodes each
 //! clip once. On Windows it also tells a Bluetooth speaker that KChess is playing (`playing`).
 
+#[cfg(windows)]
 mod playing;
 
 use std::collections::HashMap;
