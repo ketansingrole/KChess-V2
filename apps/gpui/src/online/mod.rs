@@ -16,11 +16,11 @@ use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use kchess_app::log::ResultExt as _;
 use kchess_contracts::check::{GameId, PresenceUsers, Uci, Username, Validate};
 use kchess_contracts::types::{Assistance, Lane, OnlineConnection, OnlinePhase};
+use kchess_contracts::types::{ChallengeColor, OnlineAction, OnlineOptions};
 use kchess_contracts::types::{
     ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, LobbyState, NotificationKind,
     OngoingGame, PresenceReport,
 };
-use kchess_contracts::types::{OnlineAction, OnlineOptions};
 use kchess_contracts::{CoreError, ErrorKind, Level};
 use kchess_domain::online_game::model::{
     Call, ChatEntry, Ctx, Effect, GamePhase, Model, Op, Outcome, Rematch, Reply, View,
@@ -60,8 +60,7 @@ pub struct Form {
     pub minutes: f64,
     pub increment: f64,
     pub target: String,
-    /// `random`, `white` or `black`.
-    pub color: String,
+    pub color: ChallengeColor,
     pub rated: bool,
     pub variant: Variant,
     pub correspondence: bool,
@@ -74,7 +73,7 @@ impl Default for Form {
             minutes: 15.,
             increment: 10.,
             target: String::new(),
-            color: "random".into(),
+            color: ChallengeColor::Random,
             rated: false,
             variant: Variant::Standard,
             correspondence: false,
@@ -512,7 +511,7 @@ impl OnlineState {
         form.minutes = minutes;
         form.increment = increment;
         form.rated = rated;
-        form.color = "random".into();
+        form.color = ChallengeColor::Random;
         form.target.clear();
         form.correspondence = false;
         self.start(None, cx);
@@ -608,7 +607,7 @@ impl OnlineState {
             minutes: options.minutes?,
             increment: options.increment.unwrap_or_default(),
             target: String::new(),
-            color: "random".into(),
+            color: ChallengeColor::Random,
             rated: options.rated,
             variant: options.variant.unwrap_or_default(),
             correspondence: false,

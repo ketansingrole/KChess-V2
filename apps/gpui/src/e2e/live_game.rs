@@ -523,6 +523,21 @@ fn a_seek_is_cancelled_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
+/// The colour picked in the form is the one the seek asks Lichess for.
+#[gpui_kit::test]
+fn a_seek_asks_for_the_colour_picked(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = Harness::signed_in(cx, false);
+    app.open("Play on Lichess");
+    app.click(("online-color", 2usize));
+    assert_eq!(app.find(("online-color", 2usize)).selected(), Some(true));
+    app.click("online-start");
+    app.wait_for("a seek as Black", |_, _| {
+        writes(&lichess).iter().any(|write| {
+            write.starts_with("POST /api/board/seek") && write.ends_with("&color=black")
+        })
+    });
+}
+
 /// Settling lets the core's threads run while a call is unanswered, but does not wait for every
 /// answer: a page may hold a call open on purpose, as this check does while Lichess holds it, and
 /// waiting for it waited out the whole timeout.
