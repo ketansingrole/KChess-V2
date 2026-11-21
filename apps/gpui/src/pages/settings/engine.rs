@@ -19,6 +19,13 @@ use crate::reviews::ReviewHandle;
 use crate::theme::Palette;
 use crate::widgets::{self, Look};
 
+/// Which games are reviewed automatically.
+const REVIEW_AUTO: [(ReviewAuto, &str); 3] = [
+    (ReviewAuto::Off, "Off"),
+    (ReviewAuto::Recent, "Last 30 days"),
+    (ReviewAuto::All, "All"),
+];
+
 /// Which Stockfish is in use.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Source {
@@ -331,7 +338,7 @@ impl SettingsPage {
                 .child(controls)
                 .into_any_element()
         } else {
-            crate::widgets::setting_row(head.min_w(px(200.)), controls).into_any_element()
+            crate::widgets::resettable_row(head.min_w(px(200.)), controls, None).into_any_element()
         }
     }
 
@@ -442,6 +449,7 @@ impl SettingsPage {
                 "Choose an available engine below".into()
             }),
             h_flex().child(status_badge),
+            None,
             palette,
         );
         rows.rows.push(self.engine_option(
@@ -478,15 +486,14 @@ impl SettingsPage {
                 Some("Runs in the background after syncing".into()),
                 choice(
                     "review-auto",
-                    &[
-                        (ReviewAuto::Off, "Off", None),
-                        (ReviewAuto::Recent, "Last 30 days", None),
-                        (ReviewAuto::All, "All", None),
-                    ],
+                    &super::items(&REVIEW_AUTO),
                     auto,
                     |s, value| s.core.review_auto = value,
                     palette,
                 ),
+                Some(super::defaults::Reset::new("reviewAuto", settings, |d| {
+                    super::name_of(&REVIEW_AUTO, d.core.review_auto)
+                })),
                 palette,
             )
             .switch("review-battery", settings, auto != ReviewAuto::Off, palette);
