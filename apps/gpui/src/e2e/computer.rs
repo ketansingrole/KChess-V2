@@ -195,6 +195,39 @@ fn resigning_asks_first_then_ends_the_game(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.shows("resign"), "a finished game cannot be resigned");
 }
 
+/// The game's commands said aloud: “take back” takes your move back, and “resign” asks first,
+/// as its button does, then ends the game on “confirm”.
+#[gpui_kit::test]
+fn commands_said_aloud_take_back_and_resign(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::computer::ComputerPage;
+    let mut app = computer(cx);
+    let page = app.with_window(|_, cx| crate::shell::view::<ComputerPage>(cx).expect("the page"));
+    let say = |app: &mut Harness, text: &str| {
+        app.with_window(|window, cx| {
+            page.update(cx, |page, cx| page.hear_for_test(text, window, cx))
+        });
+    };
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.wait_for_moves(&["e4"]);
+    say(&mut app, "take back");
+    app.wait_for_moves(&[]);
+
+    app.click_square("d2", true);
+    app.click_square("d4", true);
+    app.wait_for_moves(&["d4"]);
+    say(&mut app, "resign");
+    app.find("cancel");
+    say(&mut app, "cancel");
+    app.wait_gone("cancel");
+    assert!(app.shows("resign"), "cancelling kept the game going");
+    say(&mut app, "resign");
+    app.find("cancel");
+    say(&mut app, "confirm");
+    app.wait_gone("resign");
+    assert!(!app.status().is_empty(), "the result is shown");
+}
+
 #[gpui_kit::test]
 fn new_game_asks_first_then_clears_the_board(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);

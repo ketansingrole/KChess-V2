@@ -41,6 +41,30 @@ impl ComputerPage {
         }
     }
 
+    /// `text` said clearly, with voice on: as the recognizer's phrase reaches the page.
+    #[cfg(test)]
+    pub(crate) fn hear_for_test(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.voice.control.enabled = true;
+        let heard = crate::voice::Heard {
+            text: text.into(),
+            raw: text.into(),
+            confidence: 1.,
+            words: Vec::new(),
+            unclear: false,
+        };
+        let owner = self.voice.control.owner;
+        self.voice_heard(
+            &crate::voice::VoiceEvent::Heard { owner, heard },
+            window,
+            cx,
+        );
+    }
+
     pub(super) fn voice_heard(
         &mut self,
         event: &crate::voice::VoiceEvent,
@@ -102,9 +126,9 @@ impl ComputerPage {
                         },
                     });
                 }
-                let command = kchess_domain::voice::game_command(text)?;
-                let (said, question, feedback) = match command {
-                    "takeback" => {
+                use kchess_domain::voice::GameCommand;
+                let (said, question, feedback) = match kchess_domain::voice::game_command(text)? {
+                    GameCommand::Takeback => {
                         run = Some(Box::new(|this, _, cx| {
                             if this.can_takeback() {
                                 this.takeback(cx);
@@ -112,22 +136,21 @@ impl ComputerPage {
                         }));
                         ("take back", None, "Took back your last move")
                     }
-                    "newGame" => (
+                    GameCommand::NewGame => (
                         "new game",
                         Some(Question::NewGame),
                         "Start a new game? Say “confirm” or “cancel”.",
                     ),
-                    "resign" => (
+                    GameCommand::Resign => (
                         "resign",
                         Some(Question::Resign),
                         "Resign this game? Say “confirm” or “cancel”.",
                     ),
-                    "flip" => (
+                    GameCommand::Flip => (
                         "switch sides",
                         Some(Question::SwitchSides),
                         "Switch sides and restart? Say “confirm” or “cancel”.",
                     ),
-                    _ => return None,
                 };
                 if let Some(question) = question {
                     run = Some(Box::new(move |this, window, cx| {

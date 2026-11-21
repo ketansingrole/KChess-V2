@@ -17,7 +17,9 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         "EDITOR_GRAMMAR" => grammar(Grammar::Editor),
         "ANALYSIS_GRAMMAR" => grammar(Grammar::Analysis),
         "ALL_SQUARES" => Ok(json!(kchess_domain::squares::all_squares())),
-        "spokenCommand" => text(args, 0).map(|t| json!(voice::game_command(t))),
+        "spokenCommand" => {
+            text(args, 0).map(|t| json!(voice::game_command(t).map(voice::GameCommand::as_str)))
+        }
         "spokenChoice" => text(args, 0).map(|t| json!(voice::spoken_choice(t))),
         "spokenSquare" => text(args, 0).map(|t| json!(voice::spoken_square(t))),
         "spokenMove" => spoken_move(args),
@@ -27,7 +29,8 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
                 args.get(1).and_then(Value::as_str).unwrap_or("white")
             ))
         }),
-        "spokenAnalysisCommand" => text(args, 0).map(|t| json!(voice::analysis_command(t))),
+        "spokenAnalysisCommand" => text(args, 0)
+            .map(|t| json!(voice::analysis_command(t).map(voice::AnalysisCommand::as_str))),
         "withPiece" => with_piece(args),
         "castlingAvailable" => text(args, 0).map(|board| json!(editor::castling_available(board))),
         "enPassantSquares" => text(args, 0).and_then(|board| {

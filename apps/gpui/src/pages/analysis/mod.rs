@@ -79,6 +79,7 @@ pub use load::{init, new_board, open_linked, open_study, replace};
 pub use review::Opening;
 
 use crate::voice::moves::{Access, Action, BoardBar, Reply, Turn, VoiceMoves, board_bar};
+use kchess_domain::voice::AnalysisCommand;
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::time::Duration;
@@ -725,6 +726,26 @@ impl AnalysisPage {
         self.play(uci, cx)
     }
 
+    /// `text` said clearly, with voice on: as the recognizer's phrase reaches the board.
+    #[cfg(test)]
+    pub(crate) fn hear_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.voice.control.enabled = true;
+        let heard = crate::voice::Heard {
+            text: text.into(),
+            raw: text.into(),
+            confidence: 1.,
+            words: Vec::new(),
+            unclear: false,
+        };
+        let owner = self.voice.control.owner;
+        self.voice_heard(&crate::voice::VoiceEvent::Heard { owner, heard }, cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn orientation_for_test(&self) -> Color {
+        self.orientation
+    }
+
     /// Play a move from the position shown; false when it is not kept (not legal there, or a
     /// wrong answer while practising).
     fn play(&mut self, uci: &str, cx: &mut Context<Self>) -> bool {
@@ -1233,7 +1254,7 @@ impl AnalysisPage {
         .then(|| self.lines(cx).first().cloned())
         .flatten()
         .and_then(|line| line.pv.first().cloned());
-        let mut command: Option<String> = None;
+        let mut command: Option<AnalysisCommand> = None;
         let turn = Turn {
             taking: true,
             idle: None,
@@ -1244,37 +1265,37 @@ impl AnalysisPage {
             &setup,
             turn,
             |text| {
-                let said = kchess_domain::voice::analysis_command(text)?.to_string();
-                let feedback = if said == "best" && best.is_none() {
+                let said = kchess_domain::voice::analysis_command(text)?;
+                let feedback = if said == AnalysisCommand::Best && best.is_none() {
                     "The engine has no move yet".to_string()
                 } else {
                     format!("“{text}”")
                 };
-                command = Some(said.clone());
+                command = Some(said);
                 Some(Reply {
-                    said,
+                    said: said.as_str().to_string(),
                     feedback,
                     understood: true,
                 })
             },
             cx,
         );
-        match (action, command.as_deref()) {
+        match (action, command) {
             (Action::Play(uci), _) => {
                 self.play(&uci, cx);
             }
-            (_, Some("back")) => self.back(cx),
-            (_, Some("forward")) => self.forward(cx),
-            (_, Some("start")) => self.go_to_start(cx),
-            (_, Some("end")) => self.go_to_end(cx),
-            (_, Some("best")) => {
+            (_, Some(AnalysisCommand::Back)) => self.back(cx),
+            (_, Some(AnalysisCommand::Forward)) => self.forward(cx),
+            (_, Some(AnalysisCommand::Start)) => self.go_to_start(cx),
+            (_, Some(AnalysisCommand::End)) => self.go_to_end(cx),
+            (_, Some(AnalysisCommand::Best)) => {
                 if let Some(uci) = best {
                     self.play(&uci, cx);
                 }
             }
-            (_, Some("flip")) => self.flip(cx),
-            (_, Some("engine")) => self.toggle_engine(cx),
-            _ => {}
+            (_, Some(AnalysisCommand::Flip)) => self.flip(cx),
+            (_, Some(AnalysisCommand::Engine)) => self.toggle_engine(cx),
+            (_, None) => {}
         }
         cx.notify();
     }

@@ -571,6 +571,34 @@ fn an_engine_setting_changed_in_its_popover_can_be_undone(cx: &mut gpui_kit::Tes
     assert_eq!(infinite(&mut app), Some(false));
 }
 
+/// Each command said on the analysis board does what its words say.
+#[gpui_kit::test]
+fn commands_said_aloud_step_flip_and_switch_the_engine(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::analysis::AnalysisPage;
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 2. Nf3 *");
+    let page = app.with_window(|_, cx| crate::shell::view::<AnalysisPage>(cx).expect("the page"));
+    let say = |app: &mut Harness, text: &str| {
+        app.cx
+            .update(|cx| page.update(cx, |page, cx| page.hear_for_test(text, cx)));
+        app.cx.run_until_parked();
+    };
+    say(&mut app, "last move");
+    assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
+    say(&mut app, "go back");
+    assert_eq!(selected(&mut app, "e2e4 e7e5"), Some(true));
+    say(&mut app, "go to start");
+    assert_eq!(selected(&mut app, "e2e4"), Some(false));
+    say(&mut app, "next");
+    assert_eq!(selected(&mut app, "e2e4"), Some(true));
+    say(&mut app, "flip board");
+    let orientation = app.cx.update(|cx| page.read(cx).orientation_for_test());
+    assert_eq!(orientation, shakmaty::Color::Black);
+    let engine = app.cx.update(|cx| AnalysisPage::engine_on(cx));
+    say(&mut app, "toggle engine");
+    assert_eq!(app.cx.update(|cx| AnalysisPage::engine_on(cx)), !engine);
+}
+
 #[gpui_kit::test]
 fn the_board_can_be_flipped_and_still_takes_moves(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
