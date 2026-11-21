@@ -19,7 +19,7 @@ pub(super) fn wait_resumed(app: &mut Harness) {
 }
 
 /// Type each move into the move box, as the players take turns at it.
-fn type_moves(app: &mut Harness, moves: &[&str]) {
+pub(super) fn type_moves(app: &mut Harness, moves: &[&str]) {
     for (played, text) in moves.iter().enumerate() {
         app.click_label("Enter a chess move in SAN or UCI");
         app.type_text(text);
@@ -198,7 +198,7 @@ fn an_earlier_position_can_be_reviewed_but_not_played_on(cx: &mut gpui_kit::Test
     let mut app = board(cx);
     type_moves(&mut app, &["e4", "e5", "Nf3"]);
     app.click("chevron-left");
-    assert_eq!(app.status(), "Reviewing an earlier position");
+    assert_eq!(app.status(), "Earlier position");
     assert_eq!(app.find(("move", 1usize)).selected(), Some(true));
     app.click("skip-back");
     assert!(!app.enabled("skip-back"));
@@ -213,7 +213,7 @@ fn the_review_banner_goes_back_to_the_game(cx: &mut gpui_kit::TestAppContext) {
     let mut app = board(cx);
     type_moves(&mut app, &["e4", "e5", "Nf3"]);
     app.click("skip-back");
-    assert_eq!(app.status(), "Reviewing an earlier position");
+    assert_eq!(app.status(), "Earlier position");
     app.click("back-to-game");
     assert_eq!(app.status(), "Black to move");
     assert!(!app.shows("back-to-game"));

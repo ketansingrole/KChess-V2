@@ -856,7 +856,20 @@ fn low_clock() {
         let (mut cx, window) = start(profile.path(), 1320., 880.);
         cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
         cx.update_window(window, |_, window, cx| {
-            crate::shell::open(Page::Local, window, cx);
+            crate::shell::open(Page::Local, window, cx)
+        })
+        .expect("the window");
+        // The saved game is read first: a game played before that was replaced by it, and the
+        // pictures showed an empty board.
+        for _ in 0..100 {
+            if cx.update(|cx| {
+                crate::shell::view::<LocalPage>(cx).is_some_and(|local| local.read(cx).resumed())
+            }) {
+                break;
+            }
+            settle(&mut cx, window);
+        }
+        cx.update_window(window, |_, window, cx| {
             let local = crate::shell::view::<LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 let setup = kchess_domain::variant::Setup::standard();
@@ -885,7 +898,8 @@ fn low_clock() {
 /// Over the board in both of its modes, a game under way on the shared board, at every size, so
 /// switching between them can be compared by eye:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::over_the_board -- --ignored`
-/// writes `<dir>/over-the-board/<width>-<mode>.png`.
+/// writes `<dir>/over-the-board/<width>-<mode>.png`, and `<width>-review.png` a move back
+/// at the wider two.
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn over_the_board() {
@@ -911,11 +925,19 @@ fn over_the_board() {
                     },
                 ));
                 local.replace_game(setup, clock, window, cx);
-                local.play("e2e4", cx);
-                local.play("e7e5", cx);
             });
         })
         .expect("the window");
+        // The new game starts once the page has its turn: moves played in the same update were
+        // played on the game it replaced.
+        settle(&mut cx, window);
+        cx.update(|cx| {
+            let local = crate::shell::view::<LocalPage>(cx).expect("the page");
+            local.update(cx, |local, cx| {
+                local.play("e2e4", cx);
+                local.play("e7e5", cx);
+            });
+        });
         for (index, mode) in ["board", "clock"].into_iter().enumerate() {
             cx.update_window(window, |_, window, cx| {
                 window.click(("local-mode", index), cx);
@@ -925,6 +947,22 @@ fn over_the_board() {
             cx.capture_screenshot(window)
                 .expect("a screenshot")
                 .save(out.join(format!("{width}-{mode}.png")))
+                .expect("the screenshot saves");
+        }
+        // A move back where the move list is beside the board: the turn line says so in its
+        // own place, the moves where they were.
+        if width >= 1024. {
+            cx.update_window(window, |_, window, cx| {
+                window.click(("local-mode", 0usize), cx);
+            })
+            .expect("the window");
+            settle(&mut cx, window);
+            cx.update_window(window, |_, window, cx| window.click("chevron-left", cx))
+                .expect("the window");
+            settle(&mut cx, window);
+            cx.capture_screenshot(window)
+                .expect("a screenshot")
+                .save(out.join(format!("{width}-review.png")))
                 .expect("the screenshot saves");
         }
         let quit = cx.update(crate::quit::quit);
