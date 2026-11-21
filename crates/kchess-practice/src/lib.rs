@@ -143,9 +143,10 @@ pub struct PracticePage {
     endgames: Option<Entity<endgames::Endgames>>,
     mistakes: Option<Entity<mistakes::Mistakes>>,
     guess: Option<Entity<guess::GuessMoves>>,
-    /// The tab on screen at the last frame: Your mistakes starts at its overview when opened.
+    /// The tab last opened (`show_tab`): Your mistakes starts at its overview when opened.
     shown_tab: Option<Tab>,
     focus: FocusHandle,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Focusable for PracticePage {
@@ -166,6 +167,24 @@ impl PracticePage {
             guess: None,
             shown_tab: None,
             focus: cx.focus_handle(),
+            // The tab is a view preference: chosen here, from Quick Pick or from another window.
+            _subscriptions: vec![
+                cx.observe_global::<crate::prefs::ViewPreferences>(|this, cx| this.follow_tab(cx)),
+            ],
+        }
+    }
+
+    /// The tab chosen, once it changes: Your mistakes, opened again, starts at its overview.
+    fn follow_tab(&mut self, cx: &mut Context<Self>) {
+        let tab = Tab::stored(cx);
+        if self.shown_tab == Some(tab) {
+            return;
+        }
+        self.shown_tab = Some(tab);
+        if tab == Tab::Mistakes
+            && let Some(mistakes) = &self.mistakes
+        {
+            mistakes.update(cx, |mistakes, cx| mistakes.shown(cx));
         }
     }
 
@@ -298,23 +317,11 @@ impl PracticePage {
                 .get_or_insert_with(|| cx.new(|cx| guess::GuessMoves::new(window, cx)))
                 .clone()
                 .into(),
-            Tab::Mistakes => {
-                let opened = self.shown_tab != Some(Tab::Mistakes);
-                let mistakes = match &self.mistakes {
-                    Some(mistakes) => {
-                        if opened {
-                            mistakes.update(cx, |mistakes, cx| mistakes.shown(cx));
-                        }
-                        mistakes.clone()
-                    }
-                    None => {
-                        let mistakes = cx.new(|cx| mistakes::Mistakes::new(window, cx));
-                        self.mistakes = Some(mistakes.clone());
-                        mistakes
-                    }
-                };
-                mistakes.into()
-            }
+            Tab::Mistakes => self
+                .mistakes
+                .get_or_insert_with(|| cx.new(|cx| mistakes::Mistakes::new(window, cx)))
+                .clone()
+                .into(),
         };
         view.into_any_element()
     }
@@ -378,8 +385,6 @@ impl Render for PracticePage {
             &palette,
         );
         let body = self.body(tab, window, cx);
-        // gpui-lints: allow(assign_in_render) a shared view preference picks the tab; `body` asks what it last drew
-        self.shown_tab = Some(tab);
         v_flex()
             .size_full()
             .track_focus(&self.focus)
@@ -500,6 +505,7 @@ impl PageView for PracticePage {
     fn shown(this: &Entity<Self>, _again: bool, _window: &mut Window, cx: &mut App) {
         this.update(cx, |practice, cx| {
             practice.shown_tab = None;
+            practice.follow_tab(cx);
             cx.notify();
         });
     }
