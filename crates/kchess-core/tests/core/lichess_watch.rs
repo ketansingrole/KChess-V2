@@ -16,8 +16,9 @@ use kchess_contracts::check::{BroadcastQuery, WatchSession, check};
 use kchess_contracts::types::{BroadcastSection, WatchPhase};
 use kchess_core::lichess::accounts::Lichess;
 use kchess_core::lichess::watch::{
-    BroadcastUpdate, LineUpTiming, Spectator, WatchFrame, WatchSink, WatchState, WatchTarget,
-    align_tv_moves, broadcast_game, broadcast_summaries, parse_game_details, parse_tv_game,
+    BroadcastUpdate, LineUpTiming, Spectator, TvMoves, WatchFrame, WatchSink, WatchState,
+    WatchTarget, align_tv_moves, broadcast_game, broadcast_summaries, parse_game_details,
+    parse_tv_game, tv_moves, tv_moves_since,
 };
 use kchess_domain::misc::value::J;
 use kchess_domain::replay;
@@ -1301,4 +1302,59 @@ fn every_listed_tv_channel_is_a_valid_watch_target() {
             "{channel}"
         );
     }
+}
+
+/// The feed's positions after each of `plies`, as `tv_moves` takes them: keys, FENs as sent, and
+/// the moves between them, unnamed where `unnamed` says.
+fn feed_of(plies: &[usize], unnamed: &[usize]) -> (Vec<String>, Vec<String>, Vec<Option<String>>) {
+    let keys = plies.iter().map(|ply| key(*ply)).collect();
+    let raw = plies.iter().map(|ply| fen_after(*ply)).collect();
+    let live = plies
+        .windows(2)
+        .map(|pair| {
+            (pair[1] == pair[0] + 1 && !unnamed.contains(&pair[1]))
+                .then(|| line_uci()[pair[1] - 1].to_string())
+        })
+        .collect();
+    (keys, raw, live)
+}
+
+#[test]
+fn the_moves_an_export_leaves_out_are_found_from_the_feeds_position() {
+    // The export stops at e5; the feed started after Nf3 and has seen Nc6 since.
+    let (feed, raw, live) = feed_of(&[3, 4], &[]);
+    assert_eq!(
+        tv_moves(&standard_setup(), &san()[..1], &feed, &raw, &live),
+        TvMoves::Lined(line_uci()[..4].iter().map(|m| m.to_string()).collect())
+    );
+    // Nc6, Bc4 and Bc5 could have come Bc5 first: the exported moves show, three plies short.
+    let (feed, raw, live) = feed_of(&[6], &[]);
+    assert_eq!(
+        tv_moves(&standard_setup(), &san()[..3], &feed, &raw, &live),
+        TvMoves::Behind(line_uci()[..3].iter().map(|m| m.to_string()).collect(), 3)
+    );
+    // An export that does not lead to the feed's position is another game's: nothing shows.
+    let (feed, raw, live) = feed_of(&[2], &[]);
+    let other: Vec<String> = ["d4", "d5"].map(String::from).to_vec();
+    assert_eq!(
+        tv_moves(&standard_setup(), &other, &feed, &raw, &live),
+        TvMoves::Unknown
+    );
+}
+
+/// A line-up worked out just before the feed reconnected two plies on counted the reconnect as
+/// one ply: the list said one move was missing where two were.
+#[test]
+fn moves_brought_up_to_a_feed_that_reconnected_count_the_plies_it_missed() {
+    let lined = TvMoves::Lined(line_uci()[..3].iter().map(|m| m.to_string()).collect());
+    let (_, raw, live) = feed_of(&[3, 5], &[]);
+    assert_eq!(
+        tv_moves_since(lined.clone(), 1, &raw, &live),
+        TvMoves::Behind(line_uci()[..3].iter().map(|m| m.to_string()).collect(), 2)
+    );
+    let (_, raw, live) = feed_of(&[3, 4, 5], &[]);
+    assert_eq!(
+        tv_moves_since(lined, 1, &raw, &live),
+        TvMoves::Lined(line_uci()[..5].iter().map(|m| m.to_string()).collect())
+    );
 }

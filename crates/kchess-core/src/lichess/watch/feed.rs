@@ -409,6 +409,35 @@ pub fn tv_moves(
     TvMoves::Behind(exported, last_ply - exported_ply)
 }
 
+/// `moves`, worked out while the feed had shown `seen` positions, brought up to the feed as it
+/// is now (`raw` and `live` as `tv_moves` takes them): the moves it named since follow the list,
+/// and once one is unnamed, the list stops short of every ply played since.
+pub fn tv_moves_since(
+    moves: TvMoves,
+    seen: usize,
+    raw: &[String],
+    live: &[Option<String>],
+) -> TvMoves {
+    let since = live.get(seen.saturating_sub(1)..).unwrap_or(&[]);
+    // Plies, not records: a feed that reconnected sends one record for every move it missed.
+    let plies = |at: Option<&String>| fen_ply(at?);
+    let more = plies(raw.last())
+        .zip(plies(raw.get(seen.saturating_sub(1))))
+        .and_then(|(now, then)| now.checked_sub(then))
+        .unwrap_or_else(|| u32::try_from(since.len()).unwrap_or(u32::MAX));
+    match moves {
+        TvMoves::Lined(mut moves) => match since.iter().cloned().collect::<Option<Vec<_>>>() {
+            Some(named) => {
+                moves.extend(named);
+                TvMoves::Lined(moves)
+            }
+            None => TvMoves::Behind(moves, more),
+        },
+        TvMoves::Behind(moves, behind) => TvMoves::Behind(moves, behind.saturating_add(more)),
+        TvMoves::Unknown => TvMoves::Unknown,
+    }
+}
+
 /// The plies played before a FEN's position, from its move number and side to move.
 pub(super) fn fen_ply(fen: &str) -> Option<u32> {
     let mut fields = fen.split_whitespace().skip(1);

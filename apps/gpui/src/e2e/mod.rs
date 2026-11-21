@@ -36,6 +36,7 @@ mod shell;
 mod stability;
 mod studies;
 mod tournaments;
+mod watch_tv;
 mod whats_new;
 
 use std::path::{Path, PathBuf};

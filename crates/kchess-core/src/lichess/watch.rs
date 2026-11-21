@@ -3,8 +3,10 @@
 //!
 //! One watch runs at a time. Starting another stops the last, and frames or states of a stopped
 //! session are never reported. Frames go to a `WatchSink` (`HostSink` emits `watch:state`,
-//! `watch:frame` and `watch:broadcast` on the host). Lining a TV game up with its delayed export
-//! runs in the background and fails quietly: the board works without it.
+//! `watch:frame` and `watch:broadcast` on the host). Lining a TV game's moves up with its delayed
+//! export runs in the background, and the board never waits for it: Lichess leaves an ongoing
+//! game's last three plies out of the export, which the line-up finds from the feed's position
+//! (`tv_moves`). A failure shows where the moves go.
 
 use kchess_contracts::CoreEvent;
 use std::sync::Arc;
@@ -24,7 +26,7 @@ mod spectator;
 
 pub use feed::{
     GameDetails, TvGame, TvMoves, align_tv_moves, broadcast_game, display_fen, parse_game_details,
-    parse_tv_game, tv_moves,
+    parse_tv_game, tv_moves, tv_moves_since,
 };
 pub use listings::{broadcast_round, broadcast_summaries, broadcast_tour, broadcasts, tv_channels};
 pub use spectator::Spectator;

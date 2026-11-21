@@ -12,7 +12,7 @@ use super::feed::{fen_ply, player_of, position_key, uci_or_none};
 use super::{
     BroadcastGame, BroadcastUpdate, LineUpTiming, MAX_PGN, PAST_GAMES, TvGame, TvMoves, TvPastGame,
     WatchFrame, WatchSink, WatchState, WatchTarget, broadcast_game, display_fen,
-    parse_game_details, parse_tv_game, tv_moves,
+    parse_game_details, parse_tv_game, tv_moves, tv_moves_since,
 };
 use crate::host::Level;
 use crate::lichess::accounts::{Lichess, path_segment};
@@ -159,22 +159,8 @@ struct Lined {
 }
 
 impl Lined {
-    /// The moves with those the feed sent since: named ones follow the list, and once one is
-    /// not, the list stops short of the rest.
     fn caught_up(self, track: &TvTrack) -> TvMoves {
-        let since = track.live.get(self.seen.saturating_sub(1)..).unwrap_or(&[]);
-        let more = u32::try_from(since.len()).unwrap_or(u32::MAX);
-        match self.moves {
-            TvMoves::Lined(mut moves) => match since.iter().cloned().collect::<Option<Vec<_>>>() {
-                Some(named) => {
-                    moves.extend(named);
-                    TvMoves::Lined(moves)
-                }
-                None => TvMoves::Behind(moves, more),
-            },
-            TvMoves::Behind(moves, behind) => TvMoves::Behind(moves, behind.saturating_add(more)),
-            TvMoves::Unknown => TvMoves::Unknown,
-        }
+        tv_moves_since(self.moves, self.seen, &track.raw, &track.live)
     }
 }
 
