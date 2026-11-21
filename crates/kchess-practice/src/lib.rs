@@ -28,6 +28,7 @@ pub mod mistakes;
 pub mod repertoire;
 pub mod run;
 mod square_color;
+mod under_board;
 
 use gpui_kit::component::v_flex;
 use gpui_kit::*;
@@ -207,6 +208,11 @@ impl PracticePage {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn knight(&self) -> Option<Entity<knight::KnightPaths>> {
+        self.knight.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn mistakes(&self) -> Option<Entity<mistakes::Mistakes>> {
         self.mistakes.clone()
     }
@@ -214,6 +220,11 @@ impl PracticePage {
     #[cfg(any(test, feature = "test-support"))]
     pub fn repertoire(&self) -> Option<Entity<repertoire::Repertoire>> {
         self.repertoire.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn endgame_lesson(&self, cx: &App) -> Option<Entity<endgame_lesson::EndgameLesson>> {
+        self.lesson(cx)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -289,7 +300,7 @@ impl PracticePage {
         let view: AnyView = match tab {
             Tab::Coordinates => self
                 .coordinates
-                .get_or_insert_with(|| cx.new(coordinates::Coordinates::new))
+                .get_or_insert_with(|| cx.new(|cx| coordinates::Coordinates::new(window, cx)))
                 .clone()
                 .into(),
             Tab::Colors => self
