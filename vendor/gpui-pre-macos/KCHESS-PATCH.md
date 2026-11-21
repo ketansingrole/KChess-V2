@@ -20,5 +20,15 @@ Linux backend and GPUI Kit stay unpatched; the patch keeps to a convention inste
 Here that is a `UNTextInputNotificationAction` in place of a plain action, and the typed text read from the `UNTextInputNotificationResponse` it answers with. A backend without the patch (Linux) shows the button alone, whose response
 is its id without text.
 
+## Traffic lights centred by their own height
+
+`set_traffic_light_position` places the buttons' top, so a caller centring them on its title bar
+has to guess their height: KChess guessed 10pt, and macOS 27's buttons are about 13pt, which sat
+them 2pt low. `set_traffic_light_centre` (declared in `gpui-pre`, `Window::set_traffic_light_centre`)
+takes the line their middle goes on instead. `move_traffic_light` then puts their top at that line
+less half the live buttons' height, on a whole device pixel (`centred_button_top`), on every
+layout pass, so it holds on any macOS and at any interface size. The app calls it from
+`apps/gpui/src/interface_zoom.rs`.
+
 `rg "KChess patch" vendor/gpui-pre-macos` lists the changed lines. When GPUI is updated, take the new
 release's crate and apply them again, unless it has learned typed replies of its own.

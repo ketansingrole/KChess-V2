@@ -61,18 +61,24 @@ pub(crate) fn over_title_bar(control: impl IntoElement) -> Div {
     div().occlude().child(control)
 }
 
-/// Part of the window's title bar: dragging moves the window, a double click zooms it.
+/// Part of the window's title bar that Windows moves the window from (its caption hit test).
+/// It answers no press itself: what lies under it does, once.
+fn drag_area(id: &'static str) -> Stateful<Div> {
+    div().id(id).window_control_area(WindowControlArea::Drag)
+}
+
+/// The sidebar's header, the one part of the title bar outside GPUI Kit's `TitleBar`: dragging
+/// moves the window, a double click zooms it. Only one element may answer a press there, or
+/// one double click zooms and restores the window again (the top bar and its `TitleBar` both
+/// did, and so did the sidebar's name over this header).
 fn title_bar(id: &'static str) -> Stateful<Div> {
-    div()
-        .id(id)
-        .window_control_area(WindowControlArea::Drag)
-        .on_mouse_down(MouseButton::Left, |event, window, _| {
-            if event.click_count == 2 {
-                window.titlebar_double_click();
-            } else {
-                window.start_window_move();
-            }
-        })
+    drag_area(id).on_mouse_down(MouseButton::Left, |event, window, _| {
+        if event.click_count == 2 {
+            window.titlebar_double_click();
+        } else {
+            window.start_window_move();
+        }
+    })
 }
 
 /// A row of the sidebar's navigation: 32px tall, an 18px icon 8px from its label.
@@ -1131,8 +1137,9 @@ impl Workspace {
                     })),
             ))
             .when(self.shown(), |wrap| {
+                // Over the sidebar's header, which answers its presses.
                 wrap.child(
-                    title_bar("sidebar-name")
+                    drag_area("sidebar-name")
                         .flex()
                         .items_center()
                         .flex_1()
@@ -1163,7 +1170,9 @@ impl Workspace {
         // Room for the toggle floating over the topbar beside the macOS rail: its 28px and 8px clear of it, less the rail and the padding.
         let spacer =
             (toggle_left(window) + TOGGLE_SIDE + px(8.) - SIDEBAR_RAIL - px(20.)).max(px(0.));
-        title_bar("topbar")
+        // GPUI Kit's `TitleBar` around it moves and zooms the window.
+        div()
+            .id("topbar")
             .flex()
             .flex_1()
             .min_w_0()
