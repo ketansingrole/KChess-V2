@@ -677,6 +677,8 @@ struct MacWindowState {
     last_left_mouse_down_event: Option<Retained<AnyObject>>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
+    // KChess patch: `traffic_light_position.y` is the buttons' middle, not their top.
+    traffic_light_centred: bool,
     traffic_light_frames: Option<TrafficLightFrames>,
     pre_fullscreen_traffic_light_frames: Option<TrafficLightFrames>,
     transparent_titlebar: bool,
@@ -735,8 +737,18 @@ impl MacWindowState {
                 let button_padding = Pixels::from(
                     minimize_frame.origin.x - close_frame.origin.x - close_frame.size.width,
                 );
-                let container_height =
-                    button_height + traffic_light_position.y + traffic_light_position.y;
+                // KChess patch: a centred position is the buttons' middle; their top follows
+                // from their height on this macOS.
+                let top = if self.traffic_light_centred {
+                    centred_button_top(
+                        traffic_light_position.y,
+                        button_height,
+                        self.scale_factor(),
+                    )
+                } else {
+                    traffic_light_position.y
+                };
+                let container_height = button_height + top + top;
 
                 let mut titlebar_frame = titlebar_container.frame();
                 titlebar_frame.size.height = container_height.to_f64();
@@ -748,15 +760,15 @@ impl MacWindowState {
                 titlebar_container.setFrame(titlebar_frame);
                 buttons.close.setFrameOrigin(NSPoint::new(
                     traffic_light_position.x.to_f64(),
-                    traffic_light_position.y.to_f64(),
+                    top.to_f64(),
                 ));
                 buttons.minimize.setFrameOrigin(NSPoint::new(
                     minimize_x.to_f64(),
-                    traffic_light_position.y.to_f64(),
+                    top.to_f64(),
                 ));
                 buttons.zoom.setFrameOrigin(NSPoint::new(
                     zoom_x.to_f64(),
-                    traffic_light_position.y.to_f64(),
+                    top.to_f64(),
                 ));
 
                 titlebar_container.updateTrackingAreas();
@@ -1142,6 +1154,7 @@ impl MacWindow {
                 traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
+                traffic_light_centred: false,
                 traffic_light_frames: None,
                 pre_fullscreen_traffic_light_frames: None,
                 transparent_titlebar: titlebar
@@ -1662,6 +1675,15 @@ impl PlatformWindow for MacWindow {
     fn set_traffic_light_position(&self, position: Point<Pixels>) {
         let mut state = self.0.lock();
         state.traffic_light_position = Some(position);
+        state.traffic_light_centred = false;
+        state.move_traffic_light();
+    }
+
+    // KChess patch: as `set_traffic_light_position`, with `centre.y` the buttons' middle.
+    fn set_traffic_light_centre(&self, centre: Point<Pixels>) {
+        let mut state = self.0.lock();
+        state.traffic_light_position = Some(centre);
+        state.traffic_light_centred = true;
         state.move_traffic_light();
     }
 
@@ -4097,9 +4119,38 @@ extern "C" fn toggle_tab_bar(this: &AnyObject, _sel: Sel, _id: *mut AnyObject) {
     }
 }
 
+/// KChess patch: the top of traffic lights `button_height` tall whose middle is `centre` below
+/// the window's top, on a whole device pixel so they stay sharp.
+fn centred_button_top(centre: Pixels, button_height: Pixels, scale_factor: f32) -> Pixels {
+    let top = f32::from(centre) - f32::from(button_height) / 2.;
+    let scale = scale_factor.max(1.);
+    px(((top * scale).round() / scale).max(0.))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The buttons were placed for a 10pt height; macOS 27's are about 13pt, which sat them
+    /// 2pt below the top bar's middle. Whatever their height, their middle is the line asked for.
+    #[test]
+    fn traffic_lights_centre_on_the_line_whatever_their_height() {
+        for height in [10., 13., 14., 16.] {
+            for scale in [1., 2., 3.] {
+                for centre in [19.76, 26., 52.] {
+                    let top = centred_button_top(px(centre), px(height), scale);
+                    let middle = f32::from(top) + height / 2.;
+                    assert!(
+                        (middle - centre).abs() <= 0.5 / scale + 1e-4,
+                        "{height}pt buttons at {scale}x: middle {middle}, asked {centre}"
+                    );
+                    let pixels = f32::from(top) * scale;
+                    assert_eq!(pixels, pixels.round(), "on a whole device pixel");
+                }
+            }
+        }
+        assert_eq!(centred_button_top(px(3.), px(13.), 2.), px(0.), "never above the window");
+    }
 
     #[test]
     fn display_id_for_screen_handles_missing_metadata() {
