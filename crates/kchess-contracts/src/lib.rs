@@ -26,5 +26,11 @@ pub use kchess_domain::perf::{Perf, Speed};
 pub use kchess_domain::variant::{Setup, Variant};
 
 /// How KChess names itself to the services it calls (Lichess refuses a request that names no
-/// program with a 403 page; GitHub asks every API caller for one).
-pub const USER_AGENT: &str = "KChess";
+/// program with a 403 page; GitHub asks every API caller for one): its name, its version and
+/// where to reach the project, as Lichess's API asks, so it can tell us of a problem or a
+/// breaking change. No contact email: every install sends this with every request.
+pub const USER_AGENT: &str = concat!(
+    "KChess/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/ketansingrole/KChess-V2)"
+);
