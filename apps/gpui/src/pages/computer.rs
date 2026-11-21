@@ -678,7 +678,7 @@ impl ComputerPage {
         let current = Current {
             setup: self.game.setup().clone(),
             clock: json!(self.game.clock()),
-            color: kchess_domain::color::name(self.user_color()).to_string(),
+            color: self.user_color(),
             level: self.game.level().to_string(),
         };
         let page = cx.entity().downgrade();
@@ -712,7 +712,7 @@ impl ComputerPage {
                 let chosen = Chosen {
                     setup,
                     clock: json!(this.game.clock()),
-                    color: kchess_domain::color::name(color),
+                    color,
                     level: this.game.level().to_string(),
                 };
                 this.start_chosen(chosen, window, cx);
@@ -742,7 +742,7 @@ impl ComputerPage {
                 let chosen = Chosen {
                     setup: Setup::standard(),
                     clock: json!(this.game.clock()),
-                    color: kchess_domain::color::name(color),
+                    color,
                     level,
                 };
                 this.start_chosen(chosen, window, cx);
@@ -764,11 +764,7 @@ impl ComputerPage {
 
     fn begin(&mut self, chosen: Chosen, window: &mut Window, cx: &mut Context<Self>) {
         self.game.set_level(&chosen.level);
-        self.game.set_color(if chosen.color == "black" {
-            Color::Black
-        } else {
-            Color::White
-        });
+        self.game.set_color(chosen.color);
         self.flipped = false;
         self.reset_archive(cx);
         let host = self.host();

@@ -9,6 +9,7 @@ use gpui_kit::component::{Disableable as _, IndexPath, WindowExt as _, h_flex, v
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
+use shakmaty::Color;
 
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
@@ -38,7 +39,7 @@ fn fairy_variants() -> impl Iterator<Item = Variant> {
 pub struct Chosen {
     pub setup: Setup,
     pub clock: Value,
-    pub color: &'static str,
+    pub color: Color,
     pub level: String,
 }
 
@@ -65,7 +66,7 @@ type OnStart = Box<dyn Fn(Chosen, &mut Window, &mut App)>;
 pub struct Current {
     pub setup: Setup,
     pub clock: Value,
-    pub color: String,
+    pub color: Color,
     pub level: String,
 }
 
@@ -158,7 +159,7 @@ impl GameOptions {
         let color = cx.new(|cx| {
             SelectState::new(
                 vec!["White".into(), "Black".into()],
-                Some(IndexPath::new(usize::from(current.color == "black"))),
+                Some(IndexPath::new(usize::from(current.color == Color::Black))),
                 window,
                 cx,
             )
@@ -320,9 +321,9 @@ impl GameOptions {
             setup,
             clock,
             color: if row(&self.color) == 1 {
-                "black"
+                Color::Black
             } else {
-                "white"
+                Color::White
             },
             level: self
                 .levels
