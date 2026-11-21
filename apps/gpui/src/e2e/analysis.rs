@@ -93,8 +93,10 @@ fn moves_played_and_stepped_forward_sound(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
     app.cx.update(|cx| cx.set_global(Played::default()));
     let silent: [Sound; 0] = [];
-    let heard =
-        |app: &mut Harness| app.cx.update(|cx| std::mem::take(&mut cx.global_mut::<Played>().0));
+    let heard = |app: &mut Harness| {
+        app.cx
+            .update(|cx| std::mem::take(&mut cx.global_mut::<Played>().0))
+    };
 
     import(&mut app, "1. e4 d5 *");
     assert_eq!(heard(&mut app), silent);
