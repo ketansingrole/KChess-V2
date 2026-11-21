@@ -10,7 +10,7 @@ refuses to release with nothing there.
 
 - **Pages that hold still**: the move list, engine depth, Voice button, Studies tabs, charts and opening explorer stay put as you step through a game, pages open without jumping, and a dialog's error leaves its buttons in place. Following keeps its order as players come online.
 - **Steadier Lichess games**: your games say whose move it is, and Offer draw and Takeback stay where they are while an offer waits, so Resign never slides under your pointer. A rated puzzle’s rating change appears without pushing the page down.
-- **Type or say your answer in every drill**: Coordinates and Knight paths have a box to type the square and Voice under the board, as in your games, so you answer whichever way you like. Say the square is now part of Name the square.
+- **Type or say your answer in every drill**: Coordinates and Knight paths have a box to type the square and Voice under the board, as in your games, and Guess the move takes your guess by voice too. Say the square is now part of Name the square.
 - **Fixes**: If a study chapter couldn't be saved when you quit, Retry now saves it. The opening explorer offers Connect Lichess or Try again, and looks again on its own when it can. Small buttons, such as Accept, Train and Watch, are easier to click. Plus many smaller fixes.
 
 ## 2026.11.8 (2026-11-21)

@@ -779,6 +779,36 @@ fn a_pasted_game_is_guessed_through_and_scored(cx: &mut gpui_kit::TestAppContext
     app.find("guess-start");
 }
 
+/// Start guessing `pgn` as White, pasted in.
+pub(super) fn guess_game(app: &mut Harness, pgn: &str) {
+    tab(app, crate::pages::practice::Tab::Guess);
+    app.click_label("Game PGN");
+    app.type_text(pgn);
+    app.click("guess-start");
+    app.find("chess-board");
+}
+
+/// A move said aloud is a guess, as one typed or played on the board, with Voice beside the
+/// move box as on the game pages.
+#[gpui_kit::test]
+fn a_spoken_move_makes_a_guess(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    guess_game(&mut app, "1. e4 e5 2. Nf3 Nc6 *");
+    app.find(("guess-voice", 0usize));
+    let guess = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).guess())
+            .expect("the guess drill")
+    });
+    // Settings ask to confirm a spoken move, as in a game.
+    for text in ["e four", "confirm"] {
+        app.cx
+            .update(|cx| guess.update(cx, |guess, cx| guess.hear_for_test(text, cx)));
+    }
+    wait_for_label(&mut app, "status-banner", "e4 ✓");
+    app.wait_for_moves(&["e4", "e5"]);
+}
+
 /// A game opened for guessing elsewhere (the Masters explorer) lands on the tab, as the side asked
 /// for, and a PGN that is not a game is refused.
 #[gpui_kit::test]

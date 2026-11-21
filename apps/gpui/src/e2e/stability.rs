@@ -187,6 +187,15 @@ fn the_voice_button_holds_still_on_every_drill(cx: &mut gpui_kit::TestAppContext
     });
 }
 
+#[gpui_kit::test]
+fn the_voice_button_holds_still_in_guess_the_move(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Practice");
+    super::practice::guess_game(&mut app, "1. e4 e5 2. Nf3 Nc6 *");
+    // The game stays on the tab as the page opens again at each size.
+    voice_holds_still(&mut app, "Practice", "guess-voice", |_| {});
+}
+
 /// Choosing a spare piece in the Board editor leaves the row where it was.
 #[gpui_kit::test]
 fn the_board_editors_spare_pieces_hold_still_as_one_is_chosen(cx: &mut gpui_kit::TestAppContext) {
