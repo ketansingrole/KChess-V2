@@ -476,6 +476,12 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
             Frame::Call { id, method, args } => {
                 let (core, sender, running) =
                     (Arc::clone(&state.core), sender.clone(), Arc::clone(&calls));
+                // Started here, in the order the client sent its calls: a spawned task starts
+                // whenever a worker picks it up, so a stop sent before a start could stop
+                // nothing and leave the start running.
+                let call = kchess_core::tasks::started(async move {
+                    core.call_as(connection, &method, args).await
+                });
                 // Held until the call is registered: another worker may finish a quick call
                 // before `spawn` returns, and its `remove` must find the entry, or the entry
                 // (and the finished task it keeps allocated) would stay until the window closes.
@@ -483,7 +489,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                     break;
                 };
                 let task = tokio::spawn(async move {
-                    let answer = core.call_as(connection, &method, args).await;
+                    let answer = call.await;
                     let still_ours = running
                         .lock()
                         .is_ok_and(|mut running| running.remove(&id).is_some());

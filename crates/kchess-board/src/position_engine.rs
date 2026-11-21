@@ -412,26 +412,13 @@ mod tests {
         assert!(busy);
 
         // A stop for a search whose start the core has not run yet: that start is refused. The
-        // core runs calls in any order, so the start goes once the stop has been answered; a
-        // start sent beside it ran first on macOS CI (2026-11-21) and was rightly accepted.
+        // start goes straight after the stop, as a view sends them: the core starts calls in the
+        // order they were made (the start once ran first on macOS CI, 2026-11-21).
         let client = next_client();
-        let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let done = Arc::clone(&stopped);
-        app.with_window(|_, cx| {
-            let stop = stop_analysis(Some(client), false, "test", cx);
-            cx.background_executor()
-                .spawn(async move {
-                    stop.await;
-                    done.store(true, std::sync::atomic::Ordering::Release);
-                })
-                .detach();
-        });
-        app.wait_for("the stop's answer", |_, _| {
-            stopped.load(std::sync::atomic::Ordering::Acquire)
-        });
         let refused: Arc<Mutex<Option<Result<u64, CoreError>>>> = Arc::default();
         let answer = Arc::clone(&refused);
         app.with_window(|_, cx| {
+            stop_analysis(Some(client), false, "test", cx).detach();
             let late = cx.global::<AppCore>().request(calls::StartAnalysis {
                 request: AnalysisRequest {
                     client_id: Some(client),

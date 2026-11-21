@@ -32,7 +32,8 @@ pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
 /// A core in this process, as the handle uses it.
 pub trait EmbeddedCore: Send + Sync + 'static {
-    /// A `CoreApi` method by name.
+    /// A `CoreApi` method by name, queued before this returns: calls start in the order they
+    /// were made. Dropping the future cancels the call.
     fn call(
         self: Arc<Self>,
         method: String,
@@ -203,24 +204,22 @@ impl CoreHandle {
             .map_or(EMBEDDED_CONNECTION, |client| client.connection())
     }
 
-    /// A `CoreApi` method by name.
+    /// A `CoreApi` method by name. It is queued now, before the future is first polled: the
+    /// core starts calls in the order they were made, so a stop made before a start stops what
+    /// came before it, and two writes land in the order they were made.
     pub fn call(
         &self,
         method: &str,
         args: Vec<Value>,
     ) -> impl Future<Output = Result<Value, CoreError>> + Send + 'static + use<> {
-        let method = method.to_string();
-        let (core, client) = match &self.backend {
-            Backend::Embedded(core) => (Some(Arc::clone(core)), None),
-            Backend::Service(slot) => (None, lock(slot).clone()),
+        let call: BoxFuture<Result<Value, CoreError>> = match &self.backend {
+            Backend::Embedded(core) => Arc::clone(core).call(method.to_string(), args),
+            Backend::Service(slot) => match lock(slot).clone() {
+                Some(client) => Box::pin(client.call(method, args)),
+                None => Box::pin(std::future::ready(Err(CoreError::new(STOPPED)))),
+            },
         };
-        async move {
-            match (core, client) {
-                (Some(core), _) => core.call(method, args).await,
-                (None, Some(client)) => client.call(&method, args).await,
-                (None, None) => Err(CoreError::new(STOPPED)),
-            }
-        }
+        call
     }
 
     /// A typed core call (`kchess_contracts::calls`): its method with its arguments, and its

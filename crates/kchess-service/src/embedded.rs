@@ -2,7 +2,7 @@
 //! (the app, the command line) hand `CoreHandle::open` as `Options::embed`, so the handle and the
 //! crates a frontend is built from never build the core themselves.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use kchess_client::{
     BoxFuture, ClientEvent, EMBEDDED_CONNECTION, Embed, EmbeddedCore, Embedding, Log,
@@ -11,7 +11,7 @@ use kchess_contracts::{CoreError, CoreEvent, HostReply, Level};
 use kchess_core::connection::{APP, ClientInfo};
 use kchess_core::{Core, Host};
 use serde_json::Value;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 /// Opens a core in this process for the frontend that asks.
 pub fn embed() -> Embed {
@@ -37,7 +37,52 @@ impl Host for Forward {
 
 /// A core embedded by one frontend, whose connection is the core's own app (`APP`).
 struct Embedded {
-    core: Core,
+    core: Arc<Core>,
+    /// The frontend's calls in the order it made them, for `start_in_order`.
+    calls: mpsc::UnboundedSender<Call>,
+}
+
+/// A call waiting for its turn to start, and where its answer goes.
+struct Call {
+    method: String,
+    args: Vec<Value>,
+    answer: oneshot::Sender<Result<Value, CoreError>>,
+}
+
+/// What a call whose core has gone answers.
+const STOPPED: &str = "The KChess core stopped.";
+
+/// Starts each call in the order the frontend made it, then lets it run on beside the others. A
+/// call spawned straight from the frontend started whenever a worker picked it up, so a stop
+/// made before a start could stop nothing and leave the start running.
+async fn start_in_order(core: Weak<Core>, mut calls: mpsc::UnboundedReceiver<Call>) {
+    while let Some(Call {
+        method,
+        args,
+        mut answer,
+    }) = calls.recv().await
+    {
+        // Dropped before its turn: nobody waits for it.
+        if answer.is_closed() {
+            continue;
+        }
+        let Some(core) = core.upgrade() else {
+            let _ = answer.send(Err(CoreError::new(STOPPED)));
+            continue;
+        };
+        let call = kchess_core::tasks::started(async move { core.call(&method, args).await });
+        tokio::spawn(async move {
+            // Its caller dropped it: the core stops the work, not only the reply.
+            let answered = tokio::select! {
+                biased;
+                answered = call => Some(answered),
+                () = answer.closed() => None,
+            };
+            if let Some(answered) = answered {
+                let _ = answer.send(answered);
+            }
+        });
+    }
 }
 
 fn open(embedding: Embedding) -> Result<Arc<Embedded>, String> {
@@ -53,7 +98,10 @@ fn open(embedding: Embedding) -> Result<Arc<Embedded>, String> {
         release: kchess_client::protocol::release(),
         capabilities: hello.capabilities,
     });
-    Ok(Arc::new(Embedded { core }))
+    let core = Arc::new(core);
+    let (calls, queued) = mpsc::unbounded_channel();
+    tokio::spawn(start_in_order(Arc::downgrade(&core), queued));
+    Ok(Arc::new(Embedded { core, calls }))
 }
 
 impl EmbeddedCore for Embedded {
@@ -62,7 +110,23 @@ impl EmbeddedCore for Embedded {
         method: String,
         args: Vec<Value>,
     ) -> BoxFuture<Result<Value, CoreError>> {
-        Box::pin(async move { self.core.call(&method, args).await })
+        let (answer, answered) = oneshot::channel();
+        let queued = self
+            .calls
+            .send(Call {
+                method,
+                args,
+                answer,
+            })
+            .is_ok();
+        Box::pin(async move {
+            if !queued {
+                return Err(CoreError::new(STOPPED));
+            }
+            answered
+                .await
+                .unwrap_or_else(|_| Err(CoreError::new(STOPPED)))
+        })
     }
 
     fn host_reply(&self, id: u64, reply: HostReply) -> Result<(), CoreError> {
@@ -179,6 +243,74 @@ mod tests {
                 "{event:?}"
             );
         }
+        core.close().await;
+    }
+
+    /// A frontend's calls take effect in the order it made them, though each runs on whichever
+    /// worker takes it: of two writes made one after the other, the first could land last.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn calls_take_effect_in_the_order_they_were_made() {
+        let profile = tempfile::tempdir().expect("profile");
+        let (options, _) = embedded(profile.path(), None);
+        let (core, _events) = CoreHandle::open(options).await.expect("opens");
+        let writes: Vec<_> = (0..200)
+            .map(|n| {
+                tokio::spawn(core.call("setViewPreference", vec![json!("kchess:order"), json!(n)]))
+            })
+            .collect();
+        for write in writes {
+            write.await.expect("ran").expect("written");
+        }
+        let preferences = core.call("viewPreferences", vec![]).await.expect("read");
+        assert_eq!(preferences["kchess:order"], json!(199));
+        core.close().await;
+    }
+
+    /// A call its frontend drops stops in the core: the sign-in it began stops listening.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_dropped_call_stops_its_work() {
+        let profile = tempfile::tempdir().expect("profile");
+        let (options, _) = embedded(profile.path(), None);
+        let (core, mut events) = CoreHandle::open(options).await.expect("opens");
+        let signing_in = tokio::spawn(core.call("connectLichess", vec![]));
+        let page = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                match events.recv().await {
+                    Some(ClientEvent::Event(CoreEvent::HostRequest(request)))
+                        if matches!(request.request, HostRequest::OpenExternal(_)) =>
+                    {
+                        break request;
+                    }
+                    Some(_) => {}
+                    None => panic!("the events ended"),
+                }
+            }
+        })
+        .await
+        .expect("the sign-in page opens");
+        let HostRequest::OpenExternal(page) = page.request else {
+            unreachable!()
+        };
+        let port: u16 = page
+            .split("redirect_uri=http%3A%2F%2F127.0.0.1%3A")
+            .nth(1)
+            .and_then(|rest| rest.split('%').next())
+            .and_then(|port| port.parse().ok())
+            .unwrap_or_else(|| panic!("a loopback redirect in {page}"));
+        signing_in.abort();
+        let stopped = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .is_ok()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(
+            stopped.is_ok(),
+            "the sign-in still listens after its call was dropped"
+        );
         core.close().await;
     }
 

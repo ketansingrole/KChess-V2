@@ -105,7 +105,7 @@ fn close(pending: &Pending) {
 /// A connection to the profile's core. Cloning shares it.
 #[derive(Clone)]
 pub struct Client {
-    sender: mpsc::Sender<Frame>,
+    sender: mpsc::UnboundedSender<Frame>,
     pending: Pending,
     next: Arc<AtomicU64>,
     connection: u64,
@@ -178,7 +178,9 @@ impl Client {
         };
 
         let pending: Pending = Arc::new(Mutex::new(Some(HashMap::new())));
-        let (sender, mut queue) = mpsc::channel::<Frame>(1024);
+        // Unbounded: a call is queued as it is made, so calls reach the core in the order they were
+        // made, and a cancel or a focus change is never lost to a full queue.
+        let (sender, mut queue) = mpsc::unbounded_channel::<Frame>();
         // Dropped when the writer ends, which ends the reader too: the connection closes only
         // once both halves are gone.
         let (writer_done, mut written) = oneshot::channel::<()>();
@@ -269,8 +271,10 @@ impl Client {
         &self.release
     }
 
-    /// Runs a core method; the future resolves on any executor. Dropped before its answer, it
-    /// cancels the call: the core stops the work, not only the reply (`cancel`).
+    /// Runs a core method; the future resolves on any executor. The call is sent now, before
+    /// the future is first polled, so the core starts calls in the order they were made.
+    /// Dropped before its answer, it cancels the call: the core stops the work, not only the
+    /// reply (`cancel`).
     pub fn call(
         &self,
         method: &str,
@@ -285,37 +289,35 @@ impl Client {
             .ok()
             .and_then(|mut pending| pending.as_mut().map(|p| p.insert(id, answer)))
             .is_some();
-        let (sender, pending) = (self.sender.clone(), Arc::clone(&self.pending));
         let frame = Frame::Call {
             id,
             method: method.to_string(),
             args,
         };
+        let sent = admitted && self.sender.send(frame).is_ok();
+        let call = Unanswered {
+            id,
+            sender: self.sender.clone(),
+            pending: Arc::clone(&self.pending),
+            sent,
+        };
         async move {
-            if !admitted {
+            if !call.sent {
                 return Err(STOPPED.into());
             }
-            let mut call = Unanswered {
-                id,
-                sender,
-                pending,
-                sent: false,
-            };
-            if call.sender.send(frame).await.is_err() {
-                return Err(STOPPED.into());
-            }
-            call.sent = true;
-            answered.await.unwrap_or_else(|_| Err(STOPPED.into()))
+            let answer = answered.await.unwrap_or_else(|_| Err(STOPPED.into()));
+            drop(call);
+            answer
         }
     }
 
     pub fn focus(&self, focused: bool) {
-        let _ = self.sender.try_send(Frame::Focus { focused });
+        let _ = self.sender.send(Frame::Focus { focused });
     }
 
     /// Tells the core this client has no window open: what it started stops.
     pub fn suspend(&self) {
-        let _ = self.sender.try_send(Frame::Suspend);
+        let _ = self.sender.send(Frame::Suspend);
     }
 }
 
@@ -323,7 +325,7 @@ impl Client {
 /// forgets the call and, once sent, tells the core to cancel it.
 struct Unanswered {
     id: u64,
-    sender: mpsc::Sender<Frame>,
+    sender: mpsc::UnboundedSender<Frame>,
     pending: Pending,
     sent: bool,
 }
@@ -336,17 +338,7 @@ impl Drop for Unanswered {
             .ok()
             .and_then(|mut pending| pending.as_mut().and_then(|p| p.remove(&self.id)));
         if self.sent && waiting.is_some() {
-            // A full queue holds the cancel back rather than losing it: the core would go on
-            // with work nobody waits for once it reads again.
-            if let Err(mpsc::error::TrySendError::Full(cancel)) =
-                self.sender.try_send(Frame::Cancel { id: self.id })
-                && let Ok(runtime) = tokio::runtime::Handle::try_current()
-            {
-                let sender = self.sender.clone();
-                runtime.spawn(async move {
-                    let _ = sender.send(cancel).await;
-                });
-            }
+            let _ = self.sender.send(Frame::Cancel { id: self.id });
         }
     }
 }
@@ -476,25 +468,36 @@ mod tests {
         let bundled = Path::new("/Applications/KChess.app/Contents/MacOS/kchess-service");
         assert_eq!(service_binary(bundled, true), bundled);
     }
-    /// A call dropped while the queue to the core was full forgot its cancel, so the core went
-    /// on with it once the queue drained.
+
+    /// A call was sent only once its future was first polled, on whatever worker picked it up,
+    /// so a stop made before a start could reach the core after it. Each is now sent as it is
+    /// made, and one dropped before it was polled is still cancelled.
     #[tokio::test]
-    async fn a_call_dropped_on_a_full_queue_is_still_cancelled() {
-        let (sender, mut queue) = mpsc::channel::<Frame>(1);
-        sender.try_send(Frame::Suspend).unwrap();
-        let (answer, _answered) = oneshot::channel();
-        let pending: Pending = Arc::new(Mutex::new(Some(HashMap::from([(7, answer)]))));
-        drop(Unanswered {
-            id: 7,
+    async fn calls_reach_the_core_in_the_order_they_were_made() {
+        let (sender, mut queue) = mpsc::unbounded_channel();
+        let client = Client {
             sender,
-            pending,
-            sent: true,
-        });
-        assert!(matches!(queue.recv().await, Some(Frame::Suspend)));
-        let next = tokio::time::timeout(Duration::from_secs(5), queue.recv()).await;
-        assert!(
-            matches!(next, Ok(Some(Frame::Cancel { id: 7 }))),
-            "the cancel was lost"
+            pending: Arc::new(Mutex::new(Some(HashMap::new()))),
+            next: Arc::new(AtomicU64::new(1)),
+            connection: 1,
+            release: String::new(),
+        };
+        let stop = client.call("stopAnalysis", Vec::new());
+        let start = client.call("startAnalysis", Vec::new());
+        drop(stop);
+        let mut sent = Vec::new();
+        while let Ok(frame) = queue.try_recv() {
+            sent.push(match frame {
+                Frame::Call { id, method, .. } => format!("call {id} {method}"),
+                Frame::Cancel { id } => format!("cancel {id}"),
+                _ => "other".to_string(),
+            });
+        }
+        assert_eq!(
+            sent,
+            ["call 1 stopAnalysis", "call 2 startAnalysis", "cancel 1"]
         );
+        drop(start);
+        assert!(matches!(queue.try_recv(), Ok(Frame::Cancel { id: 2 })));
     }
 }

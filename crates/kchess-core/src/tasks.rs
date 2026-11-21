@@ -5,6 +5,7 @@
 
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
+use std::task::{Context, Poll, Waker};
 
 use futures_util::FutureExt;
 
@@ -16,6 +17,31 @@ pub const ABORTED: &str = "This operation was aborted";
 /// The error of work stopped because its caller cancelled it.
 pub(crate) fn aborted() -> CoreError {
     CoreError::aborted(ABORTED)
+}
+
+/// Starts `work` here and now, and hands back the rest of it to await or spawn.
+///
+/// A spawned task first runs whenever a worker picks it up, so two calls spawned one after the
+/// other can start in either order: a stop sent before a start could reach the engine after it.
+/// What runs `work` up to its first wait here keeps the order its caller made the calls in.
+/// The rest runs wherever the returned future is awaited, which polls `work` again with its own
+/// waker before it waits.
+pub fn started<F>(work: F) -> impl Future<Output = F::Output> + Send + 'static + use<F>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    let mut work = Box::pin(work);
+    // Past tokio's budget for this task, a lock or a queue answers "not yet" without taking a
+    // place in line, which would give the order away.
+    let first = tokio::task::unconstrained(work.as_mut())
+        .poll_unpin(&mut Context::from_waker(Waker::noop()));
+    async move {
+        match first {
+            Poll::Ready(output) => output,
+            Poll::Pending => work.await,
+        }
+    }
 }
 
 /// `work` panicked; the panic hook has logged where.
