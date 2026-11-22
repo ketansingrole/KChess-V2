@@ -13,6 +13,7 @@
 mod analysis;
 mod assistance;
 mod audit;
+mod background;
 mod chesscom;
 mod computer;
 mod fake_chesscom;
@@ -801,6 +802,41 @@ impl Harness {
             );
             self.tick();
         }
+    }
+
+    /// Close the main window as its close button does, and wait until it has gone.
+    pub fn close_window(&mut self) {
+        let window = self.window;
+        self.cx.update(|cx| crate::menu::close_window(window, cx));
+        self.wait_for_app("the window to close", |cx| cx.windows().is_empty());
+    }
+
+    /// `wait_for` for an app that may have no window (running in the background): `ready`
+    /// reads the app alone.
+    pub fn wait_for_app(&mut self, what: &str, mut ready: impl FnMut(&mut App) -> bool) {
+        let started = Instant::now();
+        loop {
+            self.cx.run_until_parked();
+            if self.cx.update(&mut ready) {
+                return;
+            }
+            assert!(
+                started.elapsed() < TIMEOUT,
+                "timed out after {TIMEOUT:?} waiting for {what}"
+            );
+            self.tick();
+        }
+    }
+
+    /// Wait for the main window to open again (from the tray, a notification), and drive it
+    /// from now on.
+    pub fn adopt_window(&mut self) {
+        self.wait_for_app("the window to open again", |cx| !cx.windows().is_empty());
+        self.window = self
+            .cx
+            .update(|cx| cx.windows().first().copied())
+            .expect("the main window");
+        self.find("settings");
     }
 
     /// Open a category of Settings from its dialog's list ("Sound").

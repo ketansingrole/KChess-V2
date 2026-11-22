@@ -854,6 +854,7 @@ impl OnlineState {
                 let id = challenge.id.clone();
                 if !self.challenges.iter().any(|known| known.id == challenge.id) {
                     self.challenges.push(challenge);
+                    cx.notify();
                 }
                 crate::notifications::challenge(&id, &title, &body, cx);
             }

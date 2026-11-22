@@ -8,6 +8,7 @@ refuses to release with nothing there.
 
 ## Unreleased
 
+- **Keep KChess running**: close the window and KChess can stay in the menu bar or system tray, still telling you about challenges and your moves. Answer a challenge or open a puzzle from its menu. Choose this, and opening KChess when you log in, in Settings → Notifications.
 - **Pages that hold still**: the move list, engine depth, Voice button, Studies tabs, charts and opening explorer stay put as you step through a game, pages open without jumping, and a dialog's error leaves its buttons in place. Following keeps its order as players come online.
 - **Steadier Lichess games**: your games say whose move it is, and Offer draw and Takeback stay where they are while an offer waits, so Resign never slides under your pointer. A rated puzzle’s rating change appears without pushing the page down.
 - **Fixes**: If a study chapter couldn't be saved when you quit, Retry now saves it. The opening explorer offers Connect Lichess or Try again, and looks again on its own when it can. Small buttons, such as Accept, Train and Watch, are easier to click. Plus many smaller fixes.

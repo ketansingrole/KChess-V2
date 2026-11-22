@@ -88,17 +88,10 @@ fn open_from(tag: &str, action: Option<&str>, cx: &mut App) {
     show_page(NotificationKind::from_key(tag).and_then(game_page), cx);
 }
 
-/// KChess comes forward, on `page` when there is one.
+/// KChess comes forward, on `page` when there is one, opening its window when it was running
+/// in the background without one.
 fn show_page(page: Option<Page>, cx: &mut App) {
-    cx.activate(true);
-    if let Some(window) = cx.windows().into_iter().next() {
-        let _ = window.update(cx, |_, window, cx| {
-            window.activate_window();
-            if let Some(page) = page {
-                crate::shell::open(page, window, cx);
-            }
-        });
-    }
+    crate::background::show_window(page, cx);
 }
 
 /// A challenge notification's tag: this, then the challenge's id.
@@ -106,7 +99,7 @@ const CHALLENGE_TAG: &str = "challenge:";
 
 /// Accept or decline a challenge from its notification: Accept brings KChess forward on Play on
 /// Lichess, where the game starts; Decline answers it without; the body opens the challenges.
-fn answer_challenge(id: &str, action: Option<&str>, cx: &mut App) {
+pub(crate) fn answer_challenge(id: &str, action: Option<&str>, cx: &mut App) {
     let online = crate::online::handle(cx);
     let challenge = online
         .read(cx)
@@ -165,7 +158,7 @@ pub fn your_move(game: &kchess_contracts::types::OngoingGame, cx: &mut App) -> O
 }
 
 /// Open correspondence game `account/id` on the board, KChess in front.
-fn open_game(game: &str, cx: &mut App) {
+pub(crate) fn open_game(game: &str, cx: &mut App) {
     show_page(Some(Page::Online), cx);
     if let Some((account, id)) = game.split_once('/') {
         let (account, id) = (account.to_string(), id.to_string());
@@ -417,6 +410,29 @@ fn sender() -> String {
 #[cfg(target_os = "macos")]
 const DEV_SENDER: &str = "com.kchess.app.dev";
 
+/// Tell the person, as a system notification while notifications are on, that KChess still runs
+/// with its window closed; whether it was told.
+pub fn still_running(title: &str, body: &str, cx: &mut App) -> bool {
+    let Some(frontend) = cx
+        .try_global::<crate::settings::SettingsHandle>()
+        .map(|settings| settings.0.read(cx).settings.frontend.clone())
+    else {
+        return false;
+    };
+    if !frontend.notifications_enabled || !crate::core::alerts_here(cx) {
+        return false;
+    }
+    if through_gpui() {
+        post_tagged(RUNNING_TAG.to_string(), title, body, Vec::new(), false, cx);
+    } else {
+        post_library(title, body, false);
+    }
+    true
+}
+
+/// The tag of the notification saying KChess still runs; a click opens it.
+const RUNNING_TAG: &str = "running";
+
 /// Alert the player about `kind`.
 pub fn desktop(kind: NotificationKind, title: &str, body: &str, cx: &mut App) -> Outcome {
     alert(kind, None, title, body, cx)
@@ -452,38 +468,38 @@ fn alert(
                 None => post(kind, title, body, sound, cx),
             }
         }
-        Outcome::System => {
-            let (title, body, sound) = (
-                title.to_string(),
-                body.to_string(),
-                settings.frontend.notify_sound,
-            );
-            // The system call can wait on the notification centre; it stays off the UI thread.
-            std::thread::spawn(move || {
-                #[cfg(target_os = "macos")]
-                {
-                    static SENDER: std::sync::Once = std::sync::Once::new();
-                    SENDER.call_once(|| {
-                        notify_rust::set_application(&sender()).warn_on_err();
-                    });
-                }
-                let mut notification = notify_rust::Notification::new();
-                notification.summary(&title).body(&body);
-                if sound {
-                    notification.sound_name("default");
-                }
-                if let Err(cause) = notification.show() {
-                    crate::log::write(
-                        kchess_contracts::Level::Warn,
-                        "notify",
-                        &format!("Notification failed: {cause}"),
-                    );
-                }
-            });
-        }
+        Outcome::System => post_library(title, body, settings.frontend.notify_sound),
         _ => {}
     }
     outcome
+}
+
+/// A system notification through the notification library, for a binary GPUI cannot send as
+/// (`through_gpui`).
+fn post_library(title: &str, body: &str, sound: bool) {
+    let (title, body) = (title.to_string(), body.to_string());
+    // The system call can wait on the notification centre; it stays off the UI thread.
+    std::thread::spawn(move || {
+        #[cfg(target_os = "macos")]
+        {
+            static SENDER: std::sync::Once = std::sync::Once::new();
+            SENDER.call_once(|| {
+                notify_rust::set_application(&sender()).warn_on_err();
+            });
+        }
+        let mut notification = notify_rust::Notification::new();
+        notification.summary(&title).body(&body);
+        if sound {
+            notification.sound_name("default");
+        }
+        if let Err(cause) = notification.show() {
+            crate::log::write(
+                kchess_contracts::Level::Warn,
+                "notify",
+                &format!("Notification failed: {cause}"),
+            );
+        }
+    });
 }
 
 #[cfg(test)]

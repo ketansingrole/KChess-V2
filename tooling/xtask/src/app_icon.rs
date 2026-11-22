@@ -301,6 +301,45 @@ fn framed(theme: &Theme, size: u32, inset: f64) -> Result<RgbaImage> {
     Ok(canvas)
 }
 
+/// The rook alone as a macOS template image at `size` pixels: black, its opacity the shape,
+/// filling the square but for a thin margin, which the menu bar tints for light, dark and
+/// highlighted. The same shapes as the tile, so the menu bar shows the app's own rook.
+fn template(size: u32) -> Result<RgbaImage> {
+    let big = 1024 * SUPERSAMPLE;
+    let rook = coverage(big, &rook_paths(big))?;
+    let n = big as usize;
+    let (mut left, mut top, mut right, mut bottom) = (n, n, 0, 0);
+    for (at, alpha) in rook.iter().enumerate() {
+        if *alpha > 0 {
+            let (x, y) = (at % n, at / n);
+            (left, top) = (left.min(x), top.min(y));
+            (right, bottom) = (right.max(x), bottom.max(y));
+        }
+    }
+    if left > right {
+        return Err("The rook has no shape.".into());
+    }
+    // A square around the rook, 4% larger than its taller side.
+    let side = ((right - left).max(bottom - top) as f64 * 1.04).ceil() as i64;
+    let (cx, cy) = ((left + right) as i64 / 2, (top + bottom) as i64 / 2);
+    let (x0, y0) = (cx - side / 2, cy - side / 2);
+    let square: RgbaImage = ImageBuffer::from_fn(side as u32, side as u32, |x, y| {
+        let (sx, sy) = (x0 + i64::from(x), y0 + i64::from(y));
+        let alpha = if (0..n as i64).contains(&sx) && (0..n as i64).contains(&sy) {
+            rook[sy as usize * n + sx as usize]
+        } else {
+            0
+        };
+        Rgba([0, 0, 0, alpha])
+    });
+    Ok(imageops::resize(
+        &square,
+        size,
+        size,
+        imageops::FilterType::Lanczos3,
+    ))
+}
+
 /// The light icon as an SVG, from the same shapes.
 pub fn svg() -> String {
     let mut shapes = Vec::new();
@@ -459,6 +498,10 @@ pub fn write() -> Result {
         &framed(&DARK, 512, MACOS_INSET)?,
         &build.join("icon-dark.png"),
     )?;
+    // The menu bar's icon (macOS), at 18 points' 2x raster, and the system tray's (Linux, whose
+    // trays scale it to their own size).
+    save(&template(36)?, &build.join("tray-template.png"))?;
+    save(&framed(&LIGHT, 64, 0.0)?, &build.join("tray.png"))?;
     // The startup screen shows it at 72 points; this is its 2x raster.
     save(&framed(&LIGHT, 144, 0.0)?, &assets.join("icon-splash.png"))?;
     write_ico(&framed(&LIGHT, 256, 0.0)?, &build.join("icon.ico"))?;
@@ -526,6 +569,27 @@ mod tests {
             let difference = largest_difference(&drawn, &reference);
             assert!(difference <= 2, "{name} differs by {difference}");
         }
+    }
+
+    /// The tray icons shipped are this drawing's: regenerate them (`cargo xtask app-icon`) after
+    /// changing it.
+    #[test]
+    fn the_tray_icons_are_the_drawn_ones() {
+        let build = root().join("apps/gpui/build");
+        for (name, drawn) in [
+            ("tray-template.png", template(36).unwrap()),
+            ("tray.png", framed(&LIGHT, 64, 0.0).unwrap()),
+        ] {
+            let shipped = image::open(build.join(name)).unwrap().to_rgba8();
+            let difference = largest_difference(&drawn, &shipped);
+            assert!(difference <= 2, "{name} differs by {difference}");
+        }
+        // A template is black: the menu bar takes only its opacity.
+        let template = image::open(build.join("tray-template.png"))
+            .unwrap()
+            .to_rgba8();
+        assert!(template.pixels().all(|pixel| pixel.0[..3] == [0, 0, 0]));
+        assert!(template.pixels().any(|pixel| pixel[3] == 255));
     }
 
     #[test]

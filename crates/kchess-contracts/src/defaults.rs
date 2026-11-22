@@ -1,8 +1,8 @@
 //! The default preferences, as data.
 
 use crate::types::{
-    Appearance, CloseAction, CoordinateMode, CoreSettings, EngineLevel, FrontendPreferences, PieceAnimation,
-    PromotionMode, ReviewAuto, Settings,
+    Appearance, CloseAction, CoordinateMode, CoreSettings, EngineLevel, FrontendPreferences,
+    PieceAnimation, PromotionMode, ReviewAuto, Settings,
 };
 use kchess_domain::training::engine_levels;
 
