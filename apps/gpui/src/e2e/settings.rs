@@ -383,6 +383,59 @@ fn updates_links_to_the_website_source_and_issues(cx: &mut gpui_kit::TestAppCont
     }
 }
 
+/// Settings → Updates with a newer release: at every window size the badge beside the version
+/// stays clear of the buttons and inside the dialog (the buttons once covered "Update available").
+#[gpui_kit::test]
+fn the_update_badge_is_never_under_the_buttons(cx: &mut gpui_kit::TestAppContext) {
+    use crate::updates::{Phase, UpdatesHandle};
+    use gpui_kit::{ElementId, px, size};
+    let mut app = Harness::start(cx);
+    app.with_window(|_, cx| {
+        let updates = cx.global::<UpdatesHandle>().0.clone();
+        updates.update(cx, |updates, cx| {
+            updates.version = Some("2026.11.9".into());
+            updates.released = Some("2026-11-22".into());
+            updates.error = None;
+            updates.phase = Phase::Available;
+            cx.notify();
+        });
+    });
+    app.open_settings("Updates");
+    for (width, height) in super::SIZES {
+        app.cx
+            .simulate_window_resize(app.window, size(px(width), px(height)));
+        app.settle();
+        let badge = app
+            .with_window(|window, _| window.try_find(ElementId::from("update-badge")))
+            .expect("the badge");
+        assert_eq!(badge.label(), Some("Update available"));
+        assert!(
+            badge.visible(),
+            "at {width}×{height} the badge {:?} is clipped",
+            badge.bounds()
+        );
+        let badge = badge.bounds();
+        let dialog = app.find(super::SETTINGS_SHOWN).bounds();
+        assert!(
+            badge.left() >= dialog.left() && badge.right() <= dialog.right(),
+            "at {width}×{height} the badge {badge:?} leaves the dialog {dialog:?}"
+        );
+        for button in ["update-download", "update-check"] {
+            let bounds = app.with_window(|window, _| {
+                window
+                    .try_find(ElementId::from(button))
+                    .map(|found| found.bounds())
+            });
+            if let Some(bounds) = bounds {
+                assert!(
+                    !badge.intersects(&bounds),
+                    "at {width}×{height} the badge {badge:?} is under {button} {bounds:?}"
+                );
+            }
+        }
+    }
+}
+
 #[gpui_kit::test]
 fn the_core_downloads_the_voice_model_from_offline_downloads(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
