@@ -52,6 +52,36 @@ fn stepping_holds_still(app: &mut Harness, ids: &[ElementId], steps: &[&'static 
     }
 }
 
+/// The bell stays at the top bar's right end as a notification comes in, and as Offline shows
+/// beside it.
+#[gpui_kit::test]
+fn the_bell_holds_still_as_notifications_and_status_come(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let bell: Vec<ElementId> = vec!["notifications-button".into()];
+    app.find("notifications-button");
+    let before = places(&mut app, &bell);
+    app.cx.update(|cx| {
+        crate::notifications::centre::record(
+            kchess_contracts::types::NotificationInput {
+                title: "Game over".into(),
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+    app.find("notifications-unread");
+    app.settle();
+    assert_eq!(
+        places(&mut app, &bell),
+        before,
+        "the unread dot moved the bell"
+    );
+    app.set_online(false);
+    app.wait_for("KChess to be offline", |_, cx| !crate::network::online(cx));
+    app.settle();
+    assert_eq!(places(&mut app, &bell), before, "Offline moved the bell");
+}
+
 #[gpui_kit::test]
 fn over_the_board_holds_still_while_you_step_back(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);

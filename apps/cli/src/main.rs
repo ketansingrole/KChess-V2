@@ -13,7 +13,7 @@ mod review;
 mod wait;
 
 use kchess_contracts::calls;
-use kchess_contracts::check::{Fen, GameId, LichessId, StudyId};
+use kchess_contracts::check::{Fen, GameId, LichessId, NotificationId, StudyId};
 use kchess_contracts::types::{
     AnalysisRequest, LookupOptions, PositionLookupKind, WatchPhase, WatchTarget,
 };
@@ -92,6 +92,11 @@ commands! {
     }
     Position "position" [] {
         "[--variant name] <fen|startpos|moves>" => "Print whose turn, check or mate, and the legal moves",
+    }
+    Notifications "notifications" [] {
+        "" => "Print the notifications kept, newest first, as JSON",
+        "read [id]" => "Mark one notification read, or all of them",
+        "clear [id]" => "Remove one notification, or all of them",
     }
     Watch "watch" [] {
         "[channel|link]" => "Stream Lichess TV, a game or a broadcast as JSON lines",
@@ -418,6 +423,18 @@ async fn with_core(
                 );
                 watched?;
             }
+            Command::Notifications => {
+                let entries = match notifications_change(rest)? {
+                    None => core.request(calls::Notifications {}).await?,
+                    Some((Change::Read, id)) => {
+                        core.request(calls::MarkNotificationsRead { id }).await?
+                    }
+                    Some((Change::Clear, id)) => {
+                        core.request(calls::ClearNotifications { id }).await?
+                    }
+                };
+                print(json!(entries));
+            }
             Command::Explore => {
                 let (kind, fen, options) = explore_request(rest)?;
                 core.request(calls::ResumeOnline {}).await?;
@@ -463,6 +480,33 @@ async fn linked_pgn(core: &CoreClient, link: &str) -> Result<String, String> {
         Ok(chapter.pgn)
     } else {
         Err("pgn takes a lichess.org game or study link.".into())
+    }
+}
+
+/// What `notifications read` or `notifications clear` changes.
+#[derive(Debug, PartialEq)]
+enum Change {
+    Read,
+    Clear,
+}
+
+/// What `notifications` was given: nothing to list them, or `read`/`clear` and an optional id
+/// (every notification without one).
+fn notifications_change(
+    words: &[String],
+) -> Result<Option<(Change, Option<NotificationId>)>, String> {
+    let change = match words.first().map(String::as_str) {
+        None => return Ok(None),
+        Some("read") => Change::Read,
+        Some("clear") => Change::Clear,
+        Some(_) => {
+            return Err("notifications takes read or clear, and a notification's id.".into());
+        }
+    };
+    match words.get(1..).unwrap_or_default() {
+        [] => Ok(Some((change, None))),
+        [id] => Ok(Some((change, Some(NotificationId(id.clone()))))),
+        _ => Err("notifications takes one notification's id at most.".into()),
     }
 }
 
@@ -801,6 +845,26 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notifications_list_or_change_one_or_all() {
+        let words = |text: &str| {
+            text.split_whitespace()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(notifications_change(&words("")), Ok(None));
+        assert_eq!(
+            notifications_change(&words("read")),
+            Ok(Some((Change::Read, None)))
+        );
+        assert_eq!(
+            notifications_change(&words("clear a-1")),
+            Ok(Some((Change::Clear, Some(NotificationId("a-1".into())))))
+        );
+        assert!(notifications_change(&words("delete")).is_err());
+        assert!(notifications_change(&words("clear a b")).is_err());
+    }
 
     #[test]
     fn every_command_is_in_the_help_and_named_once() {

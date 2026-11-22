@@ -32,8 +32,18 @@ use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Side, Tone};
 use kchess_board::analysis::Opening;
-use kchess_nav::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
+use kchess_nav::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, side_padding};
 use kchess_ui::icon;
+
+/// A broadcast card's narrowest: the cards of a row share the page's width.
+const CARD_MIN: Pixels = px(240.);
+const GRID_GAP: Pixels = px(12.);
+/// A finished broadcast's row's narrowest, and the width of its cover.
+const ROW_MIN: Pixels = px(320.);
+const ROW_GAP: Pixels = px(8.);
+const THUMB_WIDTH: Pixels = px(64.);
+/// A round's board's narrowest, its names and result included.
+const CELL_MIN: Pixels = px(190.);
 
 /// Typing pauses this long before a search is sent.
 const SEARCH_DELAY: Duration = Duration::from_millis(350);
@@ -698,13 +708,16 @@ impl WatchPage {
         palette: &Palette,
     ) -> AnyElement {
         if self.broadcasts.tour.is_none() {
-            return self.directory(cx, palette);
+            return self.directory(window, cx, palette);
         }
         if self.broadcasts.current().is_some() {
             return self.broadcast_game(window, cx, palette);
         }
         let games = self.broadcasts.games.clone();
         let grid_evaluations = grid_evaluations(cx);
+        // The boards of a row share the page's width, each at least `CELL_MIN`.
+        let width = self.layout.width(window) - side_padding(window) * 2.;
+        let (count, cell_width) = widgets::columns(width, CELL_MIN, GRID_GAP);
         let cells: Vec<AnyElement> = games
             .iter()
             .enumerate()
@@ -730,7 +743,8 @@ impl WatchPage {
                     .aria_label(format!("{} – {}", label(&game.white), label(&game.black)))
                     .gap(px(4.))
                     .p(px(8.))
-                    .w(px(190.))
+                    .w(cell_width)
+                    .flex_none()
                     .rounded(radii::BOX)
                     .border_1()
                     .border_color(palette.border)
@@ -745,7 +759,10 @@ impl WatchPage {
                     .child(
                         h_flex()
                             .w_full()
-                            .h(px(174.))
+                            // Square boards: the cell's width inside its padding, less the bar.
+                            .h(cell_width
+                                - px(16.)
+                                - if estimate.is_some() { px(16.) } else { px(0.) })
                             .gap(px(8.))
                             .when_some(estimate.clone(), |row, (line, _)| {
                                 row.child(
@@ -808,16 +825,28 @@ impl WatchPage {
             .when(self.broadcasts.ended && games.is_empty(), |body| {
                 body.child(widgets::hint("No games in this round yet", palette))
             })
-            .child(h_flex().flex_wrap().gap(px(12.)).children(cells))
+            .children({
+                let mut cells = cells.into_iter().peekable();
+                let mut rows = Vec::new();
+                while cells.peek().is_some() {
+                    rows.push(h_flex().gap(GRID_GAP).children(cells.by_ref().take(count)));
+                }
+                rows
+            })
             .into_any_element()
     }
 
     /// The tournaments: live now, coming up and recently finished, or the search's results.
-    fn directory(&mut self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
+    fn directory(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        palette: &Palette,
+    ) -> AnyElement {
         let broadcasts = &self.broadcasts;
         let searching = !broadcasts.query.read(cx).value().trim().is_empty();
-        let sections: Vec<(&str, Vec<BroadcastSummary>)> = if searching {
-            vec![("Search results", broadcasts.results.clone())]
+        let sections: Vec<(Option<BroadcastSection>, &str, Vec<BroadcastSummary>)> = if searching {
+            vec![(None, "Search results", broadcasts.results.clone())]
         } else {
             let list = broadcasts.list.clone().unwrap_or_default();
             [
@@ -828,16 +857,19 @@ impl WatchPage {
             .into_iter()
             .map(|(key, title)| {
                 (
+                    Some(key),
                     title,
                     list.iter()
                         .filter(|item| item.section == key)
                         .cloned()
-                        .collect(),
+                        .collect::<Vec<_>>(),
                 )
             })
-            .filter(|(_, items): &(&str, Vec<BroadcastSummary>)| !items.is_empty())
+            .filter(|(_, _, items)| !items.is_empty())
             .collect()
         };
+        // The page's width inside its padding: the grids share it out.
+        let width = self.layout.width(window) - side_padding(window) * 2.;
         let disabled = Self::playing_own_game(cx);
         let now = kchess_games::now_ms();
         let status = status_line(
@@ -893,105 +925,247 @@ impl WatchPage {
                     ))
                 },
             )
-            .children(sections.into_iter().map(|(title, items)| {
+            .children(sections.into_iter().map(|(section, title, items)| {
+                let list = if section == Some(BroadcastSection::Past) {
+                    self.broadcast_rows(&items, width, &mut index, disabled, cx, palette)
+                } else {
+                    self.broadcast_cards(&items, width, &mut index, disabled, now, cx, palette)
+                };
                 v_flex()
                     .gap(px(12.))
                     .child(widgets::heading(title, palette))
-                    .child(h_flex().flex_wrap().items_stretch().gap(px(12.)).children(
-                        items.into_iter().map(|item| {
-                            index += 1;
-                            let tour = item.tour_id.clone();
-                            let live = item.ongoing;
-                            // The cover, once it has arrived; the placeholder until then.
-                            let cover = item.image.as_deref().and_then(|url| {
-                                crate::remote_image::handle(cx)
-                                    .update(cx, |images, cx| images.get(url, cx))
-                            });
-                            v_flex()
-                                .id(("broadcast-card", index))
-                                .role(Role::Button)
-                                .keyboard_focus(palette.primary)
-                                .aria_label(item.tour_name.clone())
-                                .w(px(260.))
-                                .rounded(radii::BOX)
-                                .overflow_hidden()
-                                .border_1()
-                                .border_color(palette.border)
-                                .bg(palette.elevated)
-                                .when(disabled, |card| card.opacity(0.6))
-                                .when(!disabled, |card| {
-                                    card.cursor_pointer().pressable_card(palette).on_click(
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.open_tour(tour.clone(), window, cx)
-                                        }),
-                                    )
-                                })
-                                .child(
-                                    // Inside the card's border; GPUI does not clip
-                                    // to the card's rounded corners.
-                                    div()
-                                        .h(px(130.))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .overflow_hidden()
-                                        .rounded_t(radii::BOX - px(1.))
-                                        .bg(palette.accented)
-                                        .map(|area| match cover {
-                                            Some(cover) => area.child(
-                                                img(cover)
-                                                    .size_full()
-                                                    .rounded_t(radii::BOX - px(1.))
-                                                    .object_fit(ObjectFit::Cover),
-                                            ),
-                                            None => area.child(
-                                                icon("radio")
-                                                    .size(px(28.))
-                                                    .text_color(palette.text_muted),
-                                            ),
-                                        }),
-                                )
-                                .child(
-                                    v_flex()
-                                        .gap(px(4.))
-                                        .p(px(12.))
-                                        .child(
-                                            h_flex()
-                                                .justify_between()
-                                                .gap(px(8.))
-                                                .text_size(px(12.))
-                                                .text_color(palette.text_muted)
-                                                .child(div().truncate().child(
-                                                    item.round_name.clone().unwrap_or_default(),
-                                                ))
-                                                .child(
-                                                    div()
-                                                        .flex_none()
-                                                        .when(live, |time| {
-                                                            time.text_color(palette.error)
-                                                                .font_weight(FontWeight::MEDIUM)
-                                                        })
-                                                        .child(timing(&item, now)),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(14.))
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .child(item.tour_name.clone()),
-                                        )
-                                        .children(item.players.clone().map(|players| {
-                                            div()
-                                                .text_size(px(12.))
-                                                .text_color(palette.text_muted)
-                                                .line_clamp(2)
-                                                .child(players)
-                                        })),
-                                )
-                        }),
-                    ))
+                    .child(list)
             }))
             .into_any_element()
+    }
+
+    /// Live and coming broadcasts, and a search's: cards with their covers, as many to a row as
+    /// fit the page's width at `CARD_MIN` each, sharing it.
+    #[allow(clippy::too_many_arguments)]
+    fn broadcast_cards(
+        &self,
+        items: &[BroadcastSummary],
+        width: Pixels,
+        index: &mut usize,
+        disabled: bool,
+        now: f64,
+        cx: &mut Context<Self>,
+        palette: &Palette,
+    ) -> AnyElement {
+        let (count, card_width) = widgets::columns(width, CARD_MIN, GRID_GAP);
+        // Lichess's covers are twice as wide as they are tall.
+        let cover_height = (card_width / 2.).floor();
+        let mut cards = items
+            .iter()
+            .map(|item| {
+                *index += 1;
+                let tour = item.tour_id.clone();
+                let live = item.ongoing;
+                let cover = self.cover(item, cx);
+                v_flex()
+                    .id(("broadcast-card", *index))
+                    .test_support()
+                    .role(Role::Button)
+                    .keyboard_focus(palette.primary)
+                    .aria_label(item.tour_name.clone())
+                    .w(card_width)
+                    .flex_none()
+                    .rounded(radii::BOX)
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(palette.border)
+                    .bg(palette.elevated)
+                    .when(disabled, |card| card.opacity(0.6))
+                    .when(!disabled, |card| {
+                        card.cursor_pointer()
+                            .pressable_card(palette)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_tour(tour.clone(), window, cx)
+                            }))
+                    })
+                    .child(
+                        // Inside the card's border; GPUI does not clip to the card's rounded
+                        // corners.
+                        div()
+                            .h(cover_height)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .overflow_hidden()
+                            .rounded_t(radii::BOX - px(1.))
+                            .bg(palette.accented)
+                            .map(|area| match cover {
+                                Some(cover) => area.child(
+                                    img(cover)
+                                        .size_full()
+                                        .rounded_t(radii::BOX - px(1.))
+                                        .object_fit(ObjectFit::Cover),
+                                ),
+                                None => area.child(
+                                    icon("radio").size(px(28.)).text_color(palette.text_muted),
+                                ),
+                            }),
+                    )
+                    .child(
+                        v_flex()
+                            .gap(px(4.))
+                            .p(px(12.))
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .gap(px(8.))
+                                    .text_size(px(12.))
+                                    .text_color(palette.text_muted)
+                                    .child(
+                                        div()
+                                            .truncate()
+                                            .child(item.round_name.clone().unwrap_or_default()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .when(live, |time| {
+                                                time.text_color(palette.error)
+                                                    .font_weight(FontWeight::MEDIUM)
+                                            })
+                                            .child(timing(item, now)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .line_clamp(2)
+                                    .child(item.tour_name.clone()),
+                            )
+                            .children(item.players.clone().map(|players| {
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(palette.text_muted)
+                                    .line_clamp(2)
+                                    .child(players)
+                            })),
+                    )
+                    .into_any_element()
+            })
+            .peekable();
+        let mut rows = Vec::new();
+        while cards.peek().is_some() {
+            rows.push(
+                h_flex()
+                    .items_stretch()
+                    .gap(GRID_GAP)
+                    .children(cards.by_ref().take(count)),
+            );
+        }
+        v_flex().gap(GRID_GAP).children(rows).into_any_element()
+    }
+
+    /// Finished broadcasts: a row each with a small cover, as many to a line as fit at
+    /// `ROW_MIN`, so a long list takes little room.
+    fn broadcast_rows(
+        &self,
+        items: &[BroadcastSummary],
+        width: Pixels,
+        index: &mut usize,
+        disabled: bool,
+        cx: &mut Context<Self>,
+        palette: &Palette,
+    ) -> AnyElement {
+        let (count, row_width) = widgets::columns(width, ROW_MIN, ROW_GAP);
+        let mut rows = items
+            .iter()
+            .map(|item| {
+                *index += 1;
+                let tour = item.tour_id.clone();
+                let cover = self.cover(item, cx);
+                h_flex()
+                    .id(("broadcast-row", *index))
+                    .test_support()
+                    .role(Role::Button)
+                    .keyboard_focus(palette.primary)
+                    .aria_label(item.tour_name.clone())
+                    .w(row_width)
+                    .flex_none()
+                    .gap(px(12.))
+                    .p(px(8.))
+                    .rounded(radii::BOX)
+                    .border_1()
+                    .border_color(palette.border)
+                    .bg(palette.elevated)
+                    .when(disabled, |row| row.opacity(0.6))
+                    .when(!disabled, |row| {
+                        row.cursor_pointer()
+                            .pressable_card(palette)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_tour(tour.clone(), window, cx)
+                            }))
+                    })
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(THUMB_WIDTH)
+                            .h(THUMB_WIDTH / 2.)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .overflow_hidden()
+                            .rounded(radii::SMALL)
+                            .bg(palette.accented)
+                            .map(|area| match cover {
+                                Some(cover) => area.child(
+                                    img(cover)
+                                        .size_full()
+                                        .rounded(radii::SMALL)
+                                        .object_fit(ObjectFit::Cover),
+                                ),
+                                None => area.child(
+                                    icon("radio").size(px(16.)).text_color(palette.text_muted),
+                                ),
+                            }),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .truncate()
+                                    .child(item.tour_name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(palette.text_muted)
+                                    .truncate()
+                                    .child(
+                                        item.players
+                                            .clone()
+                                            .or_else(|| item.round_name.clone())
+                                            .unwrap_or_default(),
+                                    ),
+                            ),
+                    )
+                    .into_any_element()
+            })
+            .peekable();
+        let mut lines = Vec::new();
+        while rows.peek().is_some() {
+            lines.push(h_flex().gap(ROW_GAP).children(rows.by_ref().take(count)));
+        }
+        v_flex().gap(ROW_GAP).children(lines).into_any_element()
+    }
+
+    /// A broadcast's cover once it has arrived; the placeholder until then.
+    fn cover(
+        &self,
+        item: &BroadcastSummary,
+        cx: &mut Context<Self>,
+    ) -> Option<std::sync::Arc<Image>> {
+        let url = item.image.as_deref()?;
+        crate::remote_image::handle(cx).update(cx, |images, cx| images.get(url, cx))
     }
 
     /// Back from the board open to the round's boards.

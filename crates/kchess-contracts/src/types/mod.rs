@@ -54,6 +54,7 @@ mod games;
 mod insights;
 mod library;
 mod lookups;
+mod notifications;
 mod online;
 mod players;
 mod puzzles;
@@ -72,6 +73,7 @@ pub use games::*;
 pub use insights::*;
 pub use library::*;
 pub use lookups::*;
+pub use notifications::*;
 pub use online::*;
 pub use players::*;
 pub use puzzles::*;
@@ -146,6 +148,7 @@ pub enum ProfileArea {
     Usage,
     Engine,
     ViewPreferences,
+    Notifications,
 }
 
 /// `alerts:owner`: the connection whose window raises system notifications now (the window
