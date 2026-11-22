@@ -338,13 +338,18 @@ impl SettingsPage {
             .flex_wrap()
             .child(img("icon.png").size(px(52.)).flex_none())
             .child(
+                // As wide as its title and badge, so the buttons wrap below them rather than
+                // over them; it still grows into the space left.
                 v_flex()
-                    .flex_1()
+                    .flex_auto()
                     .min_w(px(200.))
                     .gap(px(4.))
                     .child(
+                        // On a narrow window the badge goes under the version.
                         h_flex()
+                            .flex_wrap()
                             .gap(px(8.))
+                            .gap_y(px(4.))
                             .child(
                                 div()
                                     .text_size(px(18.))
@@ -357,6 +362,10 @@ impl SettingsPage {
                             )
                             .children(badge(phase).map(|(label, look, glyph)| {
                                 widgets::icon_badge(icon(glyph), label, look, palette)
+                                    .id("update-badge")
+                                    .test_support()
+                                    .role(Role::Status)
+                                    .aria_label(label)
                             })),
                     )
                     .child(
