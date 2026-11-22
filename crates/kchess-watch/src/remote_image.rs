@@ -235,6 +235,17 @@ impl RemoteImages {
     }
 }
 
+impl RemoteImages {
+    /// How many pictures have arrived, for the end-to-end tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn arrived_count(&self) -> usize {
+        self.images
+            .values()
+            .filter(|state| matches!(state, State::Ready(_)))
+            .count()
+    }
+}
+
 /// What the page's tests read of the pictures.
 #[cfg(test)]
 pub mod probe {

@@ -14,6 +14,7 @@ refuses to release with nothing there.
 - **Steadier Lichess games**: your games say whose move it is, and Offer draw and Takeback stay where they are while an offer waits, so Resign never slides under your pointer. A rated puzzle’s rating change appears without pushing the page down.
 - **Type or say your answer in every drill**: Coordinates and Knight paths have a box to type the square and Voice under the board, as in your games, and Guess the move takes your guess by voice too. Say the square is now part of Name the square.
 - **Matching corners**: buttons, menus, dialogs, cards and panels now round their corners just like the board, as on Lichess. Boards in study and opening cards follow the card's edge, and Settings and the promotion picker stay inside their rounded corners.
+- **Roomier broadcasts**: Watch → Broadcasts fills your window with live and upcoming tournaments, their pictures larger on wide screens, finished ones in a compact list below, and a round's boards grow to use the width too.
 - **Fixes**: Broadcasts show their pictures again. If a study chapter couldn't be saved when you quit, Retry now saves it. The opening explorer offers Connect Lichess or Try again, and looks again on its own when it can. Small buttons are easier to click. Plus many smaller fixes.
 
 ## 2026.11.8 (2026-11-21)

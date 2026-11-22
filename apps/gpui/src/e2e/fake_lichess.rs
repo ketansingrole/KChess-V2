@@ -433,8 +433,19 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
     if let Some(answer) = tv(out, &request) {
         return answer;
     }
-    // Broadcasts are public: a tournament of two rounds, which a round's link finds.
+    // Broadcasts are public: a listing whose covers are KChess's icons, as Lichess names its
+    // pictures (`image.lichess.org`, which the app reads here); and a tournament of two rounds,
+    // which a round's link finds.
     match (request.method.as_str(), request.path()) {
+        ("GET", "/api/broadcast/top") => return reply(out, &broadcast_listing()),
+        ("GET", "/display") => {
+            let cover: &[u8] = match request.query("path").as_deref() {
+                Some("light.png") => include_bytes!("../../build/icon-light.png"),
+                Some("dark.png") => include_bytes!("../../build/icon-dark.png"),
+                _ => return not_found(out),
+            };
+            return kchess_testkit::respond(out, 200, "image/png", cover);
+        }
         ("GET", path) if path == format!("/api/broadcast/{BROADCAST_TOUR}") => {
             return reply(
                 out,
@@ -861,6 +872,75 @@ pub const VARIANT_STUDY: &str = "kcStudy2";
 const STUDY_PGN: &str = "[Event \"KChess study: Queen's Gambit\"]\n[ChapterName \"Queen's Gambit\"]\n\
 [Orientation \"black\"]\n\n1. d4 d5 2. c4 e6 { Declined } *\n\n\n\
 [Event \"KChess study: Second\"]\n\n1. e4 *\n\n\n";
+/// Lichess's featured broadcasts (`/api/broadcast/top`): two live, two coming up, four finished.
+fn broadcast_listing() -> Value {
+    let now = now_ms() as i64;
+    let hour = 3_600_000;
+    let entry = |tour: &str, name: &str, cover: Option<&str>, round: Value| {
+        let image = cover.map(|cover| {
+            format!(
+                "https://image.lichess.org/display?fmt=png&h=400&op=thumbnail&path={cover}&w=800"
+            )
+        });
+        json!({
+            "tour": {
+                "id": tour,
+                "name": name,
+                "image": image,
+                "info": { "players": "Carlsen, Nakamura, Firouzja, Caruana" },
+            },
+            "round": round,
+        })
+    };
+    let round = |id: &str, name: &str, state: Value| {
+        let mut round = json!({ "id": id, "name": name });
+        if let (Some(round), Some(state)) = (round.as_object_mut(), state.as_object()) {
+            round.extend(state.clone());
+        }
+        round
+    };
+    let past: Vec<Value> = [
+        "Spring Blitz",
+        "City Championship",
+        "Women's Open",
+        "Club Rapid",
+    ]
+    .iter()
+    .enumerate()
+    .map(|(index, name)| {
+        entry(
+            &format!("kcPast{index:02}"),
+            name,
+            (index % 2 == 0).then_some(if index % 4 == 0 {
+                "dark.png"
+            } else {
+                "light.png"
+            }),
+            round(
+                &format!("kcPastR{index}"),
+                "Round 9",
+                json!({ "finished": true, "finishedAt": now - (index as i64 + 1) * 24 * hour }),
+            ),
+        )
+    })
+    .collect();
+    json!({
+        "active": [
+            entry(BROADCAST_TOUR, "KChess Open", Some("light.png"),
+                round(BROADCAST_ROUNDS[1], "Round 2", json!({ "ongoing": true, "startsAt": now - hour }))),
+            entry("kcTour02", "Lakeside Rapid", Some("dark.png"),
+                round("kcRound3", "Round 5", json!({ "ongoing": true, "startsAt": now - 2 * hour }))),
+        ],
+        "upcoming": [
+            entry("kcTour03", "Autumn Classic", Some("dark.png"),
+                round("kcRound4", "Round 1", json!({ "startsAt": now + 3 * hour }))),
+            entry("kcTour04", "Junior Masters", None,
+                round("kcRound5", "Round 1", json!({ "startsAt": now + 26 * hour }))),
+        ],
+        "past": { "currentPageResults": past },
+    })
+}
+
 /// The broadcast a pasted lichess.org/broadcast link opens, and its two rounds.
 pub const BROADCAST_TOUR: &str = "kcTour01";
 pub const BROADCAST_ROUNDS: [&str; 2] = ["kcRound1", "kcRound2"];
