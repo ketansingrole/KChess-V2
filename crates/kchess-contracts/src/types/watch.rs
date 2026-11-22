@@ -232,3 +232,49 @@ pub struct BroadcastRoundPlace {
     pub tour_id: String,
     pub round_id: String,
 }
+/// A broadcast the player is alerted to: every round of a tournament (`round_id` none) or one
+/// round, told when one starts (`broadcast:round-started`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastAlert {
+    pub tour_id: String,
+    pub tour_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub round_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub round_name: Option<String>,
+    /// The rounds already told, or under way when the alert was set: never told (again).
+    #[serde(default)]
+    pub told: Vec<String>,
+}
+
+impl BroadcastAlert {
+    /// Ids Lichess could have given, a name, and a bounded list of rounds told.
+    pub fn readable(&self) -> bool {
+        let id = |id: &str| !id.is_empty() && id.len() <= 12;
+        id(&self.tour_id)
+            && self.round_id.as_deref().is_none_or(id)
+            && self.tour_name.len() <= 200
+            && self
+                .round_name
+                .as_ref()
+                .is_none_or(|name| name.len() <= 120)
+            && self.told.len() <= 100
+            && self.told.iter().all(|told| id(told))
+    }
+
+    /// Whether this alert covers `round` of its tournament.
+    pub fn covers(&self, tour: &str, round: &str) -> bool {
+        self.tour_id == tour && self.round_id.as_deref().is_none_or(|id| id == round)
+    }
+}
+
+/// `broadcast:round-started`: a round the player was alerted to went live.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastRoundStarted {
+    pub tour_id: String,
+    pub tour_name: String,
+    pub round_id: String,
+    pub round_name: String,
+}

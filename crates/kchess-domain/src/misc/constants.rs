@@ -67,6 +67,8 @@ crate::union!(
         GameEvents = "gameEvents",
         ComputerMove = "computerMove",
         Challenge = "challenge",
+        /// A broadcast round the player asked to be alerted to started.
+        Broadcast = "broadcast",
         Test = "test",
     }
 );

@@ -6,7 +6,8 @@ use crate::loading::Loading;
 use kchess_contracts::calls;
 use kchess_contracts::check::{BroadcastQuery, LichessId};
 use kchess_contracts::types::{
-    BroadcastGame, BroadcastSection, BroadcastSummary, BroadcastTourDetail, BroadcastUpdate,
+    BroadcastAlert, BroadcastGame, BroadcastSection, BroadcastSummary, BroadcastTourDetail,
+    BroadcastUpdate,
 };
 use kchess_domain::training::clock::format_clock;
 use kchess_domain::variant::Setup;
@@ -15,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
@@ -166,6 +168,10 @@ pub struct Broadcasts {
     /// The search for `query`: a later one replaces it.
     searching: Loading,
     pub(super) tour: Option<BroadcastTourDetail>,
+    /// The broadcasts the player is alerted to when a round starts (the core's).
+    pub(super) alerts: Vec<BroadcastAlert>,
+    /// Why the last change of an alert failed.
+    alert_error: Option<String>,
     round: String,
     round_select: Entity<SelectState<Vec<Choice>>>,
     /// The round's boards in the order they first came, by id.
@@ -215,6 +221,8 @@ impl Broadcasts {
             results: Vec::new(),
             searching: Loading::default(),
             tour: None,
+            alerts: Vec::new(),
+            alert_error: None,
             round: String::new(),
             round_select,
             games: Vec::new(),
@@ -370,6 +378,23 @@ impl Broadcasts {
         self.previews.board(game.id.clone(), state, cx)
     }
 
+    /// Whether every round of `tour` is alerted.
+    fn alerted_tour(&self, tour: &str) -> bool {
+        self.alerts
+            .iter()
+            .any(|alert| alert.tour_id == tour && alert.round_id.is_none())
+    }
+
+    /// Whether any round of `tour` is alerted.
+    fn alerted_any(&self, tour: &str) -> bool {
+        self.alerts.iter().any(|alert| alert.tour_id == tour)
+    }
+
+    /// Whether `round` of `tour` is alerted, alone or with every round.
+    fn alerted_round(&self, tour: &str, round: &str) -> bool {
+        self.alerts.iter().any(|alert| alert.covers(tour, round))
+    }
+
     pub fn load(&mut self, cx: &mut Context<WatchPage>) {
         if self.loading.busy() {
             return;
@@ -392,6 +417,212 @@ impl Broadcasts {
 }
 
 impl WatchPage {
+    /// The broadcasts the player is alerted to, afresh.
+    pub(super) fn load_alerts(&mut self, cx: &mut Context<Self>) {
+        let call = cx.global::<AppCore>().request(calls::BroadcastAlerts {});
+        crate::loading::fetch(cx, "watch", call, |this: &mut Self, alerts, cx| {
+            this.broadcasts.alerts = alerts;
+            cx.notify();
+        });
+    }
+
+    /// Alert the player (`on`) or no longer when `tour`'s rounds start: every round, or `round`.
+    pub(super) fn set_alert(
+        &mut self,
+        tour: String,
+        round: Option<String>,
+        on: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let call = cx.global::<AppCore>().request(calls::SetBroadcastAlert {
+            tour_id: LichessId(tour),
+            on,
+            round_id: round.map(LichessId),
+        });
+        self.broadcasts.alert_error = None;
+        cx.spawn(async move |this, cx| {
+            let answer = call.await;
+            // The page may have closed meanwhile.
+            this.update(cx, |this, cx| {
+                match answer {
+                    Ok(alerts) => this.broadcasts.alerts = alerts,
+                    Err(cause) => {
+                        this.broadcasts.alert_error = Some(crate::loading::failure("watch", &cause))
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// A broadcast's bell: on while any of its rounds is alerted; it turns every round's alert
+    /// on, or every one off.
+    fn alert_bell(&self, id: ElementId, tour: &str, cx: &mut Context<Self>) -> Button {
+        let on = self.broadcasts.alerted_any(tour);
+        let tour = tour.to_string();
+        Button::new(id)
+            .ghost()
+            .small()
+            .icon(icon(if on { "bell-ring" } else { "bell" }))
+            .accessibility_label(if on {
+                "Stop round alerts"
+            } else {
+                "Alert me when a round starts"
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                // The bell sits on the card, which opens the broadcast.
+                cx.stop_propagation();
+                this.set_alert(tour.clone(), None, !on, cx);
+            }))
+    }
+
+    /// The round list's bell: alerts for every round, or for chosen rounds still to come.
+    fn round_alerts(
+        &self,
+        tour: &BroadcastTourDetail,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let id = tour.id.clone();
+        let every = self.broadcasts.alerted_tour(&id);
+        let any = self.broadcasts.alerted_any(&id);
+        let rounds: Vec<(String, String, bool)> = tour
+            .rounds
+            .iter()
+            .filter(|round| !round.finished && !round.ongoing)
+            .map(|round| {
+                let on = self.broadcasts.alerted_round(&id, &round.id);
+                (round.id.clone(), round.name.clone(), on)
+            })
+            .collect();
+        let page = cx.entity().downgrade();
+        Button::new("broadcast-alerts")
+            .ghost()
+            .small()
+            .icon(icon(if any { "bell-ring" } else { "bell" }))
+            .accessibility_label("Round alerts")
+            .dropdown_menu(move |menu, _, _| {
+                let alert = |round: Option<String>, on: bool| {
+                    let (page, tour) = (page.clone(), id.clone());
+                    move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                        page.update(cx, |this, cx| {
+                            this.set_alert(tour.clone(), round.clone(), on, cx)
+                        })
+                        .ok();
+                    }
+                };
+                let mut menu = menu.item(
+                    PopupMenuItem::new("Every round")
+                        .checked(every)
+                        .on_click(alert(None, !every)),
+                );
+                if !rounds.is_empty() {
+                    menu = menu.separator();
+                }
+                for (round, name, on) in &rounds {
+                    menu = menu.item(
+                        PopupMenuItem::new(name.clone())
+                            .checked(*on)
+                            .on_click(alert(Some(round.clone()), !on)),
+                    );
+                }
+                menu
+            })
+    }
+
+    /// The alerts the player set, each with its remove button: above the listings while any.
+    fn alert_list(&self, width: Pixels, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
+        let (count, row_width) = widgets::columns(width, ROW_MIN, ROW_GAP);
+        let mut rows = self
+            .broadcasts
+            .alerts
+            .iter()
+            .enumerate()
+            .map(|(index, alert)| {
+                let tour = alert.tour_id.clone();
+                let (remove_tour, remove_round) = (alert.tour_id.clone(), alert.round_id.clone());
+                h_flex()
+                    .id(("broadcast-alert", index))
+                    .test_support()
+                    .role(Role::Button)
+                    .keyboard_focus(palette.primary)
+                    .aria_label(alert.tour_name.clone())
+                    .w(row_width)
+                    .flex_none()
+                    .gap(px(12.))
+                    .py(px(6.))
+                    .pl(px(12.))
+                    .pr(px(6.))
+                    .rounded(radii::BOX)
+                    .border_1()
+                    .border_color(palette.border)
+                    .bg(palette.elevated)
+                    .cursor_pointer()
+                    .pressable_card(palette)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_tour(tour.clone(), window, cx)
+                    }))
+                    .child(
+                        icon("bell-ring")
+                            .size(px(16.))
+                            .flex_none()
+                            .text_color(palette.text_muted),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .truncate()
+                                    .child(alert.tour_name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(palette.text_muted)
+                                    .truncate()
+                                    .child(
+                                        alert
+                                            .round_name
+                                            .clone()
+                                            .unwrap_or_else(|| "Every round".into()),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        Button::new(("broadcast-alert-remove", index))
+                            .ghost()
+                            .small()
+                            .icon(icon("x"))
+                            .accessibility_label(format!("Remove alert for {}", alert.tour_name))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.set_alert(
+                                    remove_tour.clone(),
+                                    remove_round.clone(),
+                                    false,
+                                    cx,
+                                );
+                            })),
+                    )
+                    .into_any_element()
+            })
+            .peekable();
+        let mut lines = Vec::new();
+        while rows.peek().is_some() {
+            lines.push(h_flex().gap(ROW_GAP).children(rows.by_ref().take(count)));
+        }
+        v_flex()
+            .gap(px(12.))
+            .child(widgets::heading("Alerts", palette))
+            .child(v_flex().gap(ROW_GAP).children(lines))
+            .into_any_element()
+    }
+
     /// A search, once typing pauses.
     pub(super) fn search(&mut self, cx: &mut Context<Self>) {
         let broadcasts = &mut self.broadcasts;
@@ -697,6 +928,7 @@ impl WatchPage {
                             }),
                     ),
                 )
+                .child(self.round_alerts(tour, cx))
                 .into_any_element(),
         )
     }
@@ -925,6 +1157,15 @@ impl WatchPage {
                     ))
                 },
             )
+            .children(self.broadcasts.alert_error.clone().map(|error| {
+                div()
+                    .text_size(px(13.))
+                    .text_color(palette.error)
+                    .child(error)
+            }))
+            .when(!searching && !self.broadcasts.alerts.is_empty(), |body| {
+                body.child(self.alert_list(width, cx, palette))
+            })
             .children(sections.into_iter().map(|(section, title, items)| {
                 let list = if section == Some(BroadcastSection::Past) {
                     self.broadcast_rows(&items, width, &mut index, disabled, cx, palette)
@@ -961,6 +1202,8 @@ impl WatchPage {
                 *index += 1;
                 let tour = item.tour_id.clone();
                 let live = item.ongoing;
+                // A finished broadcast has no round left to be alerted to.
+                let alertable = item.section != BroadcastSection::Past && !disabled;
                 let cover = self.cover(item, cx);
                 v_flex()
                     .id(("broadcast-card", *index))
@@ -1029,7 +1272,17 @@ impl WatchPage {
                                                     .font_weight(FontWeight::MEDIUM)
                                             })
                                             .child(timing(item, now)),
-                                    ),
+                                    )
+                                    .when(alertable, |row| {
+                                        row.child(self.alert_bell(
+                                            ElementId::NamedInteger(
+                                                "broadcast-bell".into(),
+                                                *index as u64,
+                                            ),
+                                            &item.tour_id,
+                                            cx,
+                                        ))
+                                    }),
                             )
                             .child(
                                 div()

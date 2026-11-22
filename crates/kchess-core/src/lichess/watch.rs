@@ -18,6 +18,7 @@ pub use kchess_contracts::types::{
 
 use crate::host::Host;
 
+pub mod alerts;
 mod feed;
 mod listings;
 mod spectator;

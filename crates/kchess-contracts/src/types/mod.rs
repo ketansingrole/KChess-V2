@@ -146,6 +146,8 @@ pub enum ProfileArea {
     Usage,
     Engine,
     ViewPreferences,
+    /// The broadcast alerts (`broadcastAlerts`).
+    Broadcasts,
 }
 
 /// `alerts:owner`: the connection whose window raises system notifications now (the window

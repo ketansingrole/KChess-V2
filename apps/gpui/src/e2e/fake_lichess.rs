@@ -878,7 +878,9 @@ fn broadcast_listing() -> Value {
     let hour = 3_600_000;
     let entry = |tour: &str, name: &str, cover: Option<&str>, round: Value| {
         let image = cover.map(|cover| {
-            format!("https://image.lichess.org/display?fmt=png&h=400&op=thumbnail&path={cover}&w=800")
+            format!(
+                "https://image.lichess.org/display?fmt=png&h=400&op=thumbnail&path={cover}&w=800"
+            )
         });
         json!({
             "tour": {
@@ -897,22 +899,31 @@ fn broadcast_listing() -> Value {
         }
         round
     };
-    let past: Vec<Value> = ["Spring Blitz", "City Championship", "Women's Open", "Club Rapid"]
-        .iter()
-        .enumerate()
-        .map(|(index, name)| {
-            entry(
-                &format!("kcPast{index:02}"),
-                name,
-                (index % 2 == 0).then_some(if index % 4 == 0 { "dark.png" } else { "light.png" }),
-                round(
-                    &format!("kcPastR{index}"),
-                    "Round 9",
-                    json!({ "finished": true, "finishedAt": now - (index as i64 + 1) * 24 * hour }),
-                ),
-            )
-        })
-        .collect();
+    let past: Vec<Value> = [
+        "Spring Blitz",
+        "City Championship",
+        "Women's Open",
+        "Club Rapid",
+    ]
+    .iter()
+    .enumerate()
+    .map(|(index, name)| {
+        entry(
+            &format!("kcPast{index:02}"),
+            name,
+            (index % 2 == 0).then_some(if index % 4 == 0 {
+                "dark.png"
+            } else {
+                "light.png"
+            }),
+            round(
+                &format!("kcPastR{index}"),
+                "Round 9",
+                json!({ "finished": true, "finishedAt": now - (index as i64 + 1) * 24 * hour }),
+            ),
+        )
+    })
+    .collect();
     json!({
         "active": [
             entry(BROADCAST_TOUR, "KChess Open", Some("light.png"),

@@ -12,6 +12,7 @@ mod support;
 
 mod ai_connection;
 mod ai_effort;
+mod broadcast_alerts;
 mod chesscom_sync;
 mod core_close;
 mod core_close_lichess;

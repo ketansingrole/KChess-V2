@@ -146,6 +146,7 @@ fn start_models(profile: startup::Profile, cx: &mut App) {
     // Before the online state, which checks Lichess again when the network returns.
     network::init(cx);
     online::init(cx);
+    notifications::alert_on_broadcasts(cx);
     voice::init(cx);
     cx.set_global(startup::Started);
     open_main_window(cx);
