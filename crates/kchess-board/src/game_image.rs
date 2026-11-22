@@ -118,22 +118,54 @@ fn count_image(count: u8) -> Result<Pixmap, String> {
     rasterize(svg.as_bytes(), width, BAR)
 }
 
+/// The board's squares at `size` pixels: a drawn board's two colours filled square by square, or
+/// a textured board's image scaled.
+fn board_pixmap(surface: &looks::Surface, size: u32) -> Result<Pixmap, String> {
+    let made = || "The image could not be made".to_string();
+    let image = match surface {
+        looks::Surface::Colors { light, dark } => {
+            let mut board = Pixmap::new(size, size).ok_or_else(made)?;
+            let paint = |color: u32| {
+                let [_, r, g, b] = color.to_be_bytes();
+                Paint::from_rgba8(r, g, b, 255)
+            };
+            board.fill(paint(*light));
+            let square = size / 8;
+            let mut fill = resvg::tiny_skia::Paint::default();
+            fill.set_color(paint(*dark));
+            for (column, row, _) in looks::dark_squares(gpui_kit::Corners::default()) {
+                let rect = Rect::from_xywh(
+                    (column * square) as f32,
+                    (row * square) as f32,
+                    square as f32,
+                    square as f32,
+                )
+                .ok_or_else(made)?;
+                board.fill_rect(rect, &fill, Transform::identity(), None);
+            }
+            return Ok(board);
+        }
+        looks::Surface::Image(_) => surface
+            .image_path()
+            .and_then(|path| crate::assets::shared(&path)),
+    }
+    .ok_or("No board image is available")?;
+    let board = image::load_from_memory(&image)
+        .map_err(|_| "An image for the export could not be loaded")?
+        .resize_exact(size, size, image::imageops::FilterType::Triangle)
+        .to_rgba8();
+    Pixmap::from_vec(
+        board.into_raw(),
+        IntSize::from_wh(size, size).ok_or_else(made)?,
+    )
+    .ok_or_else(made)
+}
+
 fn painter(options: &ImageOptions) -> Result<Painter, String> {
     let size = (options.size / 8).max(8) * 8;
     let square = size / 8;
     let look = looks::board(&options.board_theme);
-    let board = crate::assets::shared(&format!("boards/{}", look.image))
-        .or_else(|| crate::assets::shared("boards/brown.png"))
-        .ok_or("No board image is available")?;
-    let board = image::load_from_memory(&board)
-        .map_err(|_| "An image for the export could not be loaded")?
-        .resize_exact(size, size, image::imageops::FilterType::Triangle)
-        .to_rgba8();
-    let board = Pixmap::from_vec(
-        board.into_raw(),
-        IntSize::from_wh(size, size).ok_or("The image could not be made")?,
-    )
-    .ok_or("The image could not be made")?;
+    let board = board_pixmap(&look.surface, size)?;
     let flipped = options.orientation == Color::Black;
     let (top, bottom) = if flipped {
         (&options.white, &options.black)
@@ -483,6 +515,33 @@ mod tests {
         rotated_text_image,
     };
     use std::sync::atomic::AtomicBool;
+
+    /// A drawn board's export fills each square with the board's colours, the dark ones at a1 and
+    /// h8, as the old image did.
+    #[test]
+    fn a_drawn_board_exports_its_two_colours() {
+        use crate::board::looks;
+        let looks::Surface::Colors { light, dark } = looks::board("brown").surface else {
+            panic!("brown is drawn");
+        };
+        let board = super::board_pixmap(&looks::board("brown").surface, 400).unwrap();
+        let at = |column: u32, row: u32| {
+            let pixel = board.pixel(column * 50 + 25, row * 50 + 25).unwrap();
+            u32::from_be_bytes([0, pixel.red(), pixel.green(), pixel.blue()])
+        };
+        for row in 0..8 {
+            for column in 0..8 {
+                let expected = if looks::dark_square(column, row) {
+                    dark
+                } else {
+                    light
+                };
+                assert_eq!(at(column, row), expected, "{column},{row}");
+            }
+        }
+        assert_eq!(at(0, 7), 0xb58863, "a1 is dark");
+        assert!(super::board_pixmap(&looks::board("wood").surface, 400).is_ok());
+    }
 
     #[test]
     fn a_turned_face_is_drawn_sideways_or_upside_down() {

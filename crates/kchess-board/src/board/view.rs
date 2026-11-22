@@ -572,13 +572,7 @@ impl Render for ChessBoard {
                 div()
                     .relative()
                     .size_full()
-                    .child(
-                        img(SharedString::from(format!("boards/{}", look.image)))
-                            .absolute()
-                            .size_full()
-                            .object_fit(ObjectFit::Fill)
-                            .map(|image| rounded(image, &self.state.corners)),
-                    )
+                    .child(looks::surface(&look.surface, self.state.corners))
                     .children(check)
                     .child(
                         canvas(

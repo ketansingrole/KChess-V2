@@ -3,14 +3,14 @@
     {
       "id": "brown",
       "name": "Brown",
-      "image": "brown.png",
+      "colors": { "light": "#f0d9b5", "dark": "#b58863" },
       "coordWhite": "#f0d9b5",
       "coordBlack": "#946f51"
     },
     {
       "id": "blue",
       "name": "Blue",
-      "image": "blue.png",
+      "colors": { "light": "#dee3e6", "dark": "#8ca2ad" },
       "coordWhite": "#dee3e6",
       "coordBlack": "#788a94"
     },
@@ -24,7 +24,7 @@
     {
       "id": "green",
       "name": "Green",
-      "image": "green.png",
+      "colors": { "light": "#ffffdd", "dark": "#86a666" },
       "coordWhite": "#ffffdd",
       "coordBlack": "#6d8753"
     },
@@ -38,7 +38,7 @@
     {
       "id": "purple",
       "name": "Purple",
-      "image": "purple.png",
+      "colors": { "light": "#9f90b0", "dark": "#7d4a8d" },
       "coordWhite": "#9f90b0",
       "coordBlack": "#7d4a8d"
     },
@@ -52,7 +52,7 @@
     {
       "id": "ic",
       "name": "IC",
-      "image": "ic.png",
+      "colors": { "light": "#ececec", "dark": "#c1c18e" },
       "coordWhite": "#ececec",
       "coordBlack": "#c1c18e"
     },

@@ -11,7 +11,7 @@ use std::borrow::Cow;
 #[include = "sounds/*.mp3"]
 struct Files;
 
-/// A board image or piece, by its path (`boards/brown.png`).
+/// A board image or piece, by its path (`boards/wood.jpg`).
 pub fn shared(path: &str) -> Option<Cow<'static, [u8]>> {
     Files::get(path).map(|file| file.data)
 }
@@ -36,7 +36,7 @@ mod tests {
             assert!(super::shared(path).is_some(), "{path}");
         }
         assert!(
-            paths.iter().any(|path| path == "boards/brown.png"),
+            paths.iter().any(|path| path == "boards/wood.jpg"),
             "{paths:?}"
         );
         assert!(super::sound("Move.mp3").is_some());
