@@ -14,7 +14,7 @@ use super::{Section, TOGGLES, Toggle};
 use crate::assets::icon;
 
 /// The stored settings that are not yes/no toggles (`TOGGLES`), named as their Settings rows.
-const OTHERS: [(&str, &str, Section); 14] = [
+const OTHERS: [(&str, &str, Section); 15] = [
     ("appearance", "Appearance", Section::Themes),
     ("lightTheme", "Light mode theme", Section::Themes),
     ("darkTheme", "Dark mode theme", Section::Themes),
@@ -32,6 +32,11 @@ const OTHERS: [(&str, &str, Section); 14] = [
         Section::Online,
     ),
     ("enginePath", "Engine", Section::Engine),
+    (
+        "closeAction",
+        "When you close the window",
+        Section::Notifications,
+    ),
     (
         "reviewAuto",
         "Review my games automatically",

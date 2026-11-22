@@ -67,6 +67,12 @@ impl CoreBridge {
         self.handle.focus(focused);
     }
 
+    /// Tells the core this app has no window open (it runs in the background): what it started,
+    /// such as analysis, stops; its account's event stream stays open for challenges.
+    pub fn suspend(&self) {
+        self.handle.suspend();
+    }
+
     /// Runs `work` on the core's runtime; the future resolves on any executor.
     fn spawn<T: Send + 'static, W: Future<Output = Result<T, CoreError>> + Send + 'static>(
         &self,

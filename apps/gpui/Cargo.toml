@@ -46,6 +46,8 @@ kchess-practice.workspace = true
 kchess-studies.workspace = true
 # The Watch page (`crates/kchess-watch`).
 kchess-watch.workspace = true
+# The menu bar or system tray icon and the login entry (`src/background.rs`).
+kchess-background.workspace = true
 # Pinned: a newer gpui-kit requires a newer gpui-pre than the patched copy in vendor/gpui-pre
 # (Cargo.toml [patch.crates-io]); rebase that patch before moving it.
 gpui-kit = "=0.10.0"

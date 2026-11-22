@@ -68,6 +68,16 @@ pub fn toggle_panel(_: &mut Window, cx: &mut App) {
     }
 }
 
+/// Open the bell's panel in the window in front (the menu bar or tray menu's Notifications).
+pub fn open_panel(cx: &mut App) {
+    if let Some(bell) = cx
+        .try_global::<BellGlobal>()
+        .and_then(|bell| bell.0.upgrade())
+    {
+        bell.update(cx, |bell, cx| bell.set_open(true, cx));
+    }
+}
+
 /// The bell's accessible name: the count of unread notifications, when there are any.
 pub fn bell_label(unread: usize) -> String {
     match unread {

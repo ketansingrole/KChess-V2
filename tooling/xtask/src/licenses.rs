@@ -103,6 +103,13 @@ pub fn check_notices() -> Result {
                 .join(", ")
         ));
     }
+    // Each package carries the license text of every crate it ships (`write`): a crate published
+    // without one, under a license with no standard text here, failed only there, after each
+    // platform's 40-minute package job had built everything (ksni, Unlicense, 2026-11-22).
+    let shipped = metadata(false)?;
+    for package in shipped_crates(&shipped) {
+        license_text(package)?;
+    }
     say(&format!(
         "All {} runtime dependencies are attributed.",
         dependencies.len()
@@ -196,6 +203,7 @@ fn license_text(package: &Value) -> Result<String> {
         ("BSL-1.0", include_str!("../licenses/BSL-1.0.txt")),
         ("Unicode-3.0", include_str!("../licenses/Unicode-3.0.txt")),
         ("CC0-1.0", include_str!("../licenses/CC0-1.0.txt")),
+        ("Unlicense", include_str!("../licenses/Unlicense.txt")),
     ] {
         if offers(license, id) {
             return Ok(format!("--- {id} ---\n{}\n", text.trim()));
@@ -371,6 +379,11 @@ mod tests {
             license_text(&package("GPL-3.0-or-later", &[]))
                 .unwrap()
                 .starts_with("--- GPL-3.0 (the same license as KChess) ---\n")
+        );
+        assert!(
+            license_text(&package("Unlicense", &[]))
+                .unwrap()
+                .starts_with("--- Unlicense ---\nThis is free and unencumbered software")
         );
         assert!(
             license_text(&package("LicenseRef-Unknown", &[]))

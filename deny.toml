@@ -51,6 +51,9 @@ exceptions = [
   # bzip2's own BSD-style license, for the Rust port of libbzip2 that compresses update patches
   # (qbsdiff, `crates/kchess-delta`).
   { crate = "libbz2-rs-sys", allow = ["bzip2-1.0.6"] },
+  # The Linux system tray icon (`crates/kchess-background`): the Unlicense is a public-domain
+  # dedication, compatible with GPL-3.0-or-later.
+  { crate = "ksni", allow = ["Unlicense"] },
   # LLVM's libFuzzer, in the fuzz workspace only (`fuzz/`); never shipped.
   { crate = "libfuzzer-sys", allow = ["NCSA"] },
 ]

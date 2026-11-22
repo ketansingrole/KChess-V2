@@ -150,7 +150,7 @@ fn answer_host(ask: HostAsk, cx: &mut App) {
         }
         HostRequest::OpenExternal(_) => HostReply::Error(kchess_host::NOT_A_WEB_PAGE.into()),
         HostRequest::Focus => {
-            cx.activate(true);
+            crate::background::show_window(None, cx);
             HostReply::done()
         }
         request => HostReply::Error(format!("Unknown host capability {}", request.kind())),

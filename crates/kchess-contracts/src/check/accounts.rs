@@ -9,7 +9,7 @@ use kchess_domain::variant::VARIANTS;
 
 use super::*;
 use crate::types::{
-    APPEARANCES, COORDINATE_MODES, CoreSettings, ENGINE_LEVELS, EXPLORER_SPEEDS,
+    APPEARANCES, CLOSE_ACTIONS, COORDINATE_MODES, CoreSettings, ENGINE_LEVELS, EXPLORER_SPEEDS,
     FrontendPreferences, GamePageQuery, InsightsQuery, PERF_TYPES, PIECE_ANIMATIONS,
     PROMOTION_MODES, PerfType, RELATION_ACTIONS, REVIEW_AUTO, RelationAction, Settings,
 };
@@ -152,6 +152,7 @@ fn settings_messages(keys: &[&str]) -> Msg {
         ["puzzleAutoNext"] => "Invalid puzzle setting.",
         ["confirmCorrespondence"] => "Invalid move confirmation setting.",
         ["figurineNotation"] => "Invalid notation setting.",
+        ["openAtLogin" | "closeAction" | "showTrayIcon"] => "Invalid background setting.",
         ["notificationsEnabled"] => NOTIFY,
         [key] if key.starts_with("notify") => NOTIFY,
         _ => "Invalid settings.",
@@ -275,10 +276,21 @@ struct SentSettings {
     confirm_correspondence: bool,
     #[serde(default)]
     figurine_notation: bool,
+    /// Newer still: a frontend that does not send them keeps their defaults.
+    #[serde(default)]
+    open_at_login: bool,
+    #[serde(default = "platform_close")]
+    close_action: String,
+    #[serde(default = "on")]
+    show_tray_icon: bool,
 }
 
 fn on() -> bool {
     true
+}
+
+fn platform_close() -> String {
+    "default".into()
 }
 
 fn theme_setting(id: &str, msg: &'static str) -> Result<(), Refusal> {
@@ -317,6 +329,8 @@ impl Validate for Settings {
         };
         max_chars(&core.engine_path, 4096, Some("Invalid engine path."), "")?;
         one_of(&s.promotion, PROMOTION_MODES, promotion, "")?;
+        let close = Some("Invalid background setting.");
+        one_of(&s.close_action, CLOSE_ACTIONS, close, "")?;
         Ok(Settings {
             core: core_settings(core)?,
             frontend: FrontendPreferences {
@@ -354,6 +368,9 @@ impl Validate for Settings {
                 puzzle_auto_next: s.puzzle_auto_next,
                 confirm_correspondence: s.confirm_correspondence,
                 figurine_notation: s.figurine_notation,
+                open_at_login: s.open_at_login,
+                close_action: chosen(s.close_action)?,
+                show_tray_icon: s.show_tray_icon,
             },
         })
     }
@@ -519,6 +536,7 @@ mod tests {
             ),
             ("reviewAuto", J::Str("off".into())),
             ("correspondencePoll", J::Num(30.0)),
+            ("closeAction", J::Str("quit".into())),
         ];
         for flag in [
             "soundEnabled",
@@ -551,6 +569,8 @@ mod tests {
             "puzzleAutoNext",
             "confirmCorrespondence",
             "figurineNotation",
+            "openAtLogin",
+            "showTrayIcon",
         ] {
             fields.push((flag, J::Bool(true)));
         }
@@ -591,6 +611,35 @@ mod tests {
         assert_eq!(
             check::<Settings>(obj(wrong)).unwrap_err(),
             "Invalid move confirmation setting."
+        );
+    }
+
+    /// A frontend from before the background settings sends none of them: its settings still
+    /// save, with the defaults (closing as the platform's apps do, the tray icon shown, not
+    /// opened at login); a close action that is not one of the choices is refused.
+    #[test]
+    fn settings_without_the_background_ones_keep_their_defaults() {
+        let newer = ["openAtLogin", "closeAction", "showTrayIcon"];
+        let older: Vec<_> = settings()
+            .into_iter()
+            .filter(|(key, _)| !newer.contains(key))
+            .collect();
+        let normalized = check::<Settings>(obj(older)).unwrap();
+        assert!(!normalized.frontend.open_at_login);
+        assert_eq!(
+            normalized.frontend.close_action,
+            crate::types::CloseAction::Default
+        );
+        assert!(normalized.frontend.show_tray_icon);
+        let sent = check::<Settings>(obj(settings())).unwrap();
+        assert_eq!(sent.frontend.close_action, crate::types::CloseAction::Quit);
+        assert!(sent.frontend.open_at_login);
+        let mut wrong = settings();
+        wrong.retain(|(key, _)| *key != "closeAction");
+        wrong.push(("closeAction", J::Str("minimize".into())));
+        assert_eq!(
+            check::<Settings>(obj(wrong)).unwrap_err(),
+            "Invalid background setting."
         );
     }
 

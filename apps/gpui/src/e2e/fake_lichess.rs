@@ -78,6 +78,9 @@ pub struct Session {
     pub writes: Vec<String>,
     /// Events still to send on the account's event stream, in order (a challenge received).
     pub events: Vec<Value>,
+    /// The challenges Lichess lists for the account (`GET /api/challenge`): each one sent on the
+    /// event stream, until the app accepts or declines it.
+    pub inbox: Vec<Value>,
     /// The account's game download waits until this is cleared: a sync still running.
     pub hold_games: bool,
     /// `account/playing` waits until this is cleared: the check for a game in progress still
@@ -669,7 +672,11 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
             // events a test queues go out as they come.
             let ended = stream(out, first.into_iter().collect(), open, move |_| {
                 let mut session = queued.lock();
-                (!session.events.is_empty()).then(|| session.events.remove(0))
+                let event = (!session.events.is_empty()).then(|| session.events.remove(0))?;
+                if event["type"] == "challenge" {
+                    session.inbox.push(event["challenge"].clone());
+                }
+                Some(event)
             });
             listening.lock().listening -= 1;
             ended
@@ -724,9 +731,20 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
             let open = move || !session.lock().revoked;
             stream(out, Vec::new(), open, |_| None)
         }
-        ("GET", "/api/challenge") => reply(out, &json!({ "in": [], "out": [] })),
+        ("GET", "/api/challenge") => {
+            let inbox = session.lock().inbox.clone();
+            reply(out, &json!({ "in": inbox, "out": [] }))
+        }
         ("POST", p) if p.starts_with("/api/challenge/") => {
-            session.lock().writes.push(format!("POST {p}"));
+            let mut answered = session.lock();
+            answered.writes.push(format!("POST {p}"));
+            if let Some(id) = p
+                .strip_prefix("/api/challenge/")
+                .and_then(|rest| rest.split('/').next())
+            {
+                answered.inbox.retain(|listed| listed["id"] != id);
+            }
+            drop(answered);
             reply(out, &json!({ "ok": true }))
         }
         ("GET", p) if p.ends_with("/chat") || p.starts_with("/api/team/of/") => {
