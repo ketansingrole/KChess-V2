@@ -1796,11 +1796,17 @@ fn updates_download_once_found(cx: &mut gpui_kit::TestAppContext) {
 
 /// Turning on background downloads while an update waits for **Download update** starts its
 /// download; another setting changed meanwhile does not.
+///
+/// The update is found by the automatic check that the first settings change starts. The test
+/// used to hand it to `found` while that check was still asking an unreachable feed, and the
+/// check's late failure replaced **Download update** with an error (Stress, 2026-11-22).
 #[gpui_kit::test]
 fn turning_on_background_downloads_downloads_the_waiting_update(cx: &mut gpui_kit::TestAppContext) {
     use super::Phase;
     let mut app = crate::e2e::Harness::start(cx);
-    let updates = checking(&mut app, "http://127.0.0.1:9".into());
+    let release = release_json("2026.11.9").to_string().into_bytes();
+    let (feed, _) = answers(vec![("200 OK", release)]);
+    let updates = checking(&mut app, feed);
     let set = |app: &mut crate::e2e::Harness,
                change: fn(&mut kchess_contracts::types::Settings)| {
         app.cx.update(|cx| crate::settings::change(cx, change));
@@ -1809,10 +1815,8 @@ fn turning_on_background_downloads_downloads_the_waiting_update(cx: &mut gpui_ki
     set(&mut app, |settings| {
         settings.frontend.update_auto_download = false
     });
-    app.cx.update(|cx| {
-        updates.update(cx, |updates, cx| {
-            updates.found(release_of("2026.11.9"), cx);
-        })
+    app.wait_for("the check's answer", |_, cx| {
+        updates.read(cx).phase != Phase::Checking
     });
     assert_eq!(
         updates.read_with(&app.cx, |updates, _| updates.phase),
