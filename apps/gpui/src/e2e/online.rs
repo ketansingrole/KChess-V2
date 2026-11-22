@@ -190,6 +190,12 @@ fn a_broadcast_rounds_alert_opens_the_round(cx: &mut gpui_kit::TestAppContext) {
     // The system's notifications are drawn by the app on Windows and Linux alone.
     #[cfg(any(windows, target_os = "linux"))]
     {
+        app.cx.update(|cx| {
+            crate::settings::change(cx, |s| {
+                s.frontend.notifications_enabled = true;
+                s.frontend.notify_background = true;
+            })
+        });
         gpui_kit::VisualTestContext::from_window(app.window, &app.cx).deactivate_window();
         app.with_window(|_, cx| {
             let started = kchess_contracts::types::BroadcastRoundStarted {
@@ -204,6 +210,20 @@ fn a_broadcast_rounds_alert_opens_the_round(cx: &mut gpui_kit::TestAppContext) {
             app.wait_for_notification("the round's alert", |shown| shown.tag.as_ref() == tag);
         assert_eq!(shown.title.as_ref(), "KChess Open");
         assert_eq!(shown.body.as_ref(), "Round 2 has started");
+        // Kept under the top bar's bell too, pointing at the round.
+        app.wait_for("the alert in the notification centre", |_, cx| {
+            crate::notifications::centre::handle(cx)
+                .read(cx)
+                .entries()
+                .iter()
+                .any(|entry| {
+                    entry.link
+                        == kchess_contracts::types::NotificationLink::BroadcastRound {
+                            round: BROADCAST_ROUNDS[1].into(),
+                            game: String::new(),
+                        }
+                })
+        });
     }
     app.cx
         .simulate_system_notification_response(gpui_kit::SystemNotificationResponse {

@@ -8,6 +8,7 @@ refuses to release with nothing there.
 
 ## Unreleased
 
+- **Notifications you missed**: the bell at the top right lights up when something came in while you were away, such as a challenge, your move in a correspondence game or a new version. Open it to go there, or dismiss or clear them.
 - **Voice in Endgames and Repertoire**: Voice now sits beside the move box in endgame lessons, drills and the opening trainer. Say your moves, “next”, “retry”, “hint” or “back”, and “show move” or “restart line” in the trainer. Puzzles and Your mistakes take “hint” too.
 - **Pages that hold still**: the move list, engine depth, Voice button, Studies tabs, charts and opening explorer stay put as you step through a game, pages open without jumping, and a dialog's error leaves its buttons in place. Following keeps its order as players come online.
 - **Steadier Lichess games**: your games say whose move it is, and Offer draw and Takeback stay where they are while an offer waits, so Resign never slides under your pointer. A rated puzzle’s rating change appears without pushing the page down.

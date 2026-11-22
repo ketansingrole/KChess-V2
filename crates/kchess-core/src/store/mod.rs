@@ -13,6 +13,7 @@ pub mod library;
 pub mod library_import;
 pub mod lookups;
 pub mod migrations;
+pub mod notifications;
 pub mod reviews;
 pub mod runs;
 pub mod sql;
