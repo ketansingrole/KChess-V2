@@ -114,7 +114,6 @@ bitflags = { version = "2", default-features = false, features = ["std"] }
 errno = { version = "0.3" }
 futures-channel = { version = "0.3", features = ["sink"] }
 libc = { version = "0.2", features = ["extra_traits"] }
-nix = { version = "0.32", default-features = false, features = ["fs", "resource"] }
 objc2-app-kit = { version = "0.3", features = ["objc2-uniform-type-identifiers"] }
 objc2-foundation = { version = "0.3" }
 percent-encoding = { version = "2" }
