@@ -173,7 +173,7 @@ impl Render for ComputerPage {
                         .min_w_0()
                         .pl(px(8.))
                         .gap(px(4.))
-                        .rounded(radii::SM)
+                        .rounded(radii::BOX)
                         .bg(palette.elevated)
                         .text_color(palette.highlighted)
                         .font_weight(FontWeight::NORMAL)

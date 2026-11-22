@@ -64,7 +64,7 @@ const fn quick(id: &'static str, icon: &'static str, keywords: &'static str) -> 
     })
 }
 
-pub(crate) static TOGGLES: [Toggle; 29] = [
+pub(crate) static TOGGLES: [Toggle; 31] = [
     Toggle {
         id: "legal-moves",
         title: "Show possible moves",
@@ -208,6 +208,33 @@ pub(crate) static TOGGLES: [Toggle; 29] = [
             keywords: "alerts",
             page_key: None,
         }),
+    },
+    Toggle {
+        id: "show-tray",
+        title: if cfg!(target_os = "macos") {
+            "Show in menu bar"
+        } else {
+            "Show in system tray"
+        },
+        // Windows and Linux have nothing else to show KChess runs without its window.
+        hint: if cfg!(target_os = "macos") {
+            None
+        } else {
+            Some("When off, closing the window quits KChess")
+        },
+        section: Section::Notifications,
+        on: |s| s.frontend.show_tray_icon,
+        set: |s, on| s.frontend.show_tray_icon = on,
+        quick: None,
+    },
+    Toggle {
+        id: "open-at-login",
+        title: "Open KChess when you log in",
+        hint: Some("Without a window when it keeps running in the background"),
+        section: Section::Notifications,
+        on: |s| s.frontend.open_at_login,
+        set: |s, on| s.frontend.open_at_login = on,
+        quick: None,
     },
     Toggle {
         id: "notify-active",

@@ -234,7 +234,7 @@ pub fn activity_list(
                         .items_start()
                         .px(px(8.))
                         .py(px(4.))
-                        .rounded(crate::theme::radii::MD)
+                        .rounded(crate::theme::radii::BOX)
                         .hover(|line| line.bg(palette.accented))
                         .when(players && !narrow, |line| {
                             line.child(

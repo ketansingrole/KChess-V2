@@ -133,7 +133,7 @@ fn board_pixmap(surface: &looks::Surface, size: u32) -> Result<Pixmap, String> {
             let square = size / 8;
             let mut fill = resvg::tiny_skia::Paint::default();
             fill.set_color(paint(*dark));
-            for (column, row, _) in looks::dark_squares(gpui_kit::px(0.)) {
+            for (column, row, _) in looks::dark_squares(gpui_kit::Corners::default()) {
                 let rect = Rect::from_xywh(
                     (column * square) as f32,
                     (row * square) as f32,

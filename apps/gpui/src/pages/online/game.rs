@@ -213,7 +213,7 @@ fn offer(glyph: &'static str, text: String, buttons: Vec<AnyElement>, palette: &
         .flex_wrap()
         .px(px(12.))
         .py(px(8.))
-        .rounded(radii::LG)
+        .rounded(radii::BOX)
         .border_1()
         .border_color(palette.border)
         .bg(palette.elevated)

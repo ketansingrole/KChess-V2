@@ -26,6 +26,7 @@ gpui_kit::actions!(
         ShowShortcuts,
         ShowWhatsNew,
         ToggleSidebar,
+        ShowNotifications,
         Find
     ]
 );
@@ -76,7 +77,7 @@ fn show_palette(prefix: &'static str, cx: &mut App) {
 }
 
 /// Close `window` once everything is saved, with it still open to say what could not be: its
-/// pages own the unsaved work, and on macOS closing it does not quit the app.
+/// pages own the unsaved work, and closing it may leave KChess running (`background`).
 pub fn close_window(window: AnyWindowHandle, cx: &mut App) {
     unless_leaving_a_game("Close", cx, move |cx| {
         crate::quit::prepare_quit(
@@ -151,6 +152,7 @@ pub fn init(cx: &mut App) {
         bind("secondary-f", Find, cx),
         bind("secondary-n", New, cx),
         bind("shift-secondary-p", Commands, cx),
+        bind("shift-secondary-n", ShowNotifications, cx),
         bind("secondary-,", OpenSettings, cx),
         // Interface size: with or without Shift, and the keypad's.
         bind("secondary-+", ZoomIn, cx),
@@ -199,6 +201,9 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &Paste, cx| on_window(cx, crate::links::open_pasted));
     cx.on_action(|_: &New, cx| on_window(cx, crate::shell::new_on_page));
     cx.on_action(|_: &ToggleSidebar, cx| on_window(cx, crate::shell::toggle_sidebar));
+    cx.on_action(|_: &ShowNotifications, cx| {
+        on_window(cx, crate::notifications::centre::toggle_panel)
+    });
     cx.on_action(|_: &GoBack, cx| go(-1, cx));
     cx.on_action(|_: &GoForward, cx| go(1, cx));
     cx.on_action(|_: &ZoomIn, cx| zoom(1, cx));
@@ -243,14 +248,10 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &Minimize, cx| on_window(cx, |window, _| window.minimize_window()));
     cx.on_action(|_: &Zoom, cx| on_window(cx, |window, _| window.zoom_window()));
     cx.on_action(|_: &ToggleFullScreen, cx| on_window(cx, |window, _| window.toggle_fullscreen()));
-    // Closing the window ends the app, which then saves and closes the core; macOS keeps it
-    // running, as its apps do, and the Dock icon opens the window again.
-    cx.on_window_closed(|cx, _| {
-        if cx.windows().is_empty() && !cfg!(target_os = "macos") {
-            cx.quit();
-        }
-    })
-    .detach();
+    // Closing the last window quits, which saves and closes the core, or keeps KChess running in
+    // the background, as the person chose (`background`).
+    cx.on_window_closed(|cx, _| crate::background::window_closed(cx))
+        .detach();
     cx.set_menus([
         Menu::new(crate::profile::APP_NAME).items([
             MenuItem::action("Settings…", OpenSettings),
@@ -284,6 +285,7 @@ pub fn init(cx: &mut App) {
             MenuItem::action("Run a Command…", Commands),
             MenuItem::separator(),
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
+            MenuItem::action("Notifications", ShowNotifications),
             MenuItem::separator(),
             MenuItem::action("Back", GoBack),
             MenuItem::action("Forward", GoForward),

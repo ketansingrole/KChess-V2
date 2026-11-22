@@ -349,7 +349,7 @@ pub fn explain_block(
         v_flex()
             .gap(px(6.))
             .p(px(10.))
-            .rounded(radii::MD)
+            .rounded(radii::BOX)
             .bg(palette.accented)
             .text_size(px(13.))
             .child(content)

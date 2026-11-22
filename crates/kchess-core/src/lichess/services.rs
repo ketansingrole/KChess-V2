@@ -135,6 +135,11 @@ impl Services {
 
     /// Cancels the Lichess requests and streams in flight when the core closes. The usage still
     /// pending is kept for the core to flush.
+    /// Cancelled when the core closes (`abort`): what lives as long as the services stops then.
+    pub fn lifetime(&self) -> CancellationToken {
+        self.lifetime.clone()
+    }
+
     pub fn abort(&self) {
         self.lifetime.cancel();
     }

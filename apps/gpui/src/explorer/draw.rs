@@ -55,7 +55,7 @@ pub fn result_bar(entry: &LookupMove, min_label: u64, palette: &Palette) -> impl
         .flex_1()
         .min_w(px(40.))
         .h(px(16.))
-        .rounded(radii::XS)
+        .rounded(radii::SMALL)
         .overflow_hidden()
         .border_1()
         .border_color(palette.border)
@@ -70,7 +70,7 @@ pub fn result_bar(entry: &LookupMove, min_label: u64, palette: &Palette) -> impl
                     (100. * part as f64 / total as f64).round() as u64
                 };
                 let ends = (Some(index) == first, Some(index) == last);
-                widgets::bar_segment(div(), ends, radii::XS - px(1.))
+                widgets::bar_segment(div(), ends, radii::SMALL - px(1.))
                     .h_full()
                     .w(relative(pct as f32 / 100.))
                     .overflow_hidden()
@@ -269,7 +269,7 @@ impl PositionExplorer {
                         .p(px(6.))
                         .border_1()
                         .border_color(palette.border)
-                        .rounded(radii::MD)
+                        .rounded(radii::BOX)
                         .text_size(px(13.))
                         .cursor_pointer()
                         .pressable(palette)
@@ -433,7 +433,7 @@ impl PositionExplorer {
                         .gap(px(8.))
                         .px(px(4.))
                         .py(px(2.))
-                        .rounded(radii::SM)
+                        .rounded(radii::BOX)
                         .text_size(px(12.))
                         .cursor_pointer()
                         .pressable(palette)

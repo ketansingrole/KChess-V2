@@ -95,7 +95,7 @@ pub fn moves_list(
                 .px(px(8.))
                 .py(px(4.))
                 .text_center()
-                .rounded(radii::XS)
+                .rounded(radii::SMALL)
                 .cursor_pointer()
                 .when(active, |cell| {
                     cell.bg(tint(palette.primary, 26.))
@@ -223,13 +223,31 @@ const MOVE_ENTRY_WIDTH: Pixels = px(240.);
 /// The typed-move box under a board: the input, dimmed
 /// while no move can be made, and its Return hint.
 pub fn move_entry(input: &Entity<InputState>, enabled: bool, palette: &Palette) -> Div {
+    text_entry(
+        input,
+        enabled,
+        "Enter a chess move in SAN or UCI",
+        true,
+        palette,
+    )
+}
+
+/// A box in the move box's place and look, named `label`, for what a page has typed there (a
+/// square in Coordinates); `submit` shows the Return hint where Return enters it.
+pub fn text_entry(
+    input: &Entity<InputState>,
+    enabled: bool,
+    label: &'static str,
+    submit: bool,
+    palette: &Palette,
+) -> Div {
     h_flex()
         .w(MOVE_ENTRY_WIDTH)
         .min_w_0()
         .h(PLAYER_LINE)
         .border_1()
         .border_color(palette.border)
-        .rounded(radii::MD)
+        .rounded(radii::BOX)
         .bg(palette.bg)
         .when(!enabled, |entry| entry.opacity(0.55))
         .child(
@@ -238,21 +256,23 @@ pub fn move_entry(input: &Entity<InputState>, enabled: bool, palette: &Palette) 
                     .appearance(false)
                     .small()
                     .disabled(!enabled)
-                    .aria_label("Enter a chess move in SAN or UCI"),
+                    .aria_label(label),
             ),
         )
-        .child(
-            div()
-                .w(px(32.))
-                .h_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .border_l_1()
-                .border_color(palette.border)
-                .text_color(palette.text_muted)
-                .child("↵"),
-        )
+        .when(submit, |entry| {
+            entry.child(
+                div()
+                    .w(px(32.))
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .border_l_1()
+                    .border_color(palette.border)
+                    .text_color(palette.text_muted)
+                    .child("↵"),
+            )
+        })
 }
 
 /// `@container side-panel (max-width: 400px)`: a panel this narrow puts two actions per row.

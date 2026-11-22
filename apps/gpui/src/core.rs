@@ -96,6 +96,9 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
         if let Some(audio) = test.voice_audio.clone() {
             cx.set_global(kchess_board::voice::capture::TestAudio(audio));
         }
+        if let Some(origin) = test.lichess_origin.clone() {
+            cx.set_global(kchess_app::core::TestLichessOrigin(origin));
+        }
         cx.set_global(TestSwitchesGlobal(test));
     }
     let core = AppCore {
@@ -147,7 +150,7 @@ fn answer_host(ask: HostAsk, cx: &mut App) {
         }
         HostRequest::OpenExternal(_) => HostReply::Error(kchess_host::NOT_A_WEB_PAGE.into()),
         HostRequest::Focus => {
-            cx.activate(true);
+            crate::background::show_window(None, cx);
             HostReply::done()
         }
         request => HostReply::Error(format!("Unknown host capability {}", request.kind())),

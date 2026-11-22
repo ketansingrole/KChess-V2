@@ -73,7 +73,7 @@ pub fn pocket(board: &Entity<ChessBoard>, color: Color, cx: &App) -> Option<AnyE
             .flex()
             .items_center()
             .justify_center()
-            .rounded(radii::SM)
+            .rounded(radii::BOX)
             .aria_label(label)
             .when(count == 0, |slot| slot.opacity(0.25))
             .when(selected, |slot| {
@@ -104,7 +104,7 @@ pub fn pocket(board: &Entity<ChessBoard>, color: Color, cx: &App) -> Option<AnyE
                         .right(px(-3.))
                         .bottom(px(-3.))
                         .px(px(3.))
-                        .rounded(radii::SM)
+                        .rounded(radii::BOX)
                         .bg(palette.text)
                         .text_color(palette.bg)
                         .text_size(px(10.))

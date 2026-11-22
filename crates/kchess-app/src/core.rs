@@ -67,6 +67,12 @@ impl CoreBridge {
         self.handle.focus(focused);
     }
 
+    /// Tells the core this app has no window open (it runs in the background): what it started,
+    /// such as analysis, stops; its account's event stream stays open for challenges.
+    pub fn suspend(&self) {
+        self.handle.suspend();
+    }
+
     /// Runs `work` on the core's runtime; the future resolves on any executor.
     fn spawn<T: Send + 'static, W: Future<Output = Result<T, CoreError>> + Send + 'static>(
         &self,
@@ -272,6 +278,12 @@ pub fn alerts_here(cx: &App) -> bool {
         .is_none_or(|owner| owner == own)
 }
 
+/// The local stand-in for Lichess an automated run started the core with
+/// (`TestSwitches::lichess_origin`): the app's own requests of Lichess, its pictures, go there too.
+pub struct TestLichessOrigin(pub String);
+
+impl Global for TestLichessOrigin {}
+
 /// The app's core, reachable from any view: `cx.global::<AppCore>()`.
 #[derive(Clone)]
 pub struct AppCore {
@@ -442,6 +454,8 @@ mod tests {
             ProfileArea::Puzzles => "puzzle_db.rs",
             ProfileArea::VoiceHistory | ProfileArea::Engine => "pages/settings",
             ProfileArea::ViewPreferences => "prefs.rs",
+            ProfileArea::Broadcasts => "kchess-watch broadcasts.rs: the alerts shown",
+            ProfileArea::Notifications => "apps/gpui notifications/centre.rs",
         }
     }
 

@@ -21,6 +21,12 @@ wire_enum!(#[doc = "How long a piece takes to slide to its square."] PieceAnimat
     Slow = "slow",
 });
 
+wire_enum!(#[doc = "What closing KChess's last window does: `default` as the platform's apps do (keep running on macOS, quit elsewhere), `background` keeps it running for notifications, `quit` quits."] CloseAction, CLOSE_ACTIONS {
+    Default = "default",
+    Background = "background",
+    Quit = "quit",
+});
+
 wire_enum!(#[doc = "Which games are reviewed automatically."] ReviewAuto, REVIEW_AUTO {
     Off = "off",
     Recent = "recent",
@@ -173,6 +179,14 @@ pub struct FrontendPreferences {
     pub confirm_correspondence: bool,
     /// Write moves with piece symbols (♘f3) rather than letters (Nf3).
     pub figurine_notation: bool,
+    /// Start KChess when the person logs in to the computer: in the background, without a
+    /// window, when closing the window keeps it running.
+    pub open_at_login: bool,
+    /// What closing the last window does.
+    pub close_action: CloseAction,
+    /// Show KChess's icon and menu in the menu bar (macOS) or the system tray (Windows, Linux).
+    /// Off, closing the window quits on Windows and Linux, where nothing else would show it runs.
+    pub show_tray_icon: bool,
 }
 
 /// Every setting: the core's preferences and the desktop's.

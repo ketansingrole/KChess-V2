@@ -218,6 +218,8 @@ Section "Uninstall"
   ${{If}} ${{Errors}}
     Delete "$SMPROGRAMS\${{PRODUCT}}.lnk"
     Delete "$DESKTOP\${{PRODUCT}}.lnk"
+    ; Open KChess when you log in: the shortcut the app writes (`apps/gpui/src/background.rs`).
+    Delete "$SMSTARTUP\${{PRODUCT}}.lnk"
   ${{EndIf}}
   DeleteRegKey HKCU "${{UNINSTALL_KEY}}"
   DeleteRegKey HKCU "${{INSTALL_KEY}}"
@@ -302,6 +304,8 @@ mod tests {
         assert!(text.contains(r#"InstallDir "$LOCALAPPDATA\Programs\${PRODUCT}""#));
         assert!(text.contains("VIProductVersion \"2026.10.16.0\""));
         assert!(text.contains("EstimatedSize 1234"));
+        // Uninstalling removes the login shortcut the app wrote; an upgrade keeps it.
+        assert!(text.contains(r#"Delete "$SMSTARTUP\${PRODUCT}.lnk""#));
         assert!(!text.contains("{{"), "no unexpanded braces");
         // A 32-bit installer reads the 64-bit registry view, where earlier installers wrote.
         assert_eq!(text.matches("SetRegView 64").count(), 2);

@@ -96,9 +96,13 @@ pub struct WatchFrame {
     /// FEN before the first move, once the move list is known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_fen: Option<String>,
-    /// UCI moves from `startFen`; absent until the TV feed and Lichess's delayed export line up.
+    /// UCI moves from `startFen`; absent until Lichess's delayed export of a TV game arrives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub moves: Option<Vec<String>>,
+    /// Plies played after `moves` that Lichess has not named yet: the list stops this far short
+    /// of the board until a later move names them. Absent when the list reaches the board.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moves_behind: Option<u32>,
     /// Why a TV game's moves are missing when they will not simply arrive with the next moves:
     /// Lichess refused its export, or KChess does not play its variant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -231,4 +235,50 @@ pub struct BroadcastTourDetail {
 pub struct BroadcastRoundPlace {
     pub tour_id: String,
     pub round_id: String,
+}
+/// A broadcast the player is alerted to: every round of a tournament (`round_id` none) or one
+/// round, told when one starts (`broadcast:round-started`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastAlert {
+    pub tour_id: String,
+    pub tour_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub round_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub round_name: Option<String>,
+    /// The rounds already told, or under way when the alert was set: never told (again).
+    #[serde(default)]
+    pub told: Vec<String>,
+}
+
+impl BroadcastAlert {
+    /// Ids Lichess could have given, a name, and a bounded list of rounds told.
+    pub fn readable(&self) -> bool {
+        let id = |id: &str| !id.is_empty() && id.len() <= 12;
+        id(&self.tour_id)
+            && self.round_id.as_deref().is_none_or(id)
+            && self.tour_name.len() <= 200
+            && self
+                .round_name
+                .as_ref()
+                .is_none_or(|name| name.len() <= 120)
+            && self.told.len() <= 100
+            && self.told.iter().all(|told| id(told))
+    }
+
+    /// Whether this alert covers `round` of its tournament.
+    pub fn covers(&self, tour: &str, round: &str) -> bool {
+        self.tour_id == tour && self.round_id.as_deref().is_none_or(|id| id == round)
+    }
+}
+
+/// `broadcast:round-started`: a round the player was alerted to went live.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastRoundStarted {
+    pub tour_id: String,
+    pub tour_name: String,
+    pub round_id: String,
+    pub round_name: String,
 }

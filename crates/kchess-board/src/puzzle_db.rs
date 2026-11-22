@@ -333,7 +333,7 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
             card.p(px(16.))
                 .border_1()
                 .border_color(palette.border)
-                .rounded(radii::XL)
+                .rounded(radii::BOX)
                 .bg(palette.bg)
                 .child(
                     div()

@@ -460,6 +460,9 @@ fn next_said_goes_on_to_the_next_puzzle(cx: &mut gpui_kit::TestAppContext) {
             .as_deref(),
         Some("Finish this puzzle first")
     );
+    // “hint” shows the piece to move, as Hint does.
+    say(&mut app, "hint");
+    assert!(app.cx.update(|cx| board.read(cx).hinted()));
     say(&mut app, "queen takes f seven");
     say(&mut app, "confirm");
     app.wait_for("the puzzle to be solved", |window, _| {
@@ -797,6 +800,13 @@ fn a_puzzle_failed_before_quitting_is_kept(cx: &mut gpui_kit::TestAppContext) {
 fn lichess_stat_cards_are_one_height(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     let (mut app, _session) = Harness::signed_in(cx, false);
+    app.cx.update(|cx| {
+        crate::prefs::set(
+            cx,
+            "kchess:puzzle-angle",
+            super::fake_lichess::TRAINED_THEME,
+        );
+    });
     app.open("Puzzles");
     tab(&mut app, crate::pages::puzzles::Tab::Stats);
     app.wait_for("the stat cards", |window, _| {
@@ -887,4 +897,100 @@ fn the_session_holds_still_as_a_rated_result_comes_back(cx: &mut gpui_kit::TestA
         before,
         "the session's tally moved when the result came"
     );
+}
+
+/// At each window wide enough to put the panel beside the board, the panel `id` ends level with
+/// the board's column: the board and the rows around it, the move box last.
+pub(super) fn panel_ends_with_the_board(app: &mut Harness, id: &'static str) {
+    panel_ends_with_column(app, id, "puzzle-column");
+}
+
+/// `panel_ends_with_the_board` for a page whose board's column is `column`.
+pub(super) fn panel_ends_with_column(app: &mut Harness, id: &'static str, column: &'static str) {
+    use gpui_kit::{px, size};
+    for (width, height) in &super::SIZES[1..] {
+        app.cx
+            .simulate_window_resize(app.window, size(px(*width), px(*height)));
+        app.settle();
+        let panel = app.find(id).bounds();
+        let column = app.find(column).bounds();
+        assert!(
+            (panel.bottom() - column.bottom()).abs() <= px(1.),
+            "{id} ends at {:?}, the board's column at {:?}, at {width}×{height}",
+            panel.bottom(),
+            column.bottom()
+        );
+    }
+}
+
+/// Regression: Daily and Storm · Streak · Rush sized their panel to the board square alone, so it
+/// stopped 62 px (44 px) short of the move box under the board, where Train's reached it.
+#[gpui_kit::test]
+fn the_train_panel_ends_with_the_board(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.cx.update(|cx| {
+        crate::prefs::set(
+            cx,
+            "kchess:puzzle-angle",
+            super::fake_lichess::TRAINED_THEME,
+        );
+    });
+    app.open("Puzzles");
+    app.wait_for("the puzzle to be playable", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_some_and(|hint| hint.disabled() != Some(true))
+    });
+    panel_ends_with_the_board(&mut app, "train-panel");
+}
+
+#[gpui_kit::test]
+fn the_daily_panel_ends_with_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/training/{}",
+        super::fake_lichess::LINKED_PUZZLE
+    ));
+    super::palette::wait_for_first(&mut app, "Solve this puzzle");
+    app.press("enter");
+    app.find("daily-today");
+    app.wait_for("the puzzle's board", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find("chess-board").is_some()
+    });
+    super::palette::wait_until_closed(&mut app);
+    panel_ends_with_the_board(&mut app, "daily-panel");
+}
+
+#[gpui_kit::test]
+fn the_rush_panel_ends_with_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start_with(cx, |profile| {
+        let rows: Vec<_> = (0..40)
+            .map(|index| kchess_core::puzzles::queries::DbPuzzle {
+                id: format!("fixture{index:02}"),
+                fen: "6k1/5ppp/8/8/8/8/5PPP/3R2K1 b - - 0 1".into(),
+                moves: "g8h8 d1d8".into(),
+                rating: 800. + f64::from(index) * 50.,
+                plays: Some(100.),
+                themes: "mateIn1 backRankMate".into(),
+                openings: String::new(),
+                game_id: String::new(),
+            })
+            .collect();
+        kchess_core::puzzles::write_database(profile, &rows).expect("the fixture's puzzles");
+    });
+    app.open("Puzzles");
+    tab(&mut app, crate::pages::puzzles::Tab::Rush);
+    app.wait_for("the downloaded puzzles", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("rush-start")
+            .is_some_and(|start| start.disabled() != Some(true))
+    });
+    app.click("rush-start");
+    app.find("rush-end");
+    panel_ends_with_the_board(&mut app, "rush-panel");
 }

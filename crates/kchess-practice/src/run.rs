@@ -397,7 +397,7 @@ pub fn training_list(
                         .px(px(12.))
                         .py(px(8.))
                         .border_1()
-                        .rounded(radii::MD)
+                        .rounded(radii::BOX)
                         .text_size(px(13.))
                         .cursor_pointer()
                         .border_color(if current {

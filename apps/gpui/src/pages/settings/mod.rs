@@ -32,8 +32,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::types::{
-    AppTheme, Appearance, CoordinateMode, EngineLevel, EngineStatus, PieceAnimation, ProfileArea,
-    PromotionMode, Settings,
+    AppTheme, Appearance, CloseAction, CoordinateMode, EngineLevel, EngineStatus, PieceAnimation,
+    ProfileArea, PromotionMode, Settings,
 };
 use shakmaty::{Color, Piece, Role};
 
@@ -68,6 +68,12 @@ const ANIMATIONS: [(PieceAnimation, &str); 4] = [
     (PieceAnimation::Fast, "Fast"),
     (PieceAnimation::Normal, "Normal"),
     (PieceAnimation::Slow, "Slow"),
+];
+
+/// What closing the window does.
+const CLOSES: [(CloseAction, &str); 2] = [
+    (CloseAction::Background, "Keep running"),
+    (CloseAction::Quit, "Quit"),
 ];
 
 /// How moves name their pieces.
@@ -147,7 +153,7 @@ fn other_rows(section: Section) -> &'static [&'static str] {
             "Your own themes",
         ],
         Section::Sound => &["Volume"],
-        Section::Notifications => &["Try it"],
+        Section::Notifications => &["Try it", "When you close the window"],
         Section::Gameplay => &["Pawn promotion", "Computer levels"],
         Section::Voice => &["Microphone access", "Test your microphone"],
         Section::Engine => &["Status", "Game review", "Review my games automatically"],
@@ -168,7 +174,7 @@ fn other_words(section: Section) -> &'static str {
         Section::Appearance => "zoom figurine symbols letters colors",
         Section::Themes => "app theme colors custom",
         Section::Sound => "mute audio",
-        Section::Notifications => "alerts",
+        Section::Notifications => "alerts background tray menu bar startup login minimize quit",
         Section::Gameplay => "legal dots auto-queen auto next",
         Section::Gestures => "trackpad back forward",
         Section::Voice => "speech",
@@ -322,6 +328,8 @@ impl SettingsPage {
         });
         let page = cx.entity().downgrade();
         let subscriptions = vec![
+            // Whether the tray icon shows decides what closing the window can do.
+            cx.observe_global::<crate::background::Background>(|_, cx| cx.notify()),
             crate::core::profile_changes(cx, &[ProfileArea::Engine], {
                 let page = page.clone();
                 move |cx| {
@@ -822,6 +830,57 @@ impl SettingsPage {
         .detach();
     }
 
+    /// Running in the background: what closing the window does, the menu bar or tray icon, and
+    /// opening at login.
+    fn background(&self, settings: &Settings, palette: &Palette, cx: &App) -> Div {
+        let frontend = &settings.frontend;
+        let shown = crate::background::chosen(frontend.close_action);
+        // Where keeping running is chosen but cannot be: nothing would show KChess runs.
+        let hint = (shown == CloseAction::Background
+            && !crate::background::keeps_running_with(
+                frontend.close_action,
+                crate::background::tray_shown(cx),
+            ))
+        .then(|| {
+            if crate::background::tray_unavailable(cx).is_some() {
+                SharedString::new_static("No system tray was found, so closing quits")
+            } else {
+                SharedString::new_static("Quits while the tray icon is off")
+            }
+        });
+        let mut rows = self
+            .rows()
+            .row(
+                "When you close the window",
+                hint,
+                choice(
+                    "close-action",
+                    &items(&CLOSES),
+                    shown,
+                    |s, value| {
+                        // The platform's own choice is kept as the default, so it follows the
+                        // platform and shows no reset.
+                        s.frontend.close_action =
+                            if crate::background::chosen(CloseAction::Default) == value {
+                                CloseAction::Default
+                            } else {
+                                value
+                            };
+                    },
+                    palette,
+                ),
+                Some(defaults::Reset::new("closeAction", settings, |d| {
+                    name_of(&CLOSES, crate::background::chosen(d.frontend.close_action))
+                })),
+                palette,
+            )
+            .switch("show-tray", settings, true, palette);
+        if crate::background::opens_at_login_here() {
+            rows = rows.switch("open-at-login", settings, true, palette);
+        }
+        rows.card(palette)
+    }
+
     fn notifications(&self, settings: &Settings, palette: &Palette, cx: &mut Context<Self>) -> Div {
         let frontend = &settings.frontend;
         let enabled = frontend.notifications_enabled;
@@ -909,7 +968,10 @@ impl Render for SettingsPage {
             Section::Analysis => self.analysis(&settings, &palette),
             Section::Ai => self.ai_section(cx, &palette),
             Section::Sound => self.sound(&settings, &palette),
-            Section::Notifications => self.notifications(&settings, &palette, cx),
+            Section::Notifications => v_flex()
+                .gap(px(16.))
+                .child(self.notifications(&settings, &palette, cx))
+                .child(self.background(&settings, &palette, cx)),
             Section::Engine => self.engine(&settings, cx, &palette),
             Section::Offline => self.offline(cx, &palette),
             Section::Updates => self.updates(&settings, cx, &palette),
@@ -1007,6 +1069,20 @@ mod tests {
             None
         );
         assert_eq!(pin_scroll(Pin::Left, px(0.), view, px(400.), max), None);
+    }
+
+    /// Regression: an option's frame (8px) sat 6px from a picture rounded 8px too, so the two
+    /// corners did not follow each other. The picture is the option's corner less its inset.
+    #[test]
+    fn an_options_picture_is_concentric_with_its_frame() {
+        assert_eq!(
+            crate::theme::radii::BOX - super::rows::OPTION_INSET,
+            crate::theme::radii::SMALL
+        );
+        assert_eq!(
+            super::appearance::picture_width(px(100.)) + super::rows::OPTION_INSET * 2.,
+            px(100.)
+        );
     }
 
     #[test]

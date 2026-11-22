@@ -329,7 +329,7 @@ fn drop_zone(palette: &Palette) -> impl IntoElement {
         .child(
             v_flex()
                 .flex_1()
-                .rounded(crate::theme::radii::XL)
+                .rounded(crate::theme::radii::BOX)
                 .border_2()
                 .border_dashed()
                 .border_color(palette.primary)
@@ -377,6 +377,8 @@ pub struct Workspace {
     /// Settings' categories beside them in its dialog.
     sections: settings_dialog::Sections,
     topbar: Entity<Part<Workspace>>,
+    /// The notification centre's bell, at the top bar's right end.
+    bell: Entity<crate::notifications::centre::Bell>,
     /// The sidebar toggle over the top bar (`render_sidebar_toggle`).
     toggle: Entity<Part<Workspace>>,
     history: crate::swipe::History<Page>,
@@ -518,6 +520,7 @@ impl Workspace {
                 TopbarInputs::of,
                 cx,
             ),
+            bell: cx.new(crate::notifications::centre::Bell::new),
             toggle: Part::keyed(
                 |this, _, cx| this.render_sidebar_toggle(cx).into_any_element(),
                 |this, _| this.shown(),
@@ -788,7 +791,8 @@ impl Workspace {
             .child(self.render_topbar_right(cx))
     }
 
-    /// The top bar's right end: connection, update and work state.
+    /// The top bar's right end: connection, update and work state, then the notification bell,
+    /// last so it stays put as the others come and go.
     fn render_topbar_right(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .flex_1()
@@ -824,6 +828,7 @@ impl Workspace {
                         .child("Working…"),
                 )
             })
+            .child(self.bell.clone())
     }
 }
 

@@ -66,6 +66,20 @@ pub struct Heard {
     pub unclear: bool,
 }
 
+impl Heard {
+    /// `text` said clearly, as the recognizer hands on a phrase it is sure of.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn clear(text: &str) -> Heard {
+        Heard {
+            text: text.into(),
+            raw: text.into(),
+            confidence: 1.,
+            words: Vec::new(),
+            unclear: false,
+        }
+    }
+}
+
 /// A phrase for the owner: used, or only heard (too unsure, or nothing but noise).
 #[derive(Clone, Debug)]
 pub enum VoiceEvent {

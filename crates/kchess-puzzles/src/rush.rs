@@ -23,7 +23,7 @@ use crate::game::puzzle::PuzzleStatus;
 use crate::puzzle_board::{PuzzleBoard, PuzzleBoardEvent};
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::{self, KeyboardFocus as _, Tone};
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar_height};
 use kchess_ui::icon;
 
 /// The opponent replies faster in a run.
@@ -144,7 +144,7 @@ impl PuzzleRush {
             warned: false,
             generation: Epoch::default(),
             board,
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             timers: Vec::new(),
             stats,
             _subscriptions: subscriptions,
@@ -492,7 +492,7 @@ impl PuzzleRush {
                     .gap(px(2.))
                     .px(px(12.))
                     .py(px(8.))
-                    .rounded(radii::LG)
+                    .rounded(radii::BOX)
                     .border_1()
                     .text_size(px(13.))
                     .cursor_pointer()
@@ -646,7 +646,9 @@ impl PuzzleRush {
         palette: &Palette,
     ) -> AnyElement {
         let config = self.config();
-        let board_size = self.layout.board_size(window);
+        let (board_size, panel_height) = self
+            .layout
+            .board_and_panel(self.board.read(cx).around(), window);
         let state = &self.state;
         let combo_on = config.is_some_and(|config| config.combo);
         let board_column = div()
@@ -671,7 +673,9 @@ impl PuzzleRush {
             .map(|config| config.title.clone())
             .unwrap_or_default();
         let mut panel = widgets::side_panel(palette)
-            .h(board_size)
+            .id("rush-panel")
+            .test_support()
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)

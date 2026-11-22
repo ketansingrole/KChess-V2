@@ -509,7 +509,7 @@ impl OnlinePage {
                     .gap(px(2.))
                     .px(px(12.))
                     .py(px(8.))
-                    .rounded(radii::LG)
+                    .rounded(radii::BOX)
                     .border_1()
                     .border_color(if chosen {
                         palette.primary

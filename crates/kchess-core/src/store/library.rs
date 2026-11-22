@@ -3,9 +3,9 @@
 //! document in `kchess.db`. The decoders and semantic validation are `kchess_domain`'s.
 
 use kchess_contracts::types::{
-    Drill, JoinedTournament, Keyed, MistakeGame, MistakesAdded, PlayedGame, RepertoireMisses,
-    RepertoireSchedule, ReviewSource, SessionDocument, SessionKind, StudyCommand,
-    StudyCommandResult, TournamentSystem,
+    BroadcastAlert, BroadcastRoundStarted, BroadcastTourDetail, Drill, JoinedTournament, Keyed,
+    MistakeGame, MistakesAdded, PlayedGame, RepertoireMisses, RepertoireSchedule, ReviewSource,
+    SessionDocument, SessionKind, StudyCommand, StudyCommandResult, TournamentSystem,
 };
 use kchess_domain::color::Color;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 
 use super::sql::Sql as _;
 use crate::host::{Host, Level};
+use crate::lichess::watch::alerts;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_domain::js::{self, utf16_len};
 use kchess_domain::library::{MAX_ARCHIVED_GAMES, MAX_MISTAKES};
@@ -26,6 +27,8 @@ pub(crate) const STUDIES: &str = "studies";
 pub(crate) const MISTAKES: &str = "mistakes";
 pub(crate) const JOINED: &str = "tournaments:joined";
 pub(crate) const MISSES: &str = "repertoire:misses";
+/// The broadcasts the player is alerted to (`lichess::watch::alerts`).
+pub(crate) const BROADCAST_ALERTS: &str = "broadcasts:alerts";
 /// The repertoire lines' spaced-repetition schedule (`kchess_domain::training::repetition`).
 pub(crate) const SCHEDULE: &str = "repertoire:schedule";
 
@@ -443,6 +446,92 @@ pub fn forget_tournaments_of(host: &dyn Host, db: &Connection, accounts: &[Strin
         );
     }
     Ok(())
+}
+
+/* ── Broadcast alerts ── */
+
+/// The broadcast alerts, as stored: each one readable, at most `alerts::MAX_ALERTS`.
+pub fn broadcast_alerts(host: &dyn Host, db: &Connection) -> Result<Vec<BroadcastAlert>> {
+    let raw = read_document(host, db, BROADCAST_ALERTS)?.unwrap_or(Value::Null);
+    Ok(raw
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| serde_json::from_value::<BroadcastAlert>(entry.clone()).ok())
+                .filter(BroadcastAlert::readable)
+                .take(alerts::MAX_ALERTS)
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+fn write_broadcast_alerts(db: &Connection, alerts: &[BroadcastAlert]) -> Result<()> {
+    assert_replaceable(db, BROADCAST_ALERTS, None, Value::is_array)?;
+    write_document(
+        db,
+        BROADCAST_ALERTS,
+        &json!(alerts),
+        "Too many broadcast alerts.",
+    )
+    .map(|_| ())
+}
+
+/// The alerts after `change`, saved.
+pub fn change_broadcast_alerts(
+    host: &dyn Host,
+    db: &Connection,
+    change: impl FnOnce(&mut Vec<BroadcastAlert>) -> Result<()>,
+) -> Result<Vec<BroadcastAlert>> {
+    let mut alerts = broadcast_alerts(host, db)?;
+    change(&mut alerts)?;
+    write_broadcast_alerts(db, &alerts)?;
+    Ok(alerts)
+}
+
+/// What a look at a tournament changed: the rounds to announce, whether the alerts changed, and
+/// when to look again.
+pub struct Seen {
+    pub started: Vec<BroadcastRoundStarted>,
+    pub changed: bool,
+    pub next: std::time::Duration,
+}
+
+/// The tournament `detail` as Lichess has it at `now` (ms), applied to its alerts: a round that
+/// went live is told once, and an alert with nothing left to wait for ends.
+pub fn look_at_broadcast(
+    host: &dyn Host,
+    db: &Connection,
+    detail: &BroadcastTourDetail,
+    now: i64,
+) -> Result<Seen> {
+    let before = broadcast_alerts(host, db)?;
+    let mut after = Vec::with_capacity(before.len());
+    let mut started: Vec<BroadcastRoundStarted> = Vec::new();
+    let mut next = alerts::LATER;
+    for alert in &before {
+        if alert.tour_id != detail.id {
+            after.push(alert.clone());
+            continue;
+        }
+        let look = alerts::look(alert, detail, now);
+        for round in look.started {
+            if !started.iter().any(|told| told.round_id == round.round_id) {
+                started.push(round);
+            }
+        }
+        next = next.min(look.next);
+        after.extend(look.alert);
+    }
+    let changed = after != before;
+    if changed {
+        write_broadcast_alerts(db, &after)?;
+    }
+    Ok(Seen {
+        started,
+        changed,
+        next,
+    })
 }
 
 /* ── Repertoire training ── */

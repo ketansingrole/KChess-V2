@@ -66,24 +66,30 @@ pub fn dark_square(column: u32, row: u32) -> bool {
 }
 
 /// The squares of a drawn board in `bounds`: the light colour over all of it, the dark squares
-/// over that, each corner taking `radius`, so the corners stay concentric with what holds it.
-/// Edges fall on whole device pixels, so no square blurs into its neighbour.
+/// over that, each corner square taking the board's own `corners`, so they stay concentric with
+/// what holds it. Edges fall on whole device pixels, so no square blurs into its neighbour.
 pub fn paint_squares(
     bounds: gpui_kit::Bounds<gpui_kit::Pixels>,
     light: u32,
     dark: u32,
-    radius: gpui_kit::Pixels,
+    corners: gpui_kit::Corners<gpui_kit::Pixels>,
     window: &mut gpui_kit::Window,
 ) {
-    use gpui_kit::{Corners, fill, point, px, rgb};
-    let radius = radius.min(bounds.size.width / 8.);
-    window.paint_quad(fill(bounds, rgb(light)).corner_radii(radius));
+    use gpui_kit::{fill, point, px, rgb};
+    let side = bounds.size.width / 8.;
+    let corners = gpui_kit::Corners {
+        top_left: corners.top_left.min(side),
+        top_right: corners.top_right.min(side),
+        bottom_right: corners.bottom_right.min(side),
+        bottom_left: corners.bottom_left.min(side),
+    };
+    window.paint_quad(fill(bounds, rgb(light)).corner_radii(corners));
     let scale = window.scale_factor();
     let snap = |at: gpui_kit::Pixels| px((f32::from(at) * scale).round() / scale);
     let edge = |origin: gpui_kit::Pixels, extent: gpui_kit::Pixels, index: u32| {
         snap(origin + extent * (index as f32 / 8.))
     };
-    for (column, row, corners) in dark_squares(radius) {
+    for (column, row, rounded) in dark_squares(corners) {
         let (left, right) = (
             edge(bounds.origin.x, bounds.size.width, column),
             edge(bounds.origin.x, bounds.size.width, column + 1),
@@ -93,27 +99,24 @@ pub fn paint_squares(
             edge(bounds.origin.y, bounds.size.height, row + 1),
         );
         let square = gpui_kit::Bounds::from_corners(point(left, top), point(right, bottom));
-        let [top_left, top_right, bottom_right, bottom_left] = corners;
-        window.paint_quad(fill(square, rgb(dark)).corner_radii(Corners {
-            top_left,
-            top_right,
-            bottom_right,
-            bottom_left,
-        }));
+        window.paint_quad(fill(square, rgb(dark)).corner_radii(rounded));
     }
 }
 
-/// A board's squares filling what holds them, their corners rounded to `radius`: drawn in one
-/// paint for a flat board (no layout of its own beyond the one box, nothing to notify), or the
-/// image stretched for a textured one.
-pub fn surface(surface: &Surface, radius: gpui_kit::Pixels) -> gpui_kit::AnyElement {
+/// A board's squares filling what holds them, with the board's `corners`: drawn in one paint for
+/// a flat board (no layout of its own beyond the one box, nothing to notify), or the image
+/// stretched for a textured one.
+pub fn surface(
+    surface: &Surface,
+    corners: gpui_kit::Corners<gpui_kit::Pixels>,
+) -> gpui_kit::AnyElement {
     use gpui_kit::{
         IntoElement as _, ObjectFit, SharedString, Styled as _, StyledImage as _, canvas, img,
     };
     match *surface {
         Surface::Colors { light, dark } => canvas(
             |_, _, _| {},
-            move |bounds, (), window, _| paint_squares(bounds, light, dark, radius, window),
+            move |bounds, (), window, _| paint_squares(bounds, light, dark, corners, window),
         )
         .absolute()
         .size_full()
@@ -122,30 +125,33 @@ pub fn surface(surface: &Surface, radius: gpui_kit::Pixels) -> gpui_kit::AnyElem
             .absolute()
             .size_full()
             .object_fit(ObjectFit::Fill)
-            .rounded(radius)
+            .rounded_tl(corners.top_left)
+            .rounded_tr(corners.top_right)
+            .rounded_br(corners.bottom_right)
+            .rounded_bl(corners.bottom_left)
             .into_any_element(),
     }
 }
 
-/// The 32 dark squares by column and row, each with the corners it rounds: top left, top right,
-/// bottom right, bottom left.
+/// The 32 dark squares by column and row, each with the board's corners it rounds: the dark
+/// squares at the top right and bottom left take those corners, the rest none.
 pub fn dark_squares(
-    radius: gpui_kit::Pixels,
-) -> impl Iterator<Item = (u32, u32, [gpui_kit::Pixels; 4])> {
+    board: gpui_kit::Corners<gpui_kit::Pixels>,
+) -> impl Iterator<Item = (u32, u32, gpui_kit::Corners<gpui_kit::Pixels>)> {
     (0..8u32).flat_map(move |row| {
         (0..8u32)
             .filter(move |&column| dark_square(column, row))
             .map(move |column| {
-                let at = |on: bool| if on { radius } else { gpui_kit::px(0.) };
+                let at = |on: bool, radius| if on { radius } else { gpui_kit::px(0.) };
                 (
                     column,
                     row,
-                    [
-                        at(column == 0 && row == 0),
-                        at(column == 7 && row == 0),
-                        at(column == 7 && row == 7),
-                        at(column == 0 && row == 7),
-                    ],
+                    gpui_kit::Corners {
+                        top_left: at(column == 0 && row == 0, board.top_left),
+                        top_right: at(column == 7 && row == 0, board.top_right),
+                        bottom_right: at(column == 7 && row == 7, board.bottom_right),
+                        bottom_left: at(column == 0 && row == 7, board.bottom_left),
+                    },
                 )
             })
     })
@@ -508,15 +514,26 @@ mod tests {
     /// and the light ones by the board's own rounded fill.
     #[test]
     fn a_drawn_board_rounds_its_corner_squares() {
-        let radius = gpui_kit::px(8.);
-        let squares: Vec<_> = dark_squares(radius).collect();
+        // A card's picture rounds only its top: each dark corner square takes its own corner.
+        let board = gpui_kit::Corners {
+            top_left: gpui_kit::px(8.),
+            top_right: gpui_kit::px(8.),
+            bottom_right: gpui_kit::px(0.),
+            bottom_left: gpui_kit::px(6.),
+        };
+        let squares: Vec<_> = dark_squares(board).collect();
         assert_eq!(squares.len(), 32);
-        let zero = gpui_kit::px(0.);
         for (column, row, corners) in squares {
             let expected = match (column, row) {
-                (7, 0) => [zero, radius, zero, zero],
-                (0, 7) => [zero, zero, zero, radius],
-                _ => [zero; 4],
+                (7, 0) => gpui_kit::Corners {
+                    top_right: board.top_right,
+                    ..Default::default()
+                },
+                (0, 7) => gpui_kit::Corners {
+                    bottom_left: board.bottom_left,
+                    ..Default::default()
+                },
+                _ => gpui_kit::Corners::default(),
             };
             assert_eq!(corners, expected, "{column},{row}");
         }

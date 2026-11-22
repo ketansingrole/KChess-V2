@@ -259,6 +259,11 @@ pub const MIGRATIONS: &[&str] = &[
     // covered by this index they scan it instead of every game's row with its moves and PGN.
     r#"CREATE INDEX idx_games_summary ON games (account COLLATE NOCASE, opponent COLLATE NOCASE,
     color, winner, rated, opening);"#,
+    // Running in the background: opening at login, what closing the window does and the tray or
+    // menu bar icon.
+    r#"ALTER TABLE settings ADD COLUMN openAtLogin INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE settings ADD COLUMN closeAction TEXT NOT NULL DEFAULT 'default';
+  ALTER TABLE settings ADD COLUMN showTrayIcon INTEGER NOT NULL DEFAULT 1;"#,
 ];
 
 /// Apply every migration newer than the database's `user_version`, each in its own transaction.

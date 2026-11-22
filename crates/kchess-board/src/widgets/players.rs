@@ -6,6 +6,8 @@ use super::*;
 pub const PLAYER_LINE: Pixels = px(36.);
 /// The gap between the player lines and the board.
 pub const STACK_GAP: Pixels = px(8.);
+/// What the move box's row under a board takes in the board's column: the gap and its line.
+pub const MOVE_BOX_ROW: Pixels = px(8. + 36.);
 
 /// Figures of one width, so clocks and move numbers hold still.
 pub fn tabular() -> FontFeatures {
@@ -52,7 +54,7 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
         .relative()
         .flex_none()
         .size(px(30.))
-        .rounded(radii::MD)
+        .rounded(radii::BOX)
         .bg(palette.accented)
         .text_color(palette.toned)
         .flex()
@@ -66,7 +68,7 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
                     .top(px(-2.))
                     .left(px(-2.))
                     .size(px(34.))
-                    .rounded(radii::LG)
+                    .rounded(radii::BOX)
                     .border_2()
                     .border_color(palette.primary),
             )
@@ -100,7 +102,7 @@ pub fn clock(text: SharedString, active: bool, palette: &Palette) -> Div {
         .min_w(px(72.))
         .px(px(8.))
         .py(px(4.))
-        .rounded(radii::MD)
+        .rounded(radii::BOX)
         // Centred in its 72px: a short time ("5:00") right-aligned left a gap on its left. Its
         // tabular digits keep it still as it counts down.
         .text_center()

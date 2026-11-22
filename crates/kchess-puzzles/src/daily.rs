@@ -2,6 +2,7 @@
 //! own board, with the status panel the Train tab uses. A later UTC day brings the next one.
 //! A lichess.org/training link opens its puzzle here instead, until Today's puzzle.
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::v_flex;
@@ -15,7 +16,7 @@ use crate::core::AppCore;
 use crate::puzzle_board::PuzzleBoard;
 use crate::theme::{Palette, radii};
 use crate::widgets;
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar_height};
 use kchess_ui::icon;
 
 /// The page's way out when the daily puzzle cannot be fetched.
@@ -72,7 +73,7 @@ impl DailyPuzzle {
             _subscriptions: vec![cx.observe(&board, |_, _, cx| cx.notify())],
             board,
             themes,
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             rollover: None,
         };
         daily.load(false, cx);
@@ -183,7 +184,9 @@ impl DailyPuzzle {
 impl Render for DailyPuzzle {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let board_size = self.layout.board_size(window);
+        let (board_size, panel_height) = self
+            .layout
+            .board_and_panel(self.board.read(cx).around(), window);
         let board_column = if self.puzzle.is_some() {
             div()
                 .w(board_size)
@@ -240,13 +243,15 @@ impl Render for DailyPuzzle {
                 .p(px(24.))
                 .border_1()
                 .border_color(palette.border)
-                .rounded(radii::XL)
+                .rounded(radii::BOX)
                 .bg(palette.elevated)
                 .child(content)
                 .into_any_element()
         };
         let panel = widgets::side_panel(&palette)
-            .h(board_size)
+            .id("daily-panel")
+            .test_support()
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)

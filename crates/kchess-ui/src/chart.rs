@@ -232,7 +232,7 @@ impl Render for LineChart {
                 .gap(px(2.))
                 .px(px(8.))
                 .py(px(4.))
-                .rounded(radii::SM)
+                .rounded(radii::BOX)
                 .border_1()
                 .border_color(palette.border)
                 .bg(palette.elevated)
@@ -258,7 +258,7 @@ impl Render for LineChart {
                             .child(
                                 div()
                                     .size(px(10.))
-                                    .rounded(radii::XS)
+                                    .rounded(radii::SMALL)
                                     .bg(series.color.unwrap_or(palette.primary)),
                             )
                             .child(div().flex_1().child(series.name.clone()))

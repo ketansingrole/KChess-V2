@@ -11,6 +11,7 @@ use kchess_hack as _;
 mod account_menu;
 mod activity;
 mod assets;
+mod background;
 #[cfg(feature = "bench")]
 mod bench;
 mod core;
@@ -113,7 +114,10 @@ fn main() {
         cx.on_app_quit(quit::quit).detach();
         dock_icon::apply(cx);
         startup::start(cx);
-        cx.activate(true);
+        // Started at login in the background, KChess stays out of the way.
+        if !cx.windows().is_empty() {
+            cx.activate(true);
+        }
     });
 }
 
@@ -124,6 +128,7 @@ fn start_models(profile: startup::Profile, cx: &mut App) {
     let library = &library;
     settings::init(settings, cx);
     prefs::init(cx);
+    kchess_app::notifications::init(cx);
     let profile_dir = profile::data_dir().unwrap_or_default();
     interface_zoom::init(&profile_dir, cx);
     window_state::init(&profile_dir, cx);
@@ -146,9 +151,16 @@ fn start_models(profile: startup::Profile, cx: &mut App) {
     // Before the online state, which checks Lichess again when the network returns.
     network::init(cx);
     online::init(cx);
+    notifications::alert_on_broadcasts(cx);
     voice::init(cx);
     cx.set_global(startup::Started);
-    open_main_window(cx);
+    // After the online state and settings, whose state its menu shows.
+    background::init(cx);
+    if background::starts_hidden(cx) {
+        background::went_to_background(cx);
+    } else {
+        open_main_window(cx);
+    }
 }
 
 /// A blank stand-in window for the dialog below.

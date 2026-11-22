@@ -258,9 +258,14 @@ apps:
     command: app/kchess
     extensions: [gnome]
     desktop: app/kchess.desktop
+    # Open KChess when you log in: snapd starts the entry the app writes in the snap's own
+    # `$XDG_CONFIG_HOME/autostart` (`apps/gpui/src/background.rs`).
+    autostart: kchess.desktop
     plugs:
       - desktop
       - desktop-legacy
+      # The system tray icon: StatusNotifierItem on the session bus.
+      - unity7
       - home
       - x11
       - wayland
@@ -476,6 +481,8 @@ mod tests {
         assert!(text.contains("confinement: strict"));
         assert!(text.contains("- password-manager-service"));
         assert!(text.contains("- audio-record"));
+        assert!(text.contains("autostart: kchess.desktop"));
+        assert!(text.contains("- unity7"));
         assert!(text.contains(
             "website: https://ketansingrole.github.io/KChess-V2/\nsource-code: https://github.com/ketansingrole/KChess-V2\n"
         ));

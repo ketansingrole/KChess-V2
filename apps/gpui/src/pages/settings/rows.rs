@@ -102,7 +102,7 @@ impl RowMark {
             .relative()
             .m(px(-8.))
             .p(px(8.))
-            .rounded(radii::SM)
+            .rounded(radii::BOX)
             .bg(crate::theme::tint(palette.primary, 12.))
             .child(row)
             .child(probe)
@@ -305,6 +305,10 @@ pub(super) fn choice<T: Copy + PartialEq + 'static>(
     )
 }
 
+/// How far an option's picture sits in from its outer edge (border and padding), on top and at
+/// the sides: `radii::BOX` less this is the picture's corner (`radii::SMALL`).
+pub(super) const OPTION_INSET: Pixels = px(4.);
+
 /// A picture and its name; the chosen one is ringed in the primary color.
 #[expect(
     clippy::too_many_arguments,
@@ -330,9 +334,12 @@ pub(super) fn option(
         .w(width)
         .items_center()
         .gap(px(4.))
-        .py(px(6.))
-        .px(px(4.))
-        .rounded(radii::LG)
+        // The picture sits `OPTION_INSET` in from the option's top and sides, its corner the
+        // option's less that, so the two stay concentric.
+        .pt(OPTION_INSET - px(1.))
+        .px(OPTION_INSET - px(1.))
+        .pb(px(5.))
+        .rounded(radii::BOX)
         .bg(palette.bg)
         .text_size(px(11.))
         .font_weight(FontWeight::MEDIUM)
@@ -344,8 +351,9 @@ pub(super) fn option(
             option
                 .border_2()
                 .border_color(palette.primary)
-                .py(px(5.))
-                .px(px(3.))
+                .pt(OPTION_INSET - px(2.))
+                .px(OPTION_INSET - px(2.))
+                .pb(px(4.))
                 .text_color(palette.highlighted)
         })
         .when(!chosen, |option| {

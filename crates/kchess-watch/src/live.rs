@@ -290,13 +290,30 @@ impl Live {
             .unwrap_or_default()
     }
 
+    /// Plies on the board that the list does not name yet: Lichess names them a move later.
+    fn behind(&self) -> u32 {
+        if self.setup().is_none() {
+            return 0;
+        }
+        self.frame
+            .as_ref()
+            .and_then(|frame| frame.moves_behind)
+            .unwrap_or(0)
+    }
+
+    /// The live board's step: after the last move listed, or one further when the board is
+    /// ahead of the list, so that no listed move stands for it.
+    fn end(&self) -> usize {
+        self.moves().len() + usize::from(self.behind() > 0)
+    }
+
     fn shown_ply(&self) -> usize {
-        let count = self.moves().len();
-        self.ply.unwrap_or(count).min(count)
+        let end = self.end();
+        self.ply.unwrap_or(end).min(end)
     }
 
     fn browsing(&self) -> bool {
-        self.setup().is_some() && self.ply.is_some() && self.shown_ply() < self.moves().len()
+        self.setup().is_some() && self.ply.is_some() && self.shown_ply() < self.end()
     }
 
     fn orientation(&self) -> Color {
@@ -308,8 +325,7 @@ impl Live {
     }
 
     fn select(&mut self, ply: usize) {
-        let count = self.moves().len();
-        self.ply = (ply < count).then_some(ply);
+        self.ply = (ply < self.end()).then_some(ply);
     }
 
     pub fn redraw(&mut self, cx: &mut App) {
@@ -355,7 +371,7 @@ impl Live {
     pub fn steps(&self) -> Option<(usize, usize)> {
         self.frame.as_ref()?;
         self.setup()?;
-        Some((self.shown_ply(), self.moves().len()))
+        Some((self.shown_ply(), self.end()))
     }
 
     /// Show the position after `ply` moves.
@@ -464,7 +480,7 @@ impl Live {
                     .gap(px(4.))
                     .p(px(8.))
                     .w(px(190.))
-                    .rounded(radii::LG)
+                    .rounded(radii::BOX)
                     .border_1()
                     .border_color(palette.border)
                     .bg(palette.elevated)
@@ -583,7 +599,7 @@ impl WatchPage {
                 .gap(px(16.))
                 .px(px(12.))
                 .py(px(8.))
-                .rounded(radii::LG)
+                .rounded(radii::BOX)
                 .border_1()
                 .border_color(palette.border)
                 .bg(palette.elevated)
@@ -622,6 +638,27 @@ impl WatchPage {
             .map(|setup| view::sans(setup, &moves))
             .unwrap_or_default();
         let empty = moves_placeholder(&frame);
+        // An export that failed is fetched again with each move; Try again asks for it now. A
+        // variant KChess does not play has nothing to try again.
+        let moves_retry = frame
+            .moves_error
+            .clone()
+            .filter(|_| frame.moves.is_none() && plays_variant(&frame))
+            .zip(self.target.clone())
+            .map(|(error, target)| {
+                widgets::retry_line(
+                    "watch-moves-retry",
+                    error,
+                    palette.error,
+                    cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.watch(target.clone(), cx);
+                    }),
+                )
+                .id("watch-moves-error")
+                .test_support()
+                .px(px(8.))
+                .into_any_element()
+            });
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
             let _ = page.update(cx, |page, cx| {
@@ -645,21 +682,30 @@ impl WatchPage {
             .max_w(PANEL_MAX)
             .child(banner)
             .children(head_to_head)
-            .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
-                "watch-moves",
-                widgets::MoveSheet {
-                    sans: &sans,
-                    shown: self.live.shown_ply(),
-                    first: setup.as_ref().map(view::first_move).unwrap_or_default(),
-                },
-                empty,
-                select.clone(),
-                crate::notation::figurine(cx),
-                palette,
-            )))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(120.))
+                    .child(moves_retry.unwrap_or_else(|| {
+                        widgets::moves_list(
+                            "watch-moves",
+                            widgets::MoveSheet {
+                                sans: &sans,
+                                shown: self.live.shown_ply(),
+                                first: setup.as_ref().map(view::first_move).unwrap_or_default(),
+                            },
+                            empty,
+                            select.clone(),
+                            crate::notation::figurine(cx),
+                            palette,
+                        )
+                        .into_any_element()
+                    })),
+            )
+            .children(behind_hint(self.live.behind(), palette))
             .child(widgets::move_controls(
                 self.live.shown_ply(),
-                moves.len(),
+                self.live.end(),
                 select,
                 widgets::TurnButton::Flip(flip),
                 cx,
@@ -926,7 +972,8 @@ impl WatchPage {
             game_id: Some(frame.game_id.clone()),
             ..origin_of(&frame.white, &frame.black)
         };
-        if let Some(setup) = self.live.setup() {
+        // A list short of the board would open the wrong position: Lichess's export has it.
+        if let Some(setup) = self.live.setup().filter(|_| self.live.behind() == 0) {
             let pgn = kchess_domain::pgn::setup_pgn(
                 setup.variant,
                 &setup.fen,
@@ -990,6 +1037,23 @@ fn moves_placeholder(frame: &WatchFrame) -> SharedString {
     } else {
         SharedString::new_static("Loading moves…")
     }
+}
+
+/// The line under a list that stops short of the board: Lichess names its last moves a move
+/// later, so they show after the next one.
+fn behind_hint(behind: u32, palette: &Palette) -> Option<AnyElement> {
+    let text = match behind {
+        0 => return None,
+        1 => SharedString::new_static("The last move shows after the next one"),
+        n => format!("The last {n} moves show after the next one").into(),
+    };
+    Some(
+        widgets::hint(text, palette)
+            .id("watch-moves-behind")
+            .test_support()
+            .px(px(8.))
+            .into_any_element(),
+    )
 }
 
 /// What the board's place says before a game arrives: a failed feed is not still connecting.

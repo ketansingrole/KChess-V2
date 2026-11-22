@@ -206,7 +206,7 @@ pub fn name_chip(
         .h(px(24.))
         .px(px(8.))
         .gap(px(4.))
-        .rounded(radii::SM)
+        .rounded(radii::BOX)
         .bg(palette.accented)
         .text_size(px(13.))
         .text_color(palette.toned)

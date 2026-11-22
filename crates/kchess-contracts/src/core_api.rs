@@ -367,6 +367,17 @@ core_api! {
         BroadcastTour = "broadcastTour" fn broadcast_tour(id: LichessId) -> BroadcastTourDetail;
         /// The tournament a broadcast round is in.
         BroadcastRound = "broadcastRound" fn broadcast_round(id: LichessId) -> BroadcastRoundPlace;
+        /// The broadcasts the player is alerted to when a round starts (`broadcast:round-started`).
+        BroadcastAlerts = "broadcastAlerts" fn broadcast_alerts() -> Vec<BroadcastAlert>;
+        /// Alert the player (`on`) or no longer to the tournament `tour_id`'s rounds as they
+        /// start: every round, or `round_id` alone. A round already under way is not announced.
+        /// Answers the alerts.
+        #[writes(Broadcasts)]
+        SetBroadcastAlert = "setBroadcastAlert" fn set_broadcast_alert(
+            tour_id: LichessId,
+            on: bool;
+            round_id: Option<LichessId>
+        ) -> Vec<BroadcastAlert>;
     }
 
     /// Lichess tournaments.
@@ -574,6 +585,25 @@ core_api! {
             key: ViewPreferenceKey;
             value: Option<Value>
         ) -> ();
+        /// The notifications kept on this profile, newest first: at most 100, none older than
+        /// 30 days.
+        Notifications = "notifications" fn notifications() -> Vec<NotificationEntry>;
+        /// Keep a notification the app showed. One with the key of a kept one replaces it, or,
+        /// saying the same, leaves it as it was. Answers the notifications kept.
+        #[writes(Notifications)]
+        RecordNotification = "recordNotification" fn record_notification(
+            entry: NotificationInput
+        ) -> Vec<NotificationEntry>;
+        /// Mark one notification read, or every one. Answers the notifications kept.
+        #[writes(Notifications)]
+        MarkNotificationsRead = "markNotificationsRead" fn mark_notifications_read(;
+            id: Option<NotificationId>
+        ) -> Vec<NotificationEntry>;
+        /// Remove one notification, or every one. Answers the notifications kept.
+        #[writes(Notifications)]
+        ClearNotifications = "clearNotifications" fn clear_notifications(;
+            id: Option<NotificationId>
+        ) -> Vec<NotificationEntry>;
     }
 
     /// Network usage and the user's themes.

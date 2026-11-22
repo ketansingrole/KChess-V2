@@ -6,6 +6,7 @@ use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use std::time::Duration;
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -19,7 +20,7 @@ use crate::puzzle_board::{PuzzleBoard, PuzzleBoardEvent};
 use crate::theme::{Palette, judgment_color};
 use crate::widgets;
 use kchess_nav::page::Page;
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding, tab_bar_height};
 use kchess_ui::icon;
 
 /// Answered right this many times in a row, a position is next due in four days or more: learned
@@ -155,7 +156,7 @@ impl Mistakes {
             show_all: false,
             now: kchess_games::now_ms(),
             puzzle,
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             _clock: clock,
             _subscriptions: subscriptions,
         };
@@ -356,11 +357,15 @@ impl Mistakes {
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> AnyElement {
-        let board_size = self.layout.board_size(window);
+        let (board_size, panel_height) = self
+            .layout
+            .board_and_panel(self.puzzle.read(cx).around(), window);
         let due = self.due().len();
         let hinted = self.puzzle.read(cx).hinted();
         let panel = widgets::side_panel(palette)
-            .h(self.layout.panel_height(board_size))
+            .id("mistakes-panel")
+            .test_support()
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)

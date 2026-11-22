@@ -43,6 +43,7 @@ impl EventPayload for LobbyState {}
 impl EventPayload for WatchState {}
 impl EventPayload for Box<WatchFrame> {}
 impl EventPayload for BroadcastUpdate {}
+impl EventPayload for BroadcastRoundStarted {}
 impl EventPayload for Box<ChallengeInfo> {}
 impl EventPayload for CoreSettings {}
 impl EventPayload for ProfileChange {}
@@ -114,6 +115,9 @@ core_events! {
     WatchState = "watch:state" (WatchState),
     WatchFrame = "watch:frame" (Box<WatchFrame>),
     WatchBroadcast = "watch:broadcast" (BroadcastUpdate),
+    /// A broadcast round the player asked to be alerted to went live (`broadcastAlerts`), told
+    /// once; frontends decide how to alert.
+    BroadcastRoundStarted = "broadcast:round-started" (BroadcastRoundStarted),
     /// A challenge that was not pending before; frontends decide how to alert.
     ChallengeReceived = "challenge:received" (Box<ChallengeInfo>),
     SettingsSaved = "settings:saved" (CoreSettings),
@@ -359,10 +363,11 @@ mod tests {
             finished: true,
             start_fen: Some("s".into()),
             moves: Some(vec!["e2e4".into()]),
+            moves_behind: Some(2),
             moves_error: Some("No export".into()),
             previous: Some(vec![past, bare_past]),
         };
-        let full_text = r#"{"session":3,"source":"tv","channel":"rapid","gameId":"g2","white":{"name":"A","title":"GM","rating":2700.5},"black":{"name":"B","rating":1500.0},"orientation":"black","fen":"f","lastMove":"e2e4","whiteClock":599.0,"blackClock":12.5,"variant":"standard","speed":"rapid","rated":true,"clock":{"initial":600.0,"increment":2.0},"status":"mate","winner":"black","finished":true,"startFen":"s","moves":["e2e4"],"movesError":"No export","previous":[{"gameId":"g1","white":{"name":"A","title":"GM","rating":2700.0},"black":{"name":"B"},"fen":"8/8/8/8/8/8/8/8 w - - 0 1","lastMove":"e2e4","orientation":"black","status":"mate","winner":"white"},{"gameId":"g1","white":{"name":"A","title":"GM","rating":2700.0},"black":{"name":"B"},"fen":"8/8/8/8/8/8/8/8 w - - 0 1","orientation":"white"}]}"#;
+        let full_text = r#"{"session":3,"source":"tv","channel":"rapid","gameId":"g2","white":{"name":"A","title":"GM","rating":2700.5},"black":{"name":"B","rating":1500.0},"orientation":"black","fen":"f","lastMove":"e2e4","whiteClock":599.0,"blackClock":12.5,"variant":"standard","speed":"rapid","rated":true,"clock":{"initial":600.0,"increment":2.0},"status":"mate","winner":"black","finished":true,"startFen":"s","moves":["e2e4"],"movesBehind":2,"movesError":"No export","previous":[{"gameId":"g1","white":{"name":"A","title":"GM","rating":2700.0},"black":{"name":"B"},"fen":"8/8/8/8/8/8/8/8 w - - 0 1","lastMove":"e2e4","orientation":"black","status":"mate","winner":"white"},{"gameId":"g1","white":{"name":"A","title":"GM","rating":2700.0},"black":{"name":"B"},"fen":"8/8/8/8/8/8/8/8 w - - 0 1","orientation":"white"}]}"#;
         assert_eq!(serde_json::to_string(&full).unwrap(), full_text);
         crosses_as(CoreEvent::WatchFrame(Box::new(full)), full_text);
 
@@ -387,6 +392,7 @@ mod tests {
             finished: false,
             start_fen: None,
             moves: None,
+            moves_behind: None,
             moves_error: None,
             previous: None,
         };

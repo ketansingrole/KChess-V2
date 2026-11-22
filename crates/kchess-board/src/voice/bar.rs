@@ -205,7 +205,7 @@ pub fn voice_bar(
                             .id((bar.id, 3usize))
                             .px(px(12.))
                             .py(px(4.))
-                            .rounded(radii::SM)
+                            .rounded(radii::BOX)
                             .border_1()
                             .border_color(palette.border)
                             .when(state == State::Listening, |hold| hold.bg(palette.accented))

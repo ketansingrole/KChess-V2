@@ -1,7 +1,9 @@
 //! Alerts for the player, when Settings allow
 //! them: inside the window while KChess is in front (macOS shows no banner for the app in front),
 //! a system notification in the background. An alert about the board being looked at is dropped.
+//! Every alert shown is kept in the notification centre (`centre`, the bell in the top bar).
 
+pub mod centre;
 mod move_reply;
 #[cfg(all(windows, not(test)))]
 mod windows_shortcuts;
@@ -9,7 +11,8 @@ mod windows_shortcuts;
 #[cfg(target_os = "macos")]
 use crate::log::ResultExt as _;
 use gpui_kit::App;
-use kchess_contracts::types::{NotificationKind, Settings};
+use kchess_app::notifications::Announcement;
+use kchess_contracts::types::{NotificationKind, NotificationLink, Settings};
 
 use crate::pages::Page;
 
@@ -19,6 +22,13 @@ pub fn init(cx: &mut App) {
     gpui_kit::component::Theme::global_mut(cx)
         .notification
         .placement = gpui_kit::Anchor::BottomRight;
+    // The crates' alerts (a broadcast round starting) are shown and kept as the app's are.
+    kchess_app::notifications::set_announcer(
+        |announcement, cx| {
+            announce(announcement, cx);
+        },
+        cx,
+    );
     if through_gpui() {
         identify(cx);
         // Not from a test run, which would change the shortcuts of whoever runs it.
@@ -85,19 +95,78 @@ fn open_from(tag: &str, action: Option<&str>, cx: &mut App) {
     if let Some(game) = tag.strip_prefix(CONFIRM_TAG) {
         return confirm_move(tag, game, action, cx);
     }
+    if let Some(place) = tag.strip_prefix(BROADCAST_TAG) {
+        return open_broadcast_round(place, cx);
+    }
     show_page(NotificationKind::from_key(tag).and_then(game_page), cx);
 }
 
-/// KChess comes forward, on `page` when there is one.
+/// KChess comes forward, on `page` when there is one, opening its window when it was running
+/// in the background without one.
 fn show_page(page: Option<Page>, cx: &mut App) {
+    crate::background::show_window(page, cx);
+}
+
+/// A broadcast round's notification's tag: this, then `tour/round`.
+const BROADCAST_TAG: &str = "broadcast:";
+
+/// Alert the player when a broadcast round they asked to be alerted to starts (the core tells
+/// each round once), for as long as KChess runs, with or without a window.
+pub fn alert_on_broadcasts(cx: &mut App) {
+    let events = cx.global::<crate::core::AppCore>().events.clone();
+    cx.subscribe(&events, |_, event: &crate::core::ClientEvent, cx| {
+        if let crate::core::ClientEvent::Event(
+            kchess_contracts::CoreEvent::BroadcastRoundStarted(started),
+        ) = event
+        {
+            broadcast_round(started, cx);
+        }
+    })
+    .detach();
+}
+
+/// Alert the player that `started`'s round is live; clicking it opens the round on Watch.
+pub fn broadcast_round(
+    started: &kchess_contracts::types::BroadcastRoundStarted,
+    cx: &mut App,
+) -> Outcome {
+    let tag = format!("{BROADCAST_TAG}{}/{}", started.tour_id, started.round_id);
+    let announcement = Announcement {
+        kind: NotificationKind::Broadcast,
+        title: started.tour_name.clone(),
+        body: format!("{} has started", started.round_name),
+        link: NotificationLink::BroadcastRound {
+            round: started.round_id.clone(),
+            game: String::new(),
+        },
+        key: Some(tag.clone()),
+    };
+    alert(announcement, Some((tag, Vec::new())), cx)
+}
+
+/// KChess comes forward on Watch at the broadcast round `place` (`tour/round`) names, opening a
+/// window when it had none (in the background, in the tray or menu bar).
+fn open_broadcast_round(place: &str, cx: &mut App) {
+    let Some((_, round)) = place.split_once('/') else {
+        return show_page(Some(Page::Watch), cx);
+    };
+    let round = round.to_string();
     cx.activate(true);
+    if cx.windows().is_empty() && cx.has_global::<crate::startup::Started>() {
+        crate::open_main_window(cx);
+    }
     if let Some(window) = cx.windows().into_iter().next() {
-        let _ = window.update(cx, |_, window, cx| {
-            window.activate_window();
-            if let Some(page) = page {
-                crate::shell::open(page, window, cx);
-            }
-        });
+        // A window closing meanwhile leaves nothing to open it in.
+        window
+            .update(cx, |_, window, cx| {
+                window.activate_window();
+                let link = kchess_domain::links::BroadcastLink::Round {
+                    round,
+                    game: String::new(),
+                };
+                crate::pages::watch::open_broadcast(link, window, cx);
+            })
+            .ok();
     }
 }
 
@@ -106,7 +175,7 @@ const CHALLENGE_TAG: &str = "challenge:";
 
 /// Accept or decline a challenge from its notification: Accept brings KChess forward on Play on
 /// Lichess, where the game starts; Decline answers it without; the body opens the challenges.
-fn answer_challenge(id: &str, action: Option<&str>, cx: &mut App) {
+pub(crate) fn answer_challenge(id: &str, action: Option<&str>, cx: &mut App) {
     let online = crate::online::handle(cx);
     let challenge = online
         .read(cx)
@@ -155,17 +224,25 @@ pub fn your_move(game: &kchess_contracts::types::OngoingGame, cx: &mut App) -> O
     let account = &game.account;
     let id = &game.game_id;
     let opponent = &game.opponent.name;
+    let announcement = Announcement {
+        kind: NotificationKind::OpponentMove,
+        title: format!("Your move against {opponent}"),
+        body: format!("Correspondence game · @{account}"),
+        link: NotificationLink::Correspondence {
+            account: account.clone(),
+            game: id.clone(),
+        },
+        key: None,
+    };
     alert(
-        NotificationKind::OpponentMove,
+        announcement,
         Some((format!("{MOVE_TAG}{account}/{id}"), move_actions())),
-        &format!("Your move against {opponent}"),
-        &format!("Correspondence game · @{account}"),
         cx,
     )
 }
 
 /// Open correspondence game `account/id` on the board, KChess in front.
-fn open_game(game: &str, cx: &mut App) {
+pub(crate) fn open_game(game: &str, cx: &mut App) {
     show_page(Some(Page::Online), cx);
     if let Some((account, id)) = game.split_once('/') {
         let (account, id) = (account.to_string(), id.to_string());
@@ -322,13 +399,14 @@ pub(crate) fn post(kind: NotificationKind, title: &str, body: &str, sound: bool,
 pub fn challenge(id: &str, title: &str, body: &str, cx: &mut App) -> Outcome {
     let tag = format!("{CHALLENGE_TAG}{id}");
     let actions = vec![button("accept", "Accept"), button("decline", "Decline")];
-    alert(
-        NotificationKind::Challenge,
-        Some((tag, actions)),
-        title,
-        body,
-        cx,
-    )
+    let announcement = Announcement {
+        kind: NotificationKind::Challenge,
+        title: title.to_string(),
+        body: body.to_string(),
+        link: NotificationLink::Challenge { id: id.to_string() },
+        key: Some(tag.clone()),
+    };
+    alert(announcement, Some((tag, actions)), cx)
 }
 
 /// Why an alert was not shown, or how it was.
@@ -351,7 +429,17 @@ fn category(settings: &Settings, kind: NotificationKind) -> bool {
         NotificationKind::GameEvents => core.notify_game_events,
         NotificationKind::ComputerMove => core.notify_computer_move,
         NotificationKind::Challenge => core.notify_challenges,
-        NotificationKind::Test => true,
+        // The player turned the broadcast's bell on for this.
+        NotificationKind::Broadcast | NotificationKind::Test => true,
+    }
+}
+
+/// Where an alert about `kind` leads: the page with its game.
+fn link_of(kind: NotificationKind) -> NotificationLink {
+    match game_page(kind) {
+        Some(Page::Online) => NotificationLink::LiveGame,
+        Some(Page::Computer) => NotificationLink::ComputerGame,
+        _ => NotificationLink::None,
     }
 }
 
@@ -362,7 +450,7 @@ fn game_page(kind: NotificationKind) -> Option<Page> {
         | NotificationKind::LowTime
         | NotificationKind::GameEvents => Some(Page::Online),
         NotificationKind::ComputerMove => Some(Page::Computer),
-        NotificationKind::Challenge | NotificationKind::Test => None,
+        NotificationKind::Challenge | NotificationKind::Broadcast | NotificationKind::Test => None,
     }
 }
 
@@ -417,19 +505,57 @@ fn sender() -> String {
 #[cfg(target_os = "macos")]
 const DEV_SENDER: &str = "com.kchess.app.dev";
 
-/// Alert the player about `kind`.
-pub fn desktop(kind: NotificationKind, title: &str, body: &str, cx: &mut App) -> Outcome {
-    alert(kind, None, title, body, cx)
+/// Tell the person, as a system notification while notifications are on, that KChess still runs
+/// with its window closed; whether it was told.
+pub fn still_running(title: &str, body: &str, cx: &mut App) -> bool {
+    let Some(frontend) = cx
+        .try_global::<crate::settings::SettingsHandle>()
+        .map(|settings| settings.0.read(cx).settings.frontend.clone())
+    else {
+        return false;
+    };
+    if !frontend.notifications_enabled || !crate::core::alerts_here(cx) {
+        return false;
+    }
+    if through_gpui() {
+        post_tagged(RUNNING_TAG.to_string(), title, body, Vec::new(), false, cx);
+    } else {
+        post_library(title, body, false);
+    }
+    true
 }
 
-/// `desktop`, with a system notification's own tag and buttons in place of its kind's.
+/// The tag of the notification saying KChess still runs; a click opens it.
+const RUNNING_TAG: &str = "running";
+
+/// Alert the player about `kind`, leading to its game's page.
+pub fn desktop(kind: NotificationKind, title: &str, body: &str, cx: &mut App) -> Outcome {
+    announce(
+        Announcement {
+            kind,
+            title: title.to_string(),
+            body: body.to_string(),
+            link: link_of(kind),
+            key: None,
+        },
+        cx,
+    )
+}
+
+/// Alert the player as Settings allow, and keep what was shown in the notification centre: the
+/// one way to alert, which the crates reach through `kchess_app::notifications::announce`.
+pub fn announce(announcement: Announcement, cx: &mut App) -> Outcome {
+    alert(announcement, None, cx)
+}
+
+/// `announce`, with a system notification's own tag and buttons in place of its kind's.
 fn alert(
-    kind: NotificationKind,
+    announcement: Announcement,
     tagged: Option<(String, Vec<gpui_kit::SystemNotificationAction>)>,
-    title: &str,
-    body: &str,
     cx: &mut App,
 ) -> Outcome {
+    let kind = announcement.kind;
+    let (title, body) = (announcement.title.as_str(), announcement.body.as_str());
     let Some(settings) = cx
         .try_global::<crate::settings::SettingsHandle>()
         .map(|settings| settings.0.read(cx).settings.clone())
@@ -452,38 +578,57 @@ fn alert(
                 None => post(kind, title, body, sound, cx),
             }
         }
-        Outcome::System => {
-            let (title, body, sound) = (
-                title.to_string(),
-                body.to_string(),
-                settings.frontend.notify_sound,
-            );
-            // The system call can wait on the notification centre; it stays off the UI thread.
-            std::thread::spawn(move || {
-                #[cfg(target_os = "macos")]
-                {
-                    static SENDER: std::sync::Once = std::sync::Once::new();
-                    SENDER.call_once(|| {
-                        notify_rust::set_application(&sender()).warn_on_err();
-                    });
-                }
-                let mut notification = notify_rust::Notification::new();
-                notification.summary(&title).body(&body);
-                if sound {
-                    notification.sound_name("default");
-                }
-                if let Err(cause) = notification.show() {
-                    crate::log::write(
-                        kchess_contracts::Level::Warn,
-                        "notify",
-                        &format!("Notification failed: {cause}"),
-                    );
-                }
-            });
-        }
+        Outcome::System => post_library(title, body, settings.frontend.notify_sound),
         _ => {}
     }
+    if let Some(read) = kept_read(kind, outcome, away) {
+        centre::record(kchess_app::notifications::input(announcement, read), cx);
+    }
     outcome
+}
+
+/// A system notification through the notification library, for a binary GPUI cannot send as
+/// (`through_gpui`).
+fn post_library(title: &str, body: &str, sound: bool) {
+    let (title, body) = (title.to_string(), body.to_string());
+    // The system call can wait on the notification centre; it stays off the UI thread.
+    std::thread::spawn(move || {
+        #[cfg(target_os = "macos")]
+        {
+            static SENDER: std::sync::Once = std::sync::Once::new();
+            SENDER.call_once(|| {
+                notify_rust::set_application(&sender()).warn_on_err();
+            });
+        }
+        let mut notification = notify_rust::Notification::new();
+        notification.summary(&title).body(&body);
+        if sound {
+            notification.sound_name("default");
+        }
+        if let Err(cause) = notification.show() {
+            crate::log::write(
+                kchess_contracts::Level::Warn,
+                "notify",
+                &format!("Notification failed: {cause}"),
+            );
+        }
+    });
+}
+
+/// Whether the notification centre keeps an alert, and as read: one shown inside the window in
+/// front was seen; one shown by the system, or held back only because KChess was in the
+/// background, was missed. One the board in front already showed, one Settings turned off, and
+/// a test are not kept.
+fn kept_read(kind: NotificationKind, outcome: Outcome, away: bool) -> Option<bool> {
+    if kind == NotificationKind::Test {
+        return None;
+    }
+    match outcome {
+        Outcome::InApp => Some(true),
+        Outcome::System => Some(false),
+        Outcome::WindowState if away => Some(false),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -511,6 +656,24 @@ mod tests {
         // and any test that sends one gets there first on some runs.
         let _ = notify_rust::set_application("com.apple.Finder");
         assert_eq!(super::sender(), super::DEV_SENDER);
+    }
+
+    #[test]
+    fn the_bell_keeps_what_was_shown_or_missed() {
+        use super::kept_read;
+        let game = NotificationKind::GameEvents;
+        assert_eq!(kept_read(game, Outcome::InApp, false), Some(true));
+        assert_eq!(kept_read(game, Outcome::System, true), Some(false));
+        // Background alerts off: nothing interrupts, and the bell has it.
+        assert_eq!(kept_read(game, Outcome::WindowState, true), Some(false));
+        assert_eq!(kept_read(game, Outcome::WindowState, false), None);
+        assert_eq!(kept_read(game, Outcome::Redundant, false), None);
+        assert_eq!(kept_read(game, Outcome::CategoryOff, true), None);
+        assert_eq!(kept_read(game, Outcome::Disabled, true), None);
+        assert_eq!(
+            kept_read(NotificationKind::Test, Outcome::InApp, false),
+            None
+        );
     }
 
     #[test]

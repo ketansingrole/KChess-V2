@@ -336,6 +336,120 @@ pub fn align_tv_moves(
     None
 }
 
+/// Plies the line-up may find between the export and the feed: Lichess leaves out an ongoing
+/// game's last three.
+const MOST_BRIDGED: u32 = 3;
+
+/// What the export and the feed together say of a TV game's moves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TvMoves {
+    /// Every move, up to the feed's last position.
+    Lined(Vec<String>),
+    /// The moves up to a position this many plies before the feed's last: the export stops
+    /// short of it, and nothing tells which moves came between.
+    Behind(Vec<String>, u32),
+    /// Nothing that can be shown yet.
+    Unknown,
+}
+
+/// Lines the export up with the feed: as `align_tv_moves` does once the export reaches a
+/// position the feed showed, or else by finding the one line of up to three plies that joins the
+/// export's last position to the feed's (`raw[i]` is the FEN the feed sent as `feed[i]`).
+/// When no single line joins them, the export's moves are shown with how far they stop short.
+pub fn tv_moves(
+    setup: &Setup,
+    san: &[String],
+    feed: &[String],
+    raw: &[String],
+    live: &[Option<String>],
+) -> TvMoves {
+    if let Some(moves) = align_tv_moves(setup, san, feed, live) {
+        return TvMoves::Lined(moves);
+    }
+    let Some(start) = rules::setup_start(setup.variant, &setup.fen) else {
+        return TvMoves::Unknown;
+    };
+    let (end, line) = position::line(start, san, true, false);
+    if line.len() < san.len() {
+        return TvMoves::Unknown;
+    }
+    let exported: Vec<String> = line.into_iter().map(|played| played.uci).collect();
+    let exported_ply = rules::ply_of(&end);
+    // The bridge reaches the position after the feed's last unnamed move; the named moves since
+    // then follow it.
+    let from = live
+        .iter()
+        .rposition(Option::is_none)
+        .map_or(0, |gap| gap + 1);
+    let (Some(target), Some(last)) = (raw.get(from), raw.last()) else {
+        return TvMoves::Unknown;
+    };
+    let (Some(target_ply), Some(last_ply)) = (fen_ply(target), fen_ply(last)) else {
+        return TvMoves::Unknown;
+    };
+    if target_ply <= exported_ply {
+        // The export reaches the feed's positions but none of them matched: it is another line.
+        return TvMoves::Unknown;
+    }
+    let plies = target_ply - exported_ply;
+    if plies <= MOST_BRIDGED
+        && let Some(target_setup) = rules::parse_fen(target)
+        && let Some(bridge) = kchess_domain::between::line_between(&end, &target_setup, plies)
+    {
+        let mut moves = exported.clone();
+        moves.extend(bridge);
+        moves.extend(live.get(from..).unwrap_or(&[]).iter().flatten().cloned());
+        if let (Some((count, fen)), Some(key)) = (replay_uci(setup, &moves), feed.last())
+            && count == moves.len()
+            && position_key(&fen) == *key
+        {
+            return TvMoves::Lined(moves);
+        }
+    }
+    TvMoves::Behind(exported, last_ply - exported_ply)
+}
+
+/// `moves`, worked out while the feed had shown `seen` positions, brought up to the feed as it
+/// is now (`raw` and `live` as `tv_moves` takes them): the moves it named since follow the list,
+/// and once one is unnamed, the list stops short of every ply played since.
+pub fn tv_moves_since(
+    moves: TvMoves,
+    seen: usize,
+    raw: &[String],
+    live: &[Option<String>],
+) -> TvMoves {
+    let since = live.get(seen.saturating_sub(1)..).unwrap_or(&[]);
+    // Plies, not records: a feed that reconnected sends one record for every move it missed.
+    let plies = |at: Option<&String>| fen_ply(at?);
+    let more = plies(raw.last())
+        .zip(plies(raw.get(seen.saturating_sub(1))))
+        .and_then(|(now, then)| now.checked_sub(then))
+        .unwrap_or_else(|| u32::try_from(since.len()).unwrap_or(u32::MAX));
+    match moves {
+        TvMoves::Lined(mut moves) => match since.iter().cloned().collect::<Option<Vec<_>>>() {
+            Some(named) => {
+                moves.extend(named);
+                TvMoves::Lined(moves)
+            }
+            None => TvMoves::Behind(moves, more),
+        },
+        TvMoves::Behind(moves, behind) => TvMoves::Behind(moves, behind.saturating_add(more)),
+        TvMoves::Unknown => TvMoves::Unknown,
+    }
+}
+
+/// The plies played before a FEN's position, from its move number and side to move.
+pub(super) fn fen_ply(fen: &str) -> Option<u32> {
+    let mut fields = fen.split_whitespace().skip(1);
+    let black = match fields.next()? {
+        "w" => false,
+        "b" => true,
+        _ => return None,
+    };
+    let number: u32 = fields.nth(3)?.parse().ok().filter(|number| *number >= 1)?;
+    Some((number - 1) * 2 + u32::from(black))
+}
+
 /// How many UCI moves replay and the position after them.
 fn replay_uci(setup: &Setup, moves: &[String]) -> Option<(usize, String)> {
     let replay = kchess_domain::replay::replay_setup(setup.variant, &setup.fen, moves)?;

@@ -12,6 +12,7 @@ mod support;
 
 mod ai_connection;
 mod ai_effort;
+mod broadcast_alerts;
 mod chesscom_sync;
 mod core_close;
 mod core_close_lichess;
@@ -55,6 +56,7 @@ mod lichess_store_fake;
 mod lichess_studies;
 mod lichess_tournaments;
 mod lichess_watch;
+mod lichess_watch_tv;
 mod profile_lock;
 mod review_admission;
 mod store_accounts;

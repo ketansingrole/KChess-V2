@@ -22,6 +22,11 @@ pub(super) struct Sections {
     pending: Cell<Option<usize>>,
 }
 
+/// The dialog's rounded corner inside its 1px border.
+fn inner_corner() -> Pixels {
+    crate::theme::radii::BOX - px(1.)
+}
+
 impl Sections {
     pub(super) fn to_top(&self) {
         self.scroll.set_offset(point(px(0.), px(0.)));
@@ -161,7 +166,7 @@ impl Workspace {
                     .aria_label("Settings")
                     .w(width)
                     .h(height)
-                    .rounded(crate::theme::radii::XL)
+                    .rounded(crate::theme::radii::BOX)
                     .border_1()
                     .border_color(palette.border)
                     .bg(cx.theme().background)
@@ -214,6 +219,9 @@ impl Workspace {
                                     .border_r_1()
                                     .border_color(palette.border)
                                     .bg(cx.theme().tokens.sidebar)
+                                    // GPUI clips the dialog to a rectangle, not its rounded
+                                    // one: the sidebar's fill takes the corner, inside the border.
+                                    .rounded_bl(inner_corner())
                                     .children(blocks),
                             )
                             .child(
@@ -221,6 +229,9 @@ impl Workspace {
                                     .flex_1()
                                     .min_w_0()
                                     .h_full()
+                                    // The page scrolls clear of the dialog's rounded corner, which
+                                    // its pictures and labels were drawn straight over.
+                                    .pb(inner_corner())
                                     .child(self.pages.view().cached(page_style())),
                             ),
                     ),

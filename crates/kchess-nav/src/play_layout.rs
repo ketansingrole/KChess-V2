@@ -10,6 +10,7 @@ use std::rc::Rc;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 
+use crate::page::PageTab;
 use crate::widgets;
 
 /// The page's padding: 24px above, 40px below, and 2.6% of the width at the sides, from 14px
@@ -95,31 +96,55 @@ pub fn column_width(window: &Window, max: Pixels, measured: Pixels) -> Pixels {
     width.min(max)
 }
 
+/// How much of the page sits above an area: a page's tab bar (`tab_bar_height`), whose height
+/// follows the page's width.
+pub type Above = fn(&Window) -> Pixels;
+
 /// An area measured as it is laid out, so the next frame can size what goes in it.
 #[derive(Default)]
 pub struct Measured {
     bounds: Rc<Cell<Bounds<Pixels>>>,
     /// The page area when the area was measured, where a shell measures one.
     page: Rc<Cell<Option<Size<Pixels>>>>,
+    /// What sits above the area on its page, and how tall it was when the area was measured.
+    above: Option<Above>,
+    above_then: Rc<Cell<Pixels>>,
 }
 
 impl Measured {
+    /// An area under `above` on its page, which may change height with the page's width.
+    pub fn under(above: Above) -> Measured {
+        Measured {
+            above: Some(above),
+            ..Measured::default()
+        }
+    }
+
+    /// How tall what sits above the area is now.
+    fn above(&self, window: &Window) -> Pixels {
+        self.above.map_or(px(0.), |above| above(window))
+    }
+
     /// The area at the last layout; empty before the first.
     pub fn size(&self) -> Size<Pixels> {
         self.bounds.get().size
     }
 
-    /// The area now: as it last measured, grown or shrunk by as much as the page area has since.
-    /// A page is drawn only while it shows, so an area measured before it was hidden keeps its
-    /// inset from the page (none for a whole page, a tab bar's height under one); empty before
-    /// the first measure.
+    /// The area now: as it last measured, grown or shrunk by as much as the page area has since,
+    /// less what the bar above it has grown by. A page is drawn only while it shows, so an area
+    /// measured before it was hidden keeps its inset from the page (none for a whole page, a tab
+    /// bar's height under one, which wraps to another row in a narrower page); empty before the
+    /// first measure.
     pub fn size_in(&self, window: &Window) -> Size<Pixels> {
         let measured = self.size();
         match (self.page.get(), page_area(window)) {
-            (Some(then), Some(now)) if measured.width > px(0.) => size(
-                (measured.width + now.width - then.width).max(px(0.)),
-                (measured.height + now.height - then.height).max(px(0.)),
-            ),
+            (Some(then), Some(now)) if measured.width > px(0.) => {
+                let grown = self.above(window) - self.above_then.get();
+                size(
+                    (measured.width + now.width - then.width).max(px(0.)),
+                    (measured.height + now.height - then.height - grown).max(px(0.)),
+                )
+            }
             _ => measured,
         }
     }
@@ -134,11 +159,15 @@ impl Measured {
     pub fn probe<V: 'static>(&self, cx: &mut Context<V>) -> impl IntoElement + use<V> {
         let bounds = Rc::clone(&self.bounds);
         let page = Rc::clone(&self.page);
+        let above = self.above;
+        let above_then = Rc::clone(&self.above_then);
         let entity = cx.entity().downgrade();
         canvas(
             move |area, window, _| {
-                // The shell's page area is laid out before the page in it.
+                // The shell's page area is laid out before the page in it, and the bar above
+                // this area for that page area's width.
                 page.set(page_area(window));
+                above_then.set(above.map_or(px(0.), |above| above(window)));
                 if bounds.get() != area {
                     bounds.set(area);
                     // A notify while drawing schedules no frame: one change of size (a zoom
@@ -154,6 +183,46 @@ impl Measured {
         .absolute()
         .size_full()
     }
+}
+
+/// The rows of the tabs of a page drawn above its body (Practice, Puzzles), in the page's width
+/// inside its side padding.
+fn tab_rows<T: PageTab>(window: &Window) -> widgets::PillRows {
+    let page = page_area(window).map_or(window.viewport_size().width, |area| area.width);
+    widgets::PillRows::new(&T::pills(), page - side_padding(window) * 2., window)
+}
+
+/// How much of its page a row of tabs above the body takes: the page's top padding and the
+/// tabs' rows. Known as the page draws, so the board under it is sized for the room it has in
+/// its first frame: sized from the whole page, or from the tabs' rows at another width, a board
+/// as tall as the room under them moved once they had been laid out.
+pub fn tab_bar_height<T: PageTab>(window: &Window) -> Pixels {
+    PAGE_TOP + tab_rows::<T>(window).height()
+}
+
+/// A page's tabs above its body, `tab_bar_height` tall: choosing one keeps it and redraws the
+/// page.
+pub fn tab_bar<T: PageTab>(
+    id: &'static str,
+    window: &Window,
+    cx: &App,
+) -> impl IntoElement + use<T> {
+    let palette = cx.global::<kchess_ui::theme::Palette>();
+    div()
+        .flex_none()
+        .px(side_padding(window))
+        .pt(PAGE_TOP)
+        .child(widgets::pill_bar(
+            id,
+            T::pills(),
+            &tab_rows::<T>(window),
+            T::stored(cx).index(),
+            |index, window, cx| {
+                T::ALL[index].store(cx);
+                window.refresh();
+            },
+            palette,
+        ))
 }
 
 /// Below this page width the panel goes under the board (`@container page (max-width: 620px)`).
@@ -174,6 +243,15 @@ pub struct PlayLayout {
 }
 
 impl PlayLayout {
+    /// A board under `above` on its page (a page's tabs, `tab_bar_height`): sized from the area
+    /// the page leaves under it, before it has measured its own.
+    pub fn under(above: Above) -> PlayLayout {
+        PlayLayout {
+            area: Measured::under(above),
+            stacked: Cell::default(),
+        }
+    }
+
     /// The board's side: the height left after the page's padding and the player
     /// lines, or the width left beside a 344px panel, between 260px and the largest board
     /// size.
@@ -187,13 +265,19 @@ impl PlayLayout {
     }
 
     /// The page's area now, though it was hidden when the window last changed; before its first
-    /// layout, the shell's page area it opens in; empty before either.
+    /// layout, the shell's page area it opens in, less what sits above it there; empty before
+    /// either.
     fn area(&self, window: &Window) -> Size<Pixels> {
         let area = self.area.size_in(window);
         if area.width > px(0.) {
-            area
-        } else {
-            page_area(window).unwrap_or(area)
+            return area;
+        }
+        match page_area(window) {
+            Some(page) => size(
+                page.width,
+                (page.height - self.area.above(window)).max(px(0.)),
+            ),
+            None => area,
         }
     }
 
@@ -286,9 +370,34 @@ impl PlayLayout {
         self.stacked.get().is_some()
     }
 
-    /// The panel's height: the board's column, player lines included; its own when stacked.
+    /// The panel's height beside a board between two player lines (a game: `board_size`), so it
+    /// ends with the lower line; its own when stacked. Only for those pages: it adds both lines
+    /// whatever the column holds, so a board with other rows around it, or none, sizes with
+    /// `board_and_panel` instead.
     pub fn panel_height(&self, board: Pixels) -> Length {
         self.fixed(self.panel_height_px(board))
+    }
+
+    /// A board whose column holds exactly `around` besides it, and no player lines: its side, and
+    /// the height of the panel beside it, which ends level with the column (its own when
+    /// stacked). `around` is what the column really holds: a puzzle board's rows
+    /// (`PuzzleBoard::around`), the move box's row, or nothing for a bare board. Every page
+    /// without player lines sizes here: `panel_height`'s two lines made such a panel run past
+    /// the column, and a panel as tall as the board alone stopped short of the move box.
+    pub fn board_and_panel(&self, around: Pixels, window: &Window) -> (Pixels, Length) {
+        self.board_and_panel_beside(px(0.), around, window)
+    }
+
+    /// `board_and_panel` with `extra_width` beside the board's column as well (a lesson's
+    /// chapters).
+    pub fn board_and_panel_beside(
+        &self,
+        extra_width: Pixels,
+        around: Pixels,
+        window: &Window,
+    ) -> (Pixels, Length) {
+        let side = self.board_size_around(extra_width, px(0.), around, window);
+        (side, self.fixed(side + around))
     }
 
     /// `height` beside the board, or the panel's own height under it.

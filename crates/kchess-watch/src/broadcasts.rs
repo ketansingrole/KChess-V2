@@ -6,7 +6,8 @@ use crate::loading::Loading;
 use kchess_contracts::calls;
 use kchess_contracts::check::{BroadcastQuery, LichessId};
 use kchess_contracts::types::{
-    BroadcastGame, BroadcastSection, BroadcastSummary, BroadcastTourDetail, BroadcastUpdate,
+    BroadcastAlert, BroadcastGame, BroadcastSection, BroadcastSummary, BroadcastTourDetail,
+    BroadcastUpdate,
 };
 use kchess_domain::training::clock::format_clock;
 use kchess_domain::variant::Setup;
@@ -15,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
@@ -32,8 +34,18 @@ use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Side, Tone};
 use kchess_board::analysis::Opening;
-use kchess_nav::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
+use kchess_nav::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, side_padding};
 use kchess_ui::icon;
+
+/// A broadcast card's narrowest: the cards of a row share the page's width.
+const CARD_MIN: Pixels = px(240.);
+const GRID_GAP: Pixels = px(12.);
+/// A finished broadcast's row's narrowest, and the width of its cover.
+const ROW_MIN: Pixels = px(320.);
+const ROW_GAP: Pixels = px(8.);
+const THUMB_WIDTH: Pixels = px(64.);
+/// A round's board's narrowest, its names and result included.
+const CELL_MIN: Pixels = px(190.);
 
 /// Typing pauses this long before a search is sent.
 const SEARCH_DELAY: Duration = Duration::from_millis(350);
@@ -156,6 +168,10 @@ pub struct Broadcasts {
     /// The search for `query`: a later one replaces it.
     searching: Loading,
     pub(super) tour: Option<BroadcastTourDetail>,
+    /// The broadcasts the player is alerted to when a round starts (the core's).
+    pub(super) alerts: Vec<BroadcastAlert>,
+    /// Why the last change of an alert failed.
+    alert_error: Option<String>,
     round: String,
     round_select: Entity<SelectState<Vec<Choice>>>,
     /// The round's boards in the order they first came, by id.
@@ -205,6 +221,8 @@ impl Broadcasts {
             results: Vec::new(),
             searching: Loading::default(),
             tour: None,
+            alerts: Vec::new(),
+            alert_error: None,
             round: String::new(),
             round_select,
             games: Vec::new(),
@@ -360,6 +378,23 @@ impl Broadcasts {
         self.previews.board(game.id.clone(), state, cx)
     }
 
+    /// Whether every round of `tour` is alerted.
+    fn alerted_tour(&self, tour: &str) -> bool {
+        self.alerts
+            .iter()
+            .any(|alert| alert.tour_id == tour && alert.round_id.is_none())
+    }
+
+    /// Whether any round of `tour` is alerted.
+    fn alerted_any(&self, tour: &str) -> bool {
+        self.alerts.iter().any(|alert| alert.tour_id == tour)
+    }
+
+    /// Whether `round` of `tour` is alerted, alone or with every round.
+    fn alerted_round(&self, tour: &str, round: &str) -> bool {
+        self.alerts.iter().any(|alert| alert.covers(tour, round))
+    }
+
     pub fn load(&mut self, cx: &mut Context<WatchPage>) {
         if self.loading.busy() {
             return;
@@ -382,6 +417,212 @@ impl Broadcasts {
 }
 
 impl WatchPage {
+    /// The broadcasts the player is alerted to, afresh.
+    pub(super) fn load_alerts(&mut self, cx: &mut Context<Self>) {
+        let call = cx.global::<AppCore>().request(calls::BroadcastAlerts {});
+        crate::loading::fetch(cx, "watch", call, |this: &mut Self, alerts, cx| {
+            this.broadcasts.alerts = alerts;
+            cx.notify();
+        });
+    }
+
+    /// Alert the player (`on`) or no longer when `tour`'s rounds start: every round, or `round`.
+    pub(super) fn set_alert(
+        &mut self,
+        tour: String,
+        round: Option<String>,
+        on: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let call = cx.global::<AppCore>().request(calls::SetBroadcastAlert {
+            tour_id: LichessId(tour),
+            on,
+            round_id: round.map(LichessId),
+        });
+        self.broadcasts.alert_error = None;
+        cx.spawn(async move |this, cx| {
+            let answer = call.await;
+            // The page may have closed meanwhile.
+            this.update(cx, |this, cx| {
+                match answer {
+                    Ok(alerts) => this.broadcasts.alerts = alerts,
+                    Err(cause) => {
+                        this.broadcasts.alert_error = Some(crate::loading::failure("watch", &cause))
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// A broadcast's bell: on while any of its rounds is alerted; it turns every round's alert
+    /// on, or every one off.
+    fn alert_bell(&self, id: ElementId, tour: &str, cx: &mut Context<Self>) -> Button {
+        let on = self.broadcasts.alerted_any(tour);
+        let tour = tour.to_string();
+        Button::new(id)
+            .ghost()
+            .small()
+            .icon(icon(if on { "bell-ring" } else { "bell" }))
+            .accessibility_label(if on {
+                "Stop round alerts"
+            } else {
+                "Alert me when a round starts"
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                // The bell sits on the card, which opens the broadcast.
+                cx.stop_propagation();
+                this.set_alert(tour.clone(), None, !on, cx);
+            }))
+    }
+
+    /// The round list's bell: alerts for every round, or for chosen rounds still to come.
+    fn round_alerts(
+        &self,
+        tour: &BroadcastTourDetail,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let id = tour.id.clone();
+        let every = self.broadcasts.alerted_tour(&id);
+        let any = self.broadcasts.alerted_any(&id);
+        let rounds: Vec<(String, String, bool)> = tour
+            .rounds
+            .iter()
+            .filter(|round| !round.finished && !round.ongoing)
+            .map(|round| {
+                let on = self.broadcasts.alerted_round(&id, &round.id);
+                (round.id.clone(), round.name.clone(), on)
+            })
+            .collect();
+        let page = cx.entity().downgrade();
+        Button::new("broadcast-alerts")
+            .ghost()
+            .small()
+            .icon(icon(if any { "bell-ring" } else { "bell" }))
+            .accessibility_label("Round alerts")
+            .dropdown_menu(move |menu, _, _| {
+                let alert = |round: Option<String>, on: bool| {
+                    let (page, tour) = (page.clone(), id.clone());
+                    move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                        page.update(cx, |this, cx| {
+                            this.set_alert(tour.clone(), round.clone(), on, cx)
+                        })
+                        .ok();
+                    }
+                };
+                let mut menu = menu.item(
+                    PopupMenuItem::new("Every round")
+                        .checked(every)
+                        .on_click(alert(None, !every)),
+                );
+                if !rounds.is_empty() {
+                    menu = menu.separator();
+                }
+                for (round, name, on) in &rounds {
+                    menu = menu.item(
+                        PopupMenuItem::new(name.clone())
+                            .checked(*on)
+                            .on_click(alert(Some(round.clone()), !on)),
+                    );
+                }
+                menu
+            })
+    }
+
+    /// The alerts the player set, each with its remove button: above the listings while any.
+    fn alert_list(&self, width: Pixels, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
+        let (count, row_width) = widgets::columns(width, ROW_MIN, ROW_GAP);
+        let mut rows = self
+            .broadcasts
+            .alerts
+            .iter()
+            .enumerate()
+            .map(|(index, alert)| {
+                let tour = alert.tour_id.clone();
+                let (remove_tour, remove_round) = (alert.tour_id.clone(), alert.round_id.clone());
+                h_flex()
+                    .id(("broadcast-alert", index))
+                    .test_support()
+                    .role(Role::Button)
+                    .keyboard_focus(palette.primary)
+                    .aria_label(alert.tour_name.clone())
+                    .w(row_width)
+                    .flex_none()
+                    .gap(px(12.))
+                    .py(px(6.))
+                    .pl(px(12.))
+                    .pr(px(6.))
+                    .rounded(radii::BOX)
+                    .border_1()
+                    .border_color(palette.border)
+                    .bg(palette.elevated)
+                    .cursor_pointer()
+                    .pressable_card(palette)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_tour(tour.clone(), window, cx)
+                    }))
+                    .child(
+                        icon("bell-ring")
+                            .size(px(16.))
+                            .flex_none()
+                            .text_color(palette.text_muted),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .truncate()
+                                    .child(alert.tour_name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(palette.text_muted)
+                                    .truncate()
+                                    .child(
+                                        alert
+                                            .round_name
+                                            .clone()
+                                            .unwrap_or_else(|| "Every round".into()),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        Button::new(("broadcast-alert-remove", index))
+                            .ghost()
+                            .small()
+                            .icon(icon("x"))
+                            .accessibility_label(format!("Remove alert for {}", alert.tour_name))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.set_alert(
+                                    remove_tour.clone(),
+                                    remove_round.clone(),
+                                    false,
+                                    cx,
+                                );
+                            })),
+                    )
+                    .into_any_element()
+            })
+            .peekable();
+        let mut lines = Vec::new();
+        while rows.peek().is_some() {
+            lines.push(h_flex().gap(ROW_GAP).children(rows.by_ref().take(count)));
+        }
+        v_flex()
+            .gap(px(12.))
+            .child(widgets::heading("Alerts", palette))
+            .child(v_flex().gap(ROW_GAP).children(lines))
+            .into_any_element()
+    }
+
     /// A search, once typing pauses.
     pub(super) fn search(&mut self, cx: &mut Context<Self>) {
         let broadcasts = &mut self.broadcasts;
@@ -687,6 +928,7 @@ impl WatchPage {
                             }),
                     ),
                 )
+                .child(self.round_alerts(tour, cx))
                 .into_any_element(),
         )
     }
@@ -698,13 +940,16 @@ impl WatchPage {
         palette: &Palette,
     ) -> AnyElement {
         if self.broadcasts.tour.is_none() {
-            return self.directory(cx, palette);
+            return self.directory(window, cx, palette);
         }
         if self.broadcasts.current().is_some() {
             return self.broadcast_game(window, cx, palette);
         }
         let games = self.broadcasts.games.clone();
         let grid_evaluations = grid_evaluations(cx);
+        // The boards of a row share the page's width, each at least `CELL_MIN`.
+        let width = self.layout.width(window) - side_padding(window) * 2.;
+        let (count, cell_width) = widgets::columns(width, CELL_MIN, GRID_GAP);
         let cells: Vec<AnyElement> = games
             .iter()
             .enumerate()
@@ -730,8 +975,9 @@ impl WatchPage {
                     .aria_label(format!("{} – {}", label(&game.white), label(&game.black)))
                     .gap(px(4.))
                     .p(px(8.))
-                    .w(px(190.))
-                    .rounded(radii::LG)
+                    .w(cell_width)
+                    .flex_none()
+                    .rounded(radii::BOX)
                     .border_1()
                     .border_color(palette.border)
                     .bg(palette.elevated)
@@ -745,7 +991,10 @@ impl WatchPage {
                     .child(
                         h_flex()
                             .w_full()
-                            .h(px(174.))
+                            // Square boards: the cell's width inside its padding, less the bar.
+                            .h(cell_width
+                                - px(16.)
+                                - if estimate.is_some() { px(16.) } else { px(0.) })
                             .gap(px(8.))
                             .when_some(estimate.clone(), |row, (line, _)| {
                                 row.child(
@@ -808,16 +1057,28 @@ impl WatchPage {
             .when(self.broadcasts.ended && games.is_empty(), |body| {
                 body.child(widgets::hint("No games in this round yet", palette))
             })
-            .child(h_flex().flex_wrap().gap(px(12.)).children(cells))
+            .children({
+                let mut cells = cells.into_iter().peekable();
+                let mut rows = Vec::new();
+                while cells.peek().is_some() {
+                    rows.push(h_flex().gap(GRID_GAP).children(cells.by_ref().take(count)));
+                }
+                rows
+            })
             .into_any_element()
     }
 
     /// The tournaments: live now, coming up and recently finished, or the search's results.
-    fn directory(&mut self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
+    fn directory(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        palette: &Palette,
+    ) -> AnyElement {
         let broadcasts = &self.broadcasts;
         let searching = !broadcasts.query.read(cx).value().trim().is_empty();
-        let sections: Vec<(&str, Vec<BroadcastSummary>)> = if searching {
-            vec![("Search results", broadcasts.results.clone())]
+        let sections: Vec<(Option<BroadcastSection>, &str, Vec<BroadcastSummary>)> = if searching {
+            vec![(None, "Search results", broadcasts.results.clone())]
         } else {
             let list = broadcasts.list.clone().unwrap_or_default();
             [
@@ -828,16 +1089,19 @@ impl WatchPage {
             .into_iter()
             .map(|(key, title)| {
                 (
+                    Some(key),
                     title,
                     list.iter()
                         .filter(|item| item.section == key)
                         .cloned()
-                        .collect(),
+                        .collect::<Vec<_>>(),
                 )
             })
-            .filter(|(_, items): &(&str, Vec<BroadcastSummary>)| !items.is_empty())
+            .filter(|(_, _, items)| !items.is_empty())
             .collect()
         };
+        // The page's width inside its padding: the grids share it out.
+        let width = self.layout.width(window) - side_padding(window) * 2.;
         let disabled = Self::playing_own_game(cx);
         let now = kchess_games::now_ms();
         let status = status_line(
@@ -893,105 +1157,268 @@ impl WatchPage {
                     ))
                 },
             )
-            .children(sections.into_iter().map(|(title, items)| {
+            .children(self.broadcasts.alert_error.clone().map(|error| {
+                div()
+                    .text_size(px(13.))
+                    .text_color(palette.error)
+                    .child(error)
+            }))
+            .when(!searching && !self.broadcasts.alerts.is_empty(), |body| {
+                body.child(self.alert_list(width, cx, palette))
+            })
+            .children(sections.into_iter().map(|(section, title, items)| {
+                let list = if section == Some(BroadcastSection::Past) {
+                    self.broadcast_rows(&items, width, &mut index, disabled, cx, palette)
+                } else {
+                    self.broadcast_cards(&items, width, &mut index, disabled, now, cx, palette)
+                };
                 v_flex()
                     .gap(px(12.))
                     .child(widgets::heading(title, palette))
-                    .child(h_flex().flex_wrap().items_stretch().gap(px(12.)).children(
-                        items.into_iter().map(|item| {
-                            index += 1;
-                            let tour = item.tour_id.clone();
-                            let live = item.ongoing;
-                            // The cover, once it has arrived; the placeholder until then.
-                            let cover = item.image.as_deref().and_then(|url| {
-                                crate::remote_image::handle(cx)
-                                    .update(cx, |images, cx| images.get(url, cx))
-                            });
-                            v_flex()
-                                .id(("broadcast-card", index))
-                                .role(Role::Button)
-                                .keyboard_focus(palette.primary)
-                                .aria_label(item.tour_name.clone())
-                                .w(px(260.))
-                                .rounded(radii::XL)
-                                .overflow_hidden()
-                                .border_1()
-                                .border_color(palette.border)
-                                .bg(palette.elevated)
-                                .when(disabled, |card| card.opacity(0.6))
-                                .when(!disabled, |card| {
-                                    card.cursor_pointer().pressable_card(palette).on_click(
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.open_tour(tour.clone(), window, cx)
-                                        }),
-                                    )
-                                })
-                                .child(
-                                    // Inside the card's border; GPUI does not clip
-                                    // to the card's rounded corners.
-                                    div()
-                                        .h(px(130.))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .overflow_hidden()
-                                        .rounded_t(radii::XL - px(1.))
-                                        .bg(palette.accented)
-                                        .map(|area| match cover {
-                                            Some(cover) => area.child(
-                                                img(cover)
-                                                    .size_full()
-                                                    .rounded_t(radii::XL - px(1.))
-                                                    .object_fit(ObjectFit::Cover),
-                                            ),
-                                            None => area.child(
-                                                icon("radio")
-                                                    .size(px(28.))
-                                                    .text_color(palette.text_muted),
-                                            ),
-                                        }),
-                                )
-                                .child(
-                                    v_flex()
-                                        .gap(px(4.))
-                                        .p(px(12.))
-                                        .child(
-                                            h_flex()
-                                                .justify_between()
-                                                .gap(px(8.))
-                                                .text_size(px(12.))
-                                                .text_color(palette.text_muted)
-                                                .child(div().truncate().child(
-                                                    item.round_name.clone().unwrap_or_default(),
-                                                ))
-                                                .child(
-                                                    div()
-                                                        .flex_none()
-                                                        .when(live, |time| {
-                                                            time.text_color(palette.error)
-                                                                .font_weight(FontWeight::MEDIUM)
-                                                        })
-                                                        .child(timing(&item, now)),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(14.))
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .child(item.tour_name.clone()),
-                                        )
-                                        .children(item.players.clone().map(|players| {
-                                            div()
-                                                .text_size(px(12.))
-                                                .text_color(palette.text_muted)
-                                                .line_clamp(2)
-                                                .child(players)
-                                        })),
-                                )
-                        }),
-                    ))
+                    .child(list)
             }))
             .into_any_element()
+    }
+
+    /// Live and coming broadcasts, and a search's: cards with their covers, as many to a row as
+    /// fit the page's width at `CARD_MIN` each, sharing it.
+    #[allow(clippy::too_many_arguments)]
+    fn broadcast_cards(
+        &self,
+        items: &[BroadcastSummary],
+        width: Pixels,
+        index: &mut usize,
+        disabled: bool,
+        now: f64,
+        cx: &mut Context<Self>,
+        palette: &Palette,
+    ) -> AnyElement {
+        let (count, card_width) = widgets::columns(width, CARD_MIN, GRID_GAP);
+        // Lichess's covers are twice as wide as they are tall.
+        let cover_height = (card_width / 2.).floor();
+        let mut cards = items
+            .iter()
+            .map(|item| {
+                *index += 1;
+                let tour = item.tour_id.clone();
+                let live = item.ongoing;
+                // A finished broadcast has no round left to be alerted to.
+                let alertable = item.section != BroadcastSection::Past && !disabled;
+                let cover = self.cover(item, cx);
+                v_flex()
+                    .id(("broadcast-card", *index))
+                    .test_support()
+                    .role(Role::Button)
+                    .keyboard_focus(palette.primary)
+                    .aria_label(item.tour_name.clone())
+                    .w(card_width)
+                    .flex_none()
+                    .rounded(radii::BOX)
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(palette.border)
+                    .bg(palette.elevated)
+                    .when(disabled, |card| card.opacity(0.6))
+                    .when(!disabled, |card| {
+                        card.cursor_pointer()
+                            .pressable_card(palette)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_tour(tour.clone(), window, cx)
+                            }))
+                    })
+                    .child(
+                        // Inside the card's border; GPUI does not clip to the card's rounded
+                        // corners.
+                        div()
+                            .h(cover_height)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .overflow_hidden()
+                            .rounded_t(radii::BOX - px(1.))
+                            .bg(palette.accented)
+                            .map(|area| match cover {
+                                Some(cover) => area.child(
+                                    img(cover)
+                                        .size_full()
+                                        .rounded_t(radii::BOX - px(1.))
+                                        .object_fit(ObjectFit::Cover),
+                                ),
+                                None => area.child(
+                                    icon("radio").size(px(28.)).text_color(palette.text_muted),
+                                ),
+                            }),
+                    )
+                    .child(
+                        v_flex()
+                            .gap(px(4.))
+                            .p(px(12.))
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .gap(px(8.))
+                                    .text_size(px(12.))
+                                    .text_color(palette.text_muted)
+                                    .child(
+                                        div()
+                                            .truncate()
+                                            .child(item.round_name.clone().unwrap_or_default()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .when(live, |time| {
+                                                time.text_color(palette.error)
+                                                    .font_weight(FontWeight::MEDIUM)
+                                            })
+                                            .child(timing(item, now)),
+                                    )
+                                    .when(alertable, |row| {
+                                        row.child(self.alert_bell(
+                                            ElementId::NamedInteger(
+                                                "broadcast-bell".into(),
+                                                *index as u64,
+                                            ),
+                                            &item.tour_id,
+                                            cx,
+                                        ))
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .line_clamp(2)
+                                    .child(item.tour_name.clone()),
+                            )
+                            .children(item.players.clone().map(|players| {
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(palette.text_muted)
+                                    .line_clamp(2)
+                                    .child(players)
+                            })),
+                    )
+                    .into_any_element()
+            })
+            .peekable();
+        let mut rows = Vec::new();
+        while cards.peek().is_some() {
+            rows.push(
+                h_flex()
+                    .items_stretch()
+                    .gap(GRID_GAP)
+                    .children(cards.by_ref().take(count)),
+            );
+        }
+        v_flex().gap(GRID_GAP).children(rows).into_any_element()
+    }
+
+    /// Finished broadcasts: a row each with a small cover, as many to a line as fit at
+    /// `ROW_MIN`, so a long list takes little room.
+    fn broadcast_rows(
+        &self,
+        items: &[BroadcastSummary],
+        width: Pixels,
+        index: &mut usize,
+        disabled: bool,
+        cx: &mut Context<Self>,
+        palette: &Palette,
+    ) -> AnyElement {
+        let (count, row_width) = widgets::columns(width, ROW_MIN, ROW_GAP);
+        let mut rows = items
+            .iter()
+            .map(|item| {
+                *index += 1;
+                let tour = item.tour_id.clone();
+                let cover = self.cover(item, cx);
+                h_flex()
+                    .id(("broadcast-row", *index))
+                    .test_support()
+                    .role(Role::Button)
+                    .keyboard_focus(palette.primary)
+                    .aria_label(item.tour_name.clone())
+                    .w(row_width)
+                    .flex_none()
+                    .gap(px(12.))
+                    .p(px(8.))
+                    .rounded(radii::BOX)
+                    .border_1()
+                    .border_color(palette.border)
+                    .bg(palette.elevated)
+                    .when(disabled, |row| row.opacity(0.6))
+                    .when(!disabled, |row| {
+                        row.cursor_pointer()
+                            .pressable_card(palette)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_tour(tour.clone(), window, cx)
+                            }))
+                    })
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(THUMB_WIDTH)
+                            .h(THUMB_WIDTH / 2.)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .overflow_hidden()
+                            .rounded(radii::SMALL)
+                            .bg(palette.accented)
+                            .map(|area| match cover {
+                                Some(cover) => area.child(
+                                    img(cover)
+                                        .size_full()
+                                        .rounded(radii::SMALL)
+                                        .object_fit(ObjectFit::Cover),
+                                ),
+                                None => area.child(
+                                    icon("radio").size(px(16.)).text_color(palette.text_muted),
+                                ),
+                            }),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .truncate()
+                                    .child(item.tour_name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(palette.text_muted)
+                                    .truncate()
+                                    .child(
+                                        item.players
+                                            .clone()
+                                            .or_else(|| item.round_name.clone())
+                                            .unwrap_or_default(),
+                                    ),
+                            ),
+                    )
+                    .into_any_element()
+            })
+            .peekable();
+        let mut lines = Vec::new();
+        while rows.peek().is_some() {
+            lines.push(h_flex().gap(ROW_GAP).children(rows.by_ref().take(count)));
+        }
+        v_flex().gap(ROW_GAP).children(lines).into_any_element()
+    }
+
+    /// A broadcast's cover once it has arrived; the placeholder until then.
+    fn cover(
+        &self,
+        item: &BroadcastSummary,
+        cx: &mut Context<Self>,
+    ) -> Option<std::sync::Arc<Image>> {
+        let url = item.image.as_deref()?;
+        crate::remote_image::handle(cx).update(cx, |images, cx| images.get(url, cx))
     }
 
     /// Back from the board open to the round's boards.
