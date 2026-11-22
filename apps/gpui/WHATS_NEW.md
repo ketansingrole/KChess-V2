@@ -8,6 +8,8 @@ refuses to release with nothing there.
 
 ## Unreleased
 
+## 2026.11.9 (2026-11-22)
+
 - **Keep KChess running**: close the window and KChess can stay in the menu bar or system tray, still telling you about challenges and your moves. Answer a challenge or open a puzzle from its menu. Choose this, and opening KChess when you log in, in Settings → Notifications.
 - **Notifications you missed**: the bell at the top right lights up when something came in while you were away, such as a challenge, your move in a correspondence game or a new version. Open it to go there, or dismiss or clear them.
 - **Voice in Endgames and Repertoire**: Voice now sits beside the move box in endgame lessons, drills and the opening trainer. Say your moves, “next”, “retry”, “hint” or “back”, and “show move” or “restart line” in the trainer. Puzzles and Your mistakes take “hint” too.
