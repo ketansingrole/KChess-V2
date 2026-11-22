@@ -668,7 +668,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-domain"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "kchess-hack",
  "memchr",

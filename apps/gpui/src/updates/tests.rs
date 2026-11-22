@@ -1662,6 +1662,8 @@ fn a_newer_release_replaces_a_download_whose_install_failed(cx: &mut gpui_kit::T
     let (phase, staged) = app.with_window(|_, cx| {
         let updates = cx.global::<UpdatesHandle>().0.clone();
         updates.update(cx, |updates, cx| {
+            // The running app, older than both releases whatever this build's version is.
+            updates.current = "2026.11.0".into();
             updates.version = Some("2026.11.8".into());
             updates.staged = Some(std::path::PathBuf::from("/nonexistent/KChess-2026.11.8"));
             updates.phase = Phase::Error;
@@ -1682,6 +1684,8 @@ fn a_failed_install_is_retried_from_its_download(cx: &mut gpui_kit::TestAppConte
     let (retries, phase, staged) = app.with_window(|_, cx| {
         let updates = cx.global::<UpdatesHandle>().0.clone();
         updates.update(cx, |updates, cx| {
+            // The running app, older than the release whatever this build's version is.
+            updates.current = "2026.11.0".into();
             updates.version = Some("2026.11.9".into());
             updates.staged = Some(std::path::PathBuf::from("/nonexistent/KChess-2026.11.9"));
             updates.phase = Phase::Error;

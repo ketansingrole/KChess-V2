@@ -4298,7 +4298,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-app"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "futures",
  "getrandom 0.4.3",
@@ -4321,7 +4321,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-background"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "kchess-hack",
  "kchess-host",
@@ -4336,7 +4336,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-board"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "base64 0.23.1",
  "block2 0.6.2",
@@ -4368,7 +4368,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-cli"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "kchess-contracts",
  "kchess-domain",
@@ -4384,7 +4384,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-client"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "getrandom 0.4.3",
  "kchess-contracts",
@@ -4402,7 +4402,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-contracts"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "kchess-domain",
  "kchess-hack",
@@ -4412,7 +4412,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-core"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
@@ -4447,7 +4447,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-delta"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "base64 0.23.1",
  "kchess-hack",
@@ -4461,7 +4461,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-domain"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "flate2",
  "kchess-contracts",
@@ -4479,7 +4479,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-games"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "getrandom 0.4.3",
  "kchess-contracts",
@@ -4490,7 +4490,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-gpui"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "base64 0.23.1",
  "dirs 7.0.0",
@@ -4625,7 +4625,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-history"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "gpui-kit",
  "kchess-app",
@@ -4642,7 +4642,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-home"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "gpui-kit",
  "kchess-app",
@@ -4659,7 +4659,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-host"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "dirs 7.0.0",
  "kchess-hack",
@@ -4671,7 +4671,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-local"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "gpui-kit",
  "kchess-app",
@@ -4689,7 +4689,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-nav"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "gpui-kit",
  "kchess-app",
@@ -4701,7 +4701,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-practice"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "gpui-kit",
  "kchess-app",
@@ -4721,7 +4721,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-puzzles"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "gpui-kit",
  "jiff",
@@ -4740,7 +4740,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-service"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "kchess-client",
  "kchess-contracts",
@@ -4755,7 +4755,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-studies"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "gpui-kit",
  "kchess-app",
@@ -4774,7 +4774,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-testkit"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "kchess-hack",
  "kchess-host",
@@ -4784,7 +4784,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-ui"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "dirs 7.0.0",
  "gpui-kit",
@@ -4799,7 +4799,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-voice"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "kchess-hack",
  "libloading 0.9.1",
@@ -4809,7 +4809,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-watch"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "futures",
  "gpui-kit",
@@ -10412,7 +10412,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "2026.11.8"
+version = "2026.11.9"
 dependencies = [
  "base64 0.23.1",
  "flate2",
