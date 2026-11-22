@@ -804,6 +804,13 @@ fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
 /// The games Lichess TV features on its Rapid and Atomic channels.
 pub const TV_RAPID: &str = "kcTvRap1";
 pub const TV_ATOMIC: &str = "kcTvAto1";
+/// TV's Blitz, Bullet and Classical games, whose exports leave out the last three plies as
+/// Lichess's do: Blitz's three are the only ones that lead to its position, Bullet's could have
+/// come in either order, and Classical's export fails until `TV_CLASSICAL_EXPORTED` is set.
+pub const TV_BLITZ: &str = "kcTvBlz1";
+pub const TV_BULLET: &str = "kcTvBul1";
+pub const TV_CLASSICAL: &str = "kcTvCls1";
+pub static TV_CLASSICAL_EXPORTED: AtomicBool = AtomicBool::new(false);
 
 /// TV's feeds and the featured games' exports.
 fn tv(out: &mut TcpStream, request: &Request) -> Option<std::io::Result<()>> {
@@ -817,6 +824,29 @@ fn tv(out: &mut TcpStream, request: &Request) -> Option<std::io::Result<()>> {
             "e4 c5",
         ),
         ("atomic", TV_ATOMIC, "atomic", start, ""),
+        (
+            "blitz",
+            TV_BLITZ,
+            "standard",
+            // 1. e4 d5 2. exd5 Qxd5 3. Nc3
+            "rnb1kbnr/ppp1pppp/8/3q4/8/2N5/PPPP1PPP/R1BQKBNR b KQkq - 1 3",
+            "e4 d5",
+        ),
+        (
+            "bullet",
+            TV_BULLET,
+            "standard",
+            // 1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5
+            "r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+            "e4 e5 Nf3",
+        ),
+        (
+            "classical",
+            TV_CLASSICAL,
+            "standard",
+            "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+            "",
+        ),
     ];
     let players = json!([
         { "color": "white", "user": { "name": "A" }, "rating": 2000, "seconds": 600 },
@@ -837,6 +867,13 @@ fn tv(out: &mut TcpStream, request: &Request) -> Option<std::io::Result<()>> {
     }
     if (request.method.as_str(), path) == ("POST", "/api/games/export/_ids") {
         let (_, id, variant, _, moves) = games.iter().find(|game| request.body.trim() == game.1)?;
+        if *id == TV_CLASSICAL && !TV_CLASSICAL_EXPORTED.load(Ordering::SeqCst) {
+            return Some(kchess_testkit::json(
+                out,
+                500,
+                &json!({ "error": "Internal server error" }),
+            ));
+        }
         let game = json!({
             "id": id, "variant": variant, "speed": "rapid", "rated": true,
             "status": "started", "moves": moves,

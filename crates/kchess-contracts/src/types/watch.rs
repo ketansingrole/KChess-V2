@@ -96,9 +96,13 @@ pub struct WatchFrame {
     /// FEN before the first move, once the move list is known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_fen: Option<String>,
-    /// UCI moves from `startFen`; absent until the TV feed and Lichess's delayed export line up.
+    /// UCI moves from `startFen`; absent until Lichess's delayed export of a TV game arrives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub moves: Option<Vec<String>>,
+    /// Plies played after `moves` that Lichess has not named yet: the list stops this far short
+    /// of the board until a later move names them. Absent when the list reaches the board.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moves_behind: Option<u32>,
     /// Why a TV game's moves are missing when they will not simply arrive with the next moves:
     /// Lichess refused its export, or KChess does not play its variant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
