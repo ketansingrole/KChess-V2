@@ -128,6 +128,7 @@ fn start_models(profile: startup::Profile, cx: &mut App) {
     let library = &library;
     settings::init(settings, cx);
     prefs::init(cx);
+    kchess_app::notifications::init(cx);
     let profile_dir = profile::data_dir().unwrap_or_default();
     interface_zoom::init(&profile_dir, cx);
     window_state::init(&profile_dir, cx);

@@ -22,6 +22,7 @@ mod history;
 mod live_game;
 mod local;
 mod memory;
+mod notification_centre;
 mod online;
 mod openings;
 mod palette;
@@ -37,6 +38,7 @@ mod shell;
 mod stability;
 mod studies;
 mod tournaments;
+mod watch_tv;
 mod whats_new;
 
 use std::path::{Path, PathBuf};

@@ -436,8 +436,19 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
     if let Some(answer) = tv(out, &request) {
         return answer;
     }
-    // Broadcasts are public: a tournament of two rounds, which a round's link finds.
+    // Broadcasts are public: a listing whose covers are KChess's icons, as Lichess names its
+    // pictures (`image.lichess.org`, which the app reads here); and a tournament of two rounds,
+    // which a round's link finds.
     match (request.method.as_str(), request.path()) {
+        ("GET", "/api/broadcast/top") => return reply(out, &broadcast_listing()),
+        ("GET", "/display") => {
+            let cover: &[u8] = match request.query("path").as_deref() {
+                Some("light.png") => include_bytes!("../../build/icon-light.png"),
+                Some("dark.png") => include_bytes!("../../build/icon-dark.png"),
+                _ => return not_found(out),
+            };
+            return kchess_testkit::respond(out, 200, "image/png", cover);
+        }
         ("GET", path) if path == format!("/api/broadcast/{BROADCAST_TOUR}") => {
             return reply(
                 out,
@@ -811,6 +822,13 @@ fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
 /// The games Lichess TV features on its Rapid and Atomic channels.
 pub const TV_RAPID: &str = "kcTvRap1";
 pub const TV_ATOMIC: &str = "kcTvAto1";
+/// TV's Blitz, Bullet and Classical games, whose exports leave out the last three plies as
+/// Lichess's do: Blitz's three are the only ones that lead to its position, Bullet's could have
+/// come in either order, and Classical's export fails until `TV_CLASSICAL_EXPORTED` is set.
+pub const TV_BLITZ: &str = "kcTvBlz1";
+pub const TV_BULLET: &str = "kcTvBul1";
+pub const TV_CLASSICAL: &str = "kcTvCls1";
+pub static TV_CLASSICAL_EXPORTED: AtomicBool = AtomicBool::new(false);
 
 /// TV's feeds and the featured games' exports.
 fn tv(out: &mut TcpStream, request: &Request) -> Option<std::io::Result<()>> {
@@ -824,6 +842,29 @@ fn tv(out: &mut TcpStream, request: &Request) -> Option<std::io::Result<()>> {
             "e4 c5",
         ),
         ("atomic", TV_ATOMIC, "atomic", start, ""),
+        (
+            "blitz",
+            TV_BLITZ,
+            "standard",
+            // 1. e4 d5 2. exd5 Qxd5 3. Nc3
+            "rnb1kbnr/ppp1pppp/8/3q4/8/2N5/PPPP1PPP/R1BQKBNR b KQkq - 1 3",
+            "e4 d5",
+        ),
+        (
+            "bullet",
+            TV_BULLET,
+            "standard",
+            // 1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5
+            "r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+            "e4 e5 Nf3",
+        ),
+        (
+            "classical",
+            TV_CLASSICAL,
+            "standard",
+            "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+            "",
+        ),
     ];
     let players = json!([
         { "color": "white", "user": { "name": "A" }, "rating": 2000, "seconds": 600 },
@@ -844,6 +885,13 @@ fn tv(out: &mut TcpStream, request: &Request) -> Option<std::io::Result<()>> {
     }
     if (request.method.as_str(), path) == ("POST", "/api/games/export/_ids") {
         let (_, id, variant, _, moves) = games.iter().find(|game| request.body.trim() == game.1)?;
+        if *id == TV_CLASSICAL && !TV_CLASSICAL_EXPORTED.load(Ordering::SeqCst) {
+            return Some(kchess_testkit::json(
+                out,
+                500,
+                &json!({ "error": "Internal server error" }),
+            ));
+        }
         let game = json!({
             "id": id, "variant": variant, "speed": "rapid", "rated": true,
             "status": "started", "moves": moves,
@@ -879,6 +927,75 @@ pub const VARIANT_STUDY: &str = "kcStudy2";
 const STUDY_PGN: &str = "[Event \"KChess study: Queen's Gambit\"]\n[ChapterName \"Queen's Gambit\"]\n\
 [Orientation \"black\"]\n\n1. d4 d5 2. c4 e6 { Declined } *\n\n\n\
 [Event \"KChess study: Second\"]\n\n1. e4 *\n\n\n";
+/// Lichess's featured broadcasts (`/api/broadcast/top`): two live, two coming up, four finished.
+fn broadcast_listing() -> Value {
+    let now = now_ms() as i64;
+    let hour = 3_600_000;
+    let entry = |tour: &str, name: &str, cover: Option<&str>, round: Value| {
+        let image = cover.map(|cover| {
+            format!(
+                "https://image.lichess.org/display?fmt=png&h=400&op=thumbnail&path={cover}&w=800"
+            )
+        });
+        json!({
+            "tour": {
+                "id": tour,
+                "name": name,
+                "image": image,
+                "info": { "players": "Carlsen, Nakamura, Firouzja, Caruana" },
+            },
+            "round": round,
+        })
+    };
+    let round = |id: &str, name: &str, state: Value| {
+        let mut round = json!({ "id": id, "name": name });
+        if let (Some(round), Some(state)) = (round.as_object_mut(), state.as_object()) {
+            round.extend(state.clone());
+        }
+        round
+    };
+    let past: Vec<Value> = [
+        "Spring Blitz",
+        "City Championship",
+        "Women's Open",
+        "Club Rapid",
+    ]
+    .iter()
+    .enumerate()
+    .map(|(index, name)| {
+        entry(
+            &format!("kcPast{index:02}"),
+            name,
+            (index % 2 == 0).then_some(if index % 4 == 0 {
+                "dark.png"
+            } else {
+                "light.png"
+            }),
+            round(
+                &format!("kcPastR{index}"),
+                "Round 9",
+                json!({ "finished": true, "finishedAt": now - (index as i64 + 1) * 24 * hour }),
+            ),
+        )
+    })
+    .collect();
+    json!({
+        "active": [
+            entry(BROADCAST_TOUR, "KChess Open", Some("light.png"),
+                round(BROADCAST_ROUNDS[1], "Round 2", json!({ "ongoing": true, "startsAt": now - hour }))),
+            entry("kcTour02", "Lakeside Rapid", Some("dark.png"),
+                round("kcRound3", "Round 5", json!({ "ongoing": true, "startsAt": now - 2 * hour }))),
+        ],
+        "upcoming": [
+            entry("kcTour03", "Autumn Classic", Some("dark.png"),
+                round("kcRound4", "Round 1", json!({ "startsAt": now + 3 * hour }))),
+            entry("kcTour04", "Junior Masters", None,
+                round("kcRound5", "Round 1", json!({ "startsAt": now + 26 * hour }))),
+        ],
+        "past": { "currentPageResults": past },
+    })
+}
+
 /// The broadcast a pasted lichess.org/broadcast link opens, and its two rounds.
 pub const BROADCAST_TOUR: &str = "kcTour01";
 pub const BROADCAST_ROUNDS: [&str; 2] = ["kcRound1", "kcRound2"];

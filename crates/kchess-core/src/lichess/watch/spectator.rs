@@ -8,11 +8,11 @@ use serde_json::{Map, Value};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
-use super::feed::{player_of, position_key, uci_or_none};
+use super::feed::{fen_ply, player_of, position_key, uci_or_none};
 use super::{
-    BroadcastGame, BroadcastUpdate, LineUpTiming, MAX_PGN, PAST_GAMES, TvGame, TvPastGame,
-    WatchFrame, WatchSink, WatchState, WatchTarget, align_tv_moves, broadcast_game, display_fen,
-    parse_game_details, parse_tv_game,
+    BroadcastGame, BroadcastUpdate, LineUpTiming, MAX_PGN, PAST_GAMES, TvGame, TvMoves, TvPastGame,
+    WatchFrame, WatchSink, WatchState, WatchTarget, broadcast_game, display_fen,
+    parse_game_details, parse_tv_game, tv_moves, tv_moves_since,
 };
 use crate::host::Level;
 use crate::lichess::accounts::{Lichess, path_segment};
@@ -142,12 +142,26 @@ struct TvFollow {
 struct TvTrack {
     /// The positions the feed showed, as `position_key`s.
     feed: Vec<String>,
+    /// `raw[i]` is the FEN the feed sent for `feed[i]`, with its move number and clock.
+    raw: Vec<String>,
     /// `live[i]` is the move from `feed[i]` to `feed[i + 1]`, when the feed named it.
     live: Vec<Option<String>>,
     /// A line-up task is running for this game.
     lining_up: bool,
     /// The export is in a variant KChess does not play: there are no moves to line up.
     unplayable: bool,
+}
+
+/// A line-up worked out while the feed had shown `seen` positions.
+struct Lined {
+    seen: usize,
+    moves: TvMoves,
+}
+
+impl Lined {
+    fn caught_up(self, track: &TvTrack) -> TvMoves {
+        tv_moves_since(self.moves, self.seen, &track.raw, &track.live)
+    }
 }
 
 struct Inner {
@@ -455,6 +469,7 @@ impl Inner {
                 let Some(fen) = fen_of(&data.fen) else {
                     return Ok(());
                 };
+                let raw = data.fen.0.clone().unwrap_or_default();
                 let Some(id) = data.id.0.as_deref() else {
                     return Ok(());
                 };
@@ -475,24 +490,37 @@ impl Inner {
                     (state.current.clone(), state.follow.clone())
                     && frame.game_id == game_id
                 {
-                    let moved = {
+                    let (moved, missed) = {
                         let mut track = lock(&follow.track);
                         let key = position_key(&fen);
                         let moved = track.feed.last() != Some(&key);
+                        let missed = track
+                            .raw
+                            .last()
+                            .and_then(|before| fen_ply(&raw)?.checked_sub(fen_ply(before)?));
                         if moved {
                             track.feed.push(key);
+                            track.raw.push(raw);
                             track.live.push(None);
                         }
-                        moved
+                        (moved, missed)
                     };
                     frame.white_clock = white_clock.or(frame.white_clock);
                     frame.black_clock = black_clock.or(frame.black_clock);
                     if moved {
-                        // The moves made while it was away are not named: the list waits for
-                        // the export to pass them.
+                        // The moves made while it was away are not named: the list stops short
+                        // of them until the export names them.
                         frame.fen = fen;
                         frame.last_move = None;
-                        frame.moves = None;
+                        match missed.filter(|missed| *missed > 0) {
+                            Some(missed) if frame.moves.is_some() => {
+                                frame.moves_behind = Some(frame.moves_behind.unwrap_or(0) + missed);
+                            }
+                            _ => {
+                                frame.moves = None;
+                                frame.moves_behind = None;
+                            }
+                        }
                     }
                     state.current = Some(frame.clone());
                     self.report_connected(session);
@@ -539,11 +567,16 @@ impl Inner {
                     finished: false,
                     start_fen: None,
                     moves: None,
+                    moves_behind: None,
                     moves_error: None,
                     previous: None,
                 };
                 let follow = Arc::new(TvFollow::default());
-                lock(&follow.track).feed.push(position_key(&fen));
+                {
+                    let mut track = lock(&follow.track);
+                    track.feed.push(position_key(&fen));
+                    track.raw.push(raw);
+                }
                 state.current = Some(frame.clone());
                 state.follow = Some(Arc::clone(&follow));
                 self.report_connected(session);
@@ -556,6 +589,7 @@ impl Inner {
                 let Some(fen) = fen_of(&data.fen) else {
                     return Ok(());
                 };
+                let raw = data.fen.0.clone().unwrap_or_default();
                 let last_move = uci_or_none(data.lm.as_ref());
                 let mut state = lock(live);
                 let (Some(current), Some(follow)) = (state.current.clone(), state.follow.clone())
@@ -565,26 +599,31 @@ impl Inner {
                 {
                     let mut track = lock(&follow.track);
                     track.feed.push(position_key(&fen));
+                    track.raw.push(raw);
                     track.live.push(last_move.clone());
                 }
+                let behind = current.moves_behind.unwrap_or(0);
+                // A move follows the list when it reaches the board and the feed named the move;
+                // otherwise the list stops one more ply short, never takes a wrong one.
+                let (moves, moves_behind) = match (current.moves.clone(), last_move.as_ref()) {
+                    (Some(mut moves), Some(last)) if behind == 0 => {
+                        moves.push(last.clone());
+                        (Some(moves), None)
+                    }
+                    (Some(moves), _) => (Some(moves), Some(behind + 1)),
+                    (None, _) => (None, None),
+                };
                 let frame = WatchFrame {
                     fen,
                     last_move: last_move.clone(),
                     white_clock: data.wc.0.or(current.white_clock),
                     black_clock: data.bc.0.or(current.black_clock),
-                    // A move the feed did not name breaks the list; better none than a wrong one.
-                    moves: match (current.moves.as_ref(), last_move.as_ref()) {
-                        (Some(moves), Some(last)) => {
-                            let mut moves = moves.clone();
-                            moves.push(last.clone());
-                            Some(moves)
-                        }
-                        _ => None,
-                    },
+                    moves,
+                    moves_behind,
                     ..current
                 };
                 let game_id = frame.game_id.clone();
-                let lined_up = frame.moves.is_some();
+                let lined_up = frame.moves.is_some() && frame.moves_behind.is_none();
                 state.current = Some(frame.clone());
                 // Sent under the lock, so a line-up's frame never overtakes a newer move.
                 self.report_connected(session);
@@ -671,7 +710,14 @@ impl Inner {
                     &format!("TV lineup fetch failed: {game_id} {}", cause.message),
                 );
             }
-            if self.apply_line_up(channel, live, follow, game_id, fetched) {
+            let lined = match &fetched {
+                Ok(game) => self.line_up_export(game, follow).await,
+                Err(_) => None,
+            };
+            if token.is_cancelled() || !self.is_current(session) {
+                return;
+            }
+            if self.apply_line_up(channel, live, follow, game_id, fetched, lined) {
                 return;
             }
             {
@@ -696,9 +742,26 @@ impl Inner {
         }
     }
 
-    /// Adopts an export: the time control and rated flag, and the moves once the export reaches
-    /// a position the feed showed. A failure shows where the moves go. True when there is
-    /// nothing more to wait for: the moves, a variant KChess does not play, or another game.
+    /// The export's moves lined up with what the feed has shown so far, and how many positions
+    /// the feed had shown then. Worked out away from the track's lock: finding the moves the
+    /// export leaves out searches thousands of positions.
+    async fn line_up_export(&self, game: &TvGame, follow: &TvFollow) -> Option<Lined> {
+        let setup = game.setup.clone()?;
+        let san = game.san.clone();
+        let (feed, raw, live) = {
+            let track = lock(&follow.track);
+            (track.feed.clone(), track.raw.clone(), track.live.clone())
+        };
+        let seen = feed.len();
+        let moves = tokio::task::spawn_blocking(move || tv_moves(&setup, &san, &feed, &raw, &live))
+            .await
+            .unwrap_or(TvMoves::Unknown);
+        Some(Lined { seen, moves })
+    }
+
+    /// Adopts an export: the time control and rated flag, and the moves `lined` found. A failure
+    /// shows where the moves go. True when there is nothing more to wait for: every move, a
+    /// variant KChess does not play, or another game.
     fn apply_line_up(
         &self,
         channel: &str,
@@ -706,6 +769,7 @@ impl Inner {
         follow: &TvFollow,
         game_id: &str,
         fetched: CoreResult<TvGame>,
+        lined: Option<Lined>,
     ) -> bool {
         let mut state = lock(live);
         let Some(current) = state.current.as_mut() else {
@@ -734,12 +798,24 @@ impl Inner {
                     }
                     Some(setup) => {
                         current.variant = setup.variant.key().to_string();
-                        // Lined up with the feed as it is now, under the lock its moves take.
-                        let moves = align_tv_moves(setup, &game.san, &track.feed, &track.live);
-                        let lined_up = moves.is_some();
-                        if let Some(moves) = moves {
+                        // Brought up to the feed as it is now, under the lock its moves take.
+                        let moves = lined.map_or(TvMoves::Unknown, |lined| lined.caught_up(&track));
+                        let (moves, behind) = match moves {
+                            TvMoves::Lined(moves) => (Some(moves), None),
+                            TvMoves::Behind(moves, behind) => (Some(moves), Some(behind)),
+                            TvMoves::Unknown => (None, None),
+                        };
+                        let lined_up = moves.is_some() && behind.is_none();
+                        // An export that says less than the list already shows changes nothing.
+                        let known = |moves: &Option<Vec<String>>, behind: Option<u32>| {
+                            moves.as_ref().map(|moves| (moves.len(), behind.is_none()))
+                        };
+                        if moves.is_some()
+                            && known(&moves, behind) > known(&current.moves, current.moves_behind)
+                        {
                             current.start_fen = Some(setup.fen.clone());
-                            current.moves = Some(moves);
+                            current.moves = moves;
+                            current.moves_behind = behind;
                         }
                         lined_up
                     }
@@ -925,6 +1001,7 @@ impl Inner {
                             finished,
                             start_fen: None,
                             moves: None,
+                            moves_behind: None,
                             moves_error: None,
                             previous: None,
                         });

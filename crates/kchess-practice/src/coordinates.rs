@@ -1,6 +1,7 @@
 //! Board coordinates, the way Lichess trains them: find a square that is
-//! named, or name one shown on the board. A timed run keeps a best score per mode and length; untimed
-//! practice, or practising only some files and ranks, keeps none.
+//! named, or name one shown on the board (by its buttons, by typing it, or by saying it). A timed
+//! run keeps a best score per mode and length, a spoken one apart; untimed practice, or practising
+//! only some files and ranks, keeps none.
 
 use crate::loading::Epoch;
 use std::time::Duration;
@@ -14,6 +15,7 @@ use serde_json::{Value, json};
 use shakmaty::{Color, Square};
 
 use super::run::{self, Drill, DrillRun, Stage, Tally};
+use super::under_board::{self, SquareBox};
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
 use crate::game::STANDARD_FEN;
 use crate::theme::Palette;
@@ -21,7 +23,7 @@ use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent, VoiceOutcome, VoiceSource};
 use crate::widgets::{self, Pill, Tone};
 use kchess_games::random_unit;
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar_height};
 use kchess_ui::icon;
 
 const FILES: [&str; 8] = ["a", "b", "c", "d", "e", "f", "g", "h"];
@@ -41,11 +43,11 @@ const STORED_RANKS: &str = "kchess:coordinates-ranks";
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Find,
+    /// Named by its buttons, typed in the box under the board, or said.
     Name,
-    Voice,
 }
 
-const MODES: [Mode; 3] = [Mode::Find, Mode::Name, Mode::Voice];
+const MODES: [Mode; 2] = [Mode::Find, Mode::Name];
 
 /// A square that is not `previous`, from `allowed` when given; the rules pick from the draws in
 /// order, and want one more draw each time the first ones give `previous`.
@@ -139,10 +141,14 @@ pub struct Coordinates {
     layout: PlayLayout,
     /// Clears the answer's flash; the next answer replaces it, so a long run keeps only one.
     flash_timer: Option<Task<()>>,
-    /// Say the square: the voice switch, its log, and a start waiting for voice to load.
+    /// Name the square's box under the board.
+    square_box: SquareBox,
+    /// Name the square by voice: the switch, its log, and a start waiting for voice to load.
     voice: Control,
     voice_log: DrillLog,
     starting: bool,
+    /// The run was started with voice on, so its score is a spoken run's.
+    run_voice: bool,
     /// The run and the question within it, which name what each phrase answered.
     run_epoch: Epoch,
     question: u32,
@@ -150,7 +156,7 @@ pub struct Coordinates {
 }
 
 impl Coordinates {
-    pub fn new(cx: &mut Context<Self>) -> Coordinates {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Coordinates {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
                 &kchess_domain::rules::setup_start(
@@ -164,7 +170,9 @@ impl Coordinates {
             ))
         });
         let voice = crate::voice::handle(cx);
+        let (square_box, typed) = SquareBox::new(Self::typed, window, cx);
         let subscriptions = vec![
+            typed,
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
                 if let BoardEvent::Select(square) = event
                     && this.mode == Mode::Find
@@ -194,11 +202,13 @@ impl Coordinates {
             flash: None,
             run_limited: false,
             board,
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             flash_timer: None,
+            square_box,
             voice: Control::new(false, cx),
             voice_log: DrillLog::default(),
             starting: false,
+            run_voice: false,
             run_epoch: Epoch::default(),
             question: 0,
             _subscriptions: subscriptions,
@@ -237,22 +247,30 @@ impl Coordinates {
         })
     }
 
+    /// Squares named by voice: in the run under way or just ended, else as the Voice switch is.
+    fn spoken(&self) -> bool {
+        match self.run.stage {
+            Stage::Idle => self.mode == Mode::Name && self.voice.enabled,
+            Stage::Running | Stage::Over => self.run_voice,
+        }
+    }
+
     fn record_variant(&self, cx: &App) -> String {
         let base = match self.mode {
             Mode::Find => "find",
+            // Saying a square takes longer than typing it: a spoken run has its own best.
+            Mode::Name if self.spoken() => "name-voice",
             Mode::Name => "name",
-            Mode::Voice => "name-voice",
         };
         run::record_variant(base, Self::length(cx), DEFAULT_SECONDS)
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
-        if self.run.running()
-            || (self.mode == Mode::Voice && !self.voice.gate(&mut self.starting, cx))
-        {
+        if self.run.running() || (self.voice.enabled && !self.voice.gate(&mut self.starting, cx)) {
             cx.notify();
             return;
         }
+        self.run_voice = self.mode == Mode::Name && self.voice.enabled;
         self.run_epoch.invalidate();
         self.question = 0;
         self.voice.feedback = None;
@@ -303,7 +321,7 @@ impl Coordinates {
     }
 
     fn voice_heard(&mut self, event: &VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) || !self.run.running() || self.mode != Mode::Voice {
+        if !self.voice.owns(event) || !self.run.running() || self.mode != Mode::Name {
             return;
         }
         let asked = format!("{}:{}", self.run_epoch.current(), self.question);
@@ -347,7 +365,36 @@ impl Coordinates {
         self.answer(&square, cx);
     }
 
-    /// Name mode: a file then a rank, from the buttons or the keyboard.
+    /// A phrase heard in Name the square, as voice would hand it over.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hear_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.voice.enabled = true;
+        let heard = crate::voice::Heard {
+            text: text.into(),
+            raw: text.into(),
+            confidence: 1.,
+            words: Vec::new(),
+            unclear: false,
+        };
+        let owner = self.voice.owner;
+        self.voice_heard(&VoiceEvent::Heard { owner, heard }, cx);
+    }
+
+    /// The square asked for in Name the square.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn target_for_test(&self) -> &str {
+        &self.target
+    }
+
+    /// A square typed in Name the square's box under the board.
+    fn typed(&mut self, square: &str, cx: &mut Context<Self>) {
+        if self.mode == Mode::Name {
+            self.pending_file = None;
+            self.answer(square, cx);
+        }
+    }
+
+    /// Name mode: a file then a rank, from the buttons, the box or the keyboard.
     fn press(&mut self, key: &str, cx: &mut Context<Self>) {
         if self.mode != Mode::Name || !self.run.running() {
             return;
@@ -362,8 +409,9 @@ impl Coordinates {
         }
     }
 
-    pub fn key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if event.keystroke.modifiers.modified() {
+    pub fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // A key typed in the box is the box's: answered here too, it counted twice.
+        if event.keystroke.modifiers.modified() || self.square_box.focused(window, cx) {
             return;
         }
         let key = event.keystroke.key.to_lowercase();
@@ -376,7 +424,7 @@ impl Coordinates {
         let running = self.run.running();
         self.voice.sync(
             kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Coordinate).to_vec(),
-            running && self.mode == Mode::Voice,
+            running && self.mode == Mode::Name,
             cx,
         );
         let show_pieces = crate::prefs::get(cx, PIECES, false);
@@ -543,10 +591,8 @@ impl Render for Coordinates {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let running = self.run.running();
-        // The board alone in its column: no player lines take height.
-        let board_size = self
-            .layout
-            .board_size_around(px(0.), px(0.), px(0.), window);
+        // No player lines take height: only the row under the board.
+        let (board_size, panel_height) = self.layout.board_and_panel(under_board::height(), window);
         // As on Lichess: the square to find over the board, so no row above it takes height.
         let prompt = (running && self.mode == Mode::Find).then(|| {
             v_flex()
@@ -571,13 +617,38 @@ impl Render for Coordinates {
                     0.6,
                 ))
         });
-        let board_column = div()
-            .w(board_size)
-            .flex_none()
-            .relative()
-            .child(crate::board::cached(&self.board))
-            .children(prompt);
         let page = cx.entity().downgrade();
+        let (row, voice_line) = if self.mode == Mode::Name {
+            let (voice, line) = self.voice.board_bar(
+                page.clone(),
+                |this: &mut Self| &mut this.voice,
+                BarSpec {
+                    id: "coordinates-voice",
+                    hint: "Say “E four” or “Echo four”",
+                    active: running,
+                    grammar: kchess_domain::voice::grammar(
+                        kchess_domain::voice::Grammar::Coordinate,
+                    )
+                    .to_vec(),
+                },
+                cx,
+            );
+            let row = under_board::row(Some((&self.square_box, running)), Some(voice), &palette);
+            (row, line)
+        } else {
+            // Find the square answers on the board alone: the row stays, empty.
+            (under_board::row(None, None, &palette), None)
+        };
+        let board_column = under_board::column(
+            "coordinates-column",
+            board_size,
+            div()
+                .relative()
+                .child(crate::board::cached(&self.board))
+                .children(prompt),
+            row,
+            voice_line,
+        );
         let modes = widgets::wrapping_pills(
             "coordinates-mode",
             vec![
@@ -593,12 +664,6 @@ impl Render for Coordinates {
                     badge: None,
                     disabled: running,
                 },
-                Pill {
-                    icon: Some(icon("mic")),
-                    label: "Say the square".into(),
-                    badge: None,
-                    disabled: running,
-                },
             ],
             MODES
                 .iter()
@@ -609,8 +674,8 @@ impl Render for Coordinates {
                 move |index, _, cx| {
                     let _ = page.update(cx, |this, cx| {
                         this.mode = MODES[index];
-                        // Leaving Say the square turns voice off, as its control goes away.
-                        if this.mode != Mode::Voice && this.voice.enabled {
+                        // Leaving Name the square turns voice off, as its control goes away.
+                        if this.mode != Mode::Name && this.voice.enabled {
                             this.voice.toggle(false, Vec::new(), false, cx);
                         }
                         this.starting = false;
@@ -694,8 +759,9 @@ impl Render for Coordinates {
 
         let mut panel = widgets::side_panel(&palette)
             .id("coordinates-panel")
+            .test_support()
             .overflow_y_scroll()
-            .h(self.layout.fixed(board_size))
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
@@ -776,24 +842,6 @@ impl Render for Coordinates {
                 running,
                 cx,
             ))
-            .when(self.mode == Mode::Voice, |panel| {
-                panel.child(
-                    self.voice.bar(
-                        page.clone(),
-                        |this: &mut Self| &mut this.voice,
-                        BarSpec {
-                            id: "coordinates-voice",
-                            hint: "Say “E four” or “Echo four”",
-                            active: running,
-                            grammar: kchess_domain::voice::grammar(
-                                kchess_domain::voice::Grammar::Coordinate,
-                            )
-                            .to_vec(),
-                        },
-                        cx,
-                    ),
-                )
-            })
             .when(!running, |panel| {
                 panel.child(div().h(px(1.)).bg(palette.border))
             });
@@ -865,8 +913,8 @@ impl Render for Coordinates {
                             "Best ({}, {}): {}",
                             match self.mode {
                                 Mode::Find => "find",
+                                Mode::Name if self.spoken() => "voice",
                                 Mode::Name => "name",
-                                Mode::Voice => "voice",
                             },
                             run::length_label(length),
                             best.map_or_else(|| "—".to_string(), |best| best.to_string())
@@ -885,8 +933,10 @@ impl Render for Coordinates {
                         "Start"
                     })
                     .loading(self.starting)
-                    .disabled(self.mode == Mode::Voice && !self.voice.enabled)
-                    .on_click(cx.listener(|this, _, _, cx| this.start(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.square_box.clear(window, cx);
+                        this.start(cx)
+                    })),
             );
         }
         div().size_full().child(

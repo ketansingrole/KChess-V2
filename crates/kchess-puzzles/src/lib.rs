@@ -42,7 +42,7 @@ use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::puzzle_db::PuzzleDbHandle;
 use crate::theme::{Palette, radii, tint};
 use kchess_domain::trainer::puzzle_session::{Answer, Detail, Failure, Reply, Request, Resume};
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar, tab_bar_height};
 use kchess_ui::icon;
 mod daily;
 mod history;
@@ -353,7 +353,7 @@ impl PuzzlesPage {
             session: PuzzleSession::new(),
             shown_key: 0,
             puzzle,
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             theme_list,
             theme_select,
             difficulty_select,
@@ -664,17 +664,7 @@ impl Render for PuzzlesPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let tab = Tab::stored(cx).info().key;
-        let tab_row = widgets::pills(
-            "puzzle-tabs",
-            Tab::pills(),
-            Tab::stored(cx).index(),
-            move |index, window, cx| {
-                Tab::ALL[index].store(cx);
-                window.refresh();
-            },
-            false,
-            &palette,
-        );
+        let tab_row = tab_bar::<Tab>("puzzle-tabs", window, cx);
         // Train, as the tab row shows, for a tab this release does not have.
         let body = if tab == "daily" {
             self.daily_view(window, cx).into_any_element()
@@ -692,13 +682,7 @@ impl Render for PuzzlesPage {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key))
             .takes_keys(&self.focus)
-            .child(
-                div()
-                    .flex_none()
-                    .px(side_padding(window))
-                    .pt(kchess_nav::play_layout::PAGE_TOP)
-                    .child(tab_row),
-            )
+            .child(tab_row)
             .child(div().flex_1().min_h_0().child(body))
     }
 }

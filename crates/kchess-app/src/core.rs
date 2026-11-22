@@ -278,6 +278,12 @@ pub fn alerts_here(cx: &App) -> bool {
         .is_none_or(|owner| owner == own)
 }
 
+/// The local stand-in for Lichess an automated run started the core with
+/// (`TestSwitches::lichess_origin`): the app's own requests of Lichess, its pictures, go there too.
+pub struct TestLichessOrigin(pub String);
+
+impl Global for TestLichessOrigin {}
+
 /// The app's core, reachable from any view: `cx.global::<AppCore>()`.
 #[derive(Clone)]
 pub struct AppCore {
@@ -448,6 +454,7 @@ mod tests {
             ProfileArea::Puzzles => "puzzle_db.rs",
             ProfileArea::VoiceHistory | ProfileArea::Engine => "pages/settings",
             ProfileArea::ViewPreferences => "prefs.rs",
+            ProfileArea::Notifications => "apps/gpui notifications/centre.rs",
         }
     }
 

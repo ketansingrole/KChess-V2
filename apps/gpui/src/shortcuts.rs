@@ -34,6 +34,7 @@ pub(crate) fn groups(cx: &App) -> Vec<(&'static str, Vec<(&'static str, String)>
                 ("Back", keys(&GoBack)),
                 ("Forward", keys(&GoForward)),
                 ("Show / hide the sidebar", keys(&ToggleSidebar)),
+                ("Notifications", keys(&ShowNotifications)),
                 ("Back to the list", "Esc".to_string()),
                 (
                     "Zoom in / out",

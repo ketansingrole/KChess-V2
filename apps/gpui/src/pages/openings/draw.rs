@@ -10,7 +10,7 @@ impl OpeningsPage {
         width: Pixels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let board = self.preview(&item.fen, cx);
+        let board = self.preview(&item.fen, true, cx);
         let (open, train) = (item.moves.clone(), item.clone());
         let page = cx.entity().downgrade();
         widgets::StudyCard {
@@ -250,9 +250,9 @@ impl OpeningsPage {
             .collect();
         // Pictures of openings that left Recent are let go; the popular ones are always shown.
         let catalog = self.catalog.clone();
-        self.previews.retain(|fen| {
-            recent.iter().any(|item| &item.fen == fen)
-                || catalog.popular.iter().any(|item| &item.fen == fen)
+        self.previews.retain(|(fen, in_card)| match in_card {
+            true => catalog.popular.iter().any(|item| &item.fen == fen),
+            false => recent.iter().any(|item| &item.fen == fen),
         });
         if !recent.is_empty() {
             let (count, item) = widgets::columns(width, px(220.), px(8.));
@@ -260,7 +260,7 @@ impl OpeningsPage {
             let items: Vec<AnyElement> = recent
                 .iter()
                 .map(|recent| {
-                    let board = self.preview(&recent.fen, cx);
+                    let board = self.preview(&recent.fen, false, cx);
                     let moves = recent.moves.clone();
                     h_flex()
                         .id(SharedString::from(format!("recent-{}", recent.name)))
@@ -275,7 +275,7 @@ impl OpeningsPage {
                         .py(px(6.))
                         .border_1()
                         .border_color(palette.border)
-                        .rounded(radii::LG)
+                        .rounded(radii::BOX)
                         .bg(palette.elevated)
                         .cursor_pointer()
                         .pressable(palette)
@@ -419,7 +419,7 @@ impl OpeningsPage {
                             .keyboard_focus(palette.primary)
                             .aria_label(san.clone())
                             .px(px(4.))
-                            .rounded(radii::XS)
+                            .rounded(radii::SMALL)
                             .cursor_pointer()
                             .when(current, |chip| chip.font_weight(FontWeight::MEDIUM))
                             .pressable(palette)

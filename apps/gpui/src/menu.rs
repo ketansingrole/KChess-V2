@@ -26,6 +26,7 @@ gpui_kit::actions!(
         ShowShortcuts,
         ShowWhatsNew,
         ToggleSidebar,
+        ShowNotifications,
         Find
     ]
 );
@@ -151,6 +152,7 @@ pub fn init(cx: &mut App) {
         bind("secondary-f", Find, cx),
         bind("secondary-n", New, cx),
         bind("shift-secondary-p", Commands, cx),
+        bind("shift-secondary-n", ShowNotifications, cx),
         bind("secondary-,", OpenSettings, cx),
         // Interface size: with or without Shift, and the keypad's.
         bind("secondary-+", ZoomIn, cx),
@@ -199,6 +201,9 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &Paste, cx| on_window(cx, crate::links::open_pasted));
     cx.on_action(|_: &New, cx| on_window(cx, crate::shell::new_on_page));
     cx.on_action(|_: &ToggleSidebar, cx| on_window(cx, crate::shell::toggle_sidebar));
+    cx.on_action(|_: &ShowNotifications, cx| {
+        on_window(cx, crate::notifications::centre::toggle_panel)
+    });
     cx.on_action(|_: &GoBack, cx| go(-1, cx));
     cx.on_action(|_: &GoForward, cx| go(1, cx));
     cx.on_action(|_: &ZoomIn, cx| zoom(1, cx));
@@ -280,6 +285,7 @@ pub fn init(cx: &mut App) {
             MenuItem::action("Run a Command…", Commands),
             MenuItem::separator(),
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
+            MenuItem::action("Notifications", ShowNotifications),
             MenuItem::separator(),
             MenuItem::action("Back", GoBack),
             MenuItem::action("Forward", GoForward),

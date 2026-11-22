@@ -77,8 +77,38 @@ const ANALYSIS_COMMANDS: [(&str, AnalysisCommand); 18] = [
     ("engine on", AnalysisCommand::Engine),
     ("engine off", AnalysisCommand::Engine),
 ];
-/// What a finished puzzle takes besides moves.
-const PUZZLE_COMMANDS: [(&str, &str); 2] = [("next", "next"), ("next puzzle", "next")];
+crate::union!(
+    /// A training board's command said aloud: it does what the page's button of that name does.
+    PuzzleCommand {
+        /// The next puzzle, position or step.
+        Next = "next",
+        /// This position again from its start.
+        Retry = "retry",
+        /// Show (or hide) the hint.
+        Hint = "hint",
+        /// The previous position.
+        Back = "back",
+        /// Show the move to play (the repertoire trainer's Show move).
+        ShowMove = "showMove",
+        /// A line from its start again (the repertoire trainer's Restart line).
+        RestartLine = "restartLine",
+    }
+);
+/// What a training board takes besides moves; each page listens for those its buttons offer.
+const PUZZLE_COMMANDS: [(&str, PuzzleCommand); 12] = [
+    ("next", PuzzleCommand::Next),
+    ("next puzzle", PuzzleCommand::Next),
+    ("retry", PuzzleCommand::Retry),
+    ("try again", PuzzleCommand::Retry),
+    ("restart", PuzzleCommand::Retry),
+    ("hint", PuzzleCommand::Hint),
+    ("show hint", PuzzleCommand::Hint),
+    ("back", PuzzleCommand::Back),
+    ("go back", PuzzleCommand::Back),
+    ("previous", PuzzleCommand::Back),
+    ("show move", PuzzleCommand::ShowMove),
+    ("restart line", PuzzleCommand::RestartLine),
+];
 const EDITOR_PHRASE_KEYS: [&str; 15] = [
     "clear board",
     "empty board",
@@ -116,7 +146,7 @@ pub enum Grammar {
     Editor,
     /// Moves and the analysis board's commands.
     Analysis,
-    /// Moves and going on to the next puzzle.
+    /// Moves and every training board command (`commands_grammar` for a page's own).
     Puzzle,
 }
 
@@ -205,8 +235,19 @@ fn analysis_grammar() -> Vec<String> {
 }
 
 fn puzzle_grammar() -> Vec<String> {
+    commands_grammar(PuzzleCommand::ALL)
+}
+
+/// Moves and the phrases of `commands`: what a training board listens for, given the commands
+/// its page has buttons for.
+pub fn commands_grammar(commands: &[PuzzleCommand]) -> Vec<String> {
     let mut out = move_grammar();
-    out.extend(PUZZLE_COMMANDS.iter().map(|(phrase, _)| phrase.to_string()));
+    out.extend(
+        PUZZLE_COMMANDS
+            .iter()
+            .filter(|(_, command)| commands.contains(command))
+            .map(|(phrase, _)| phrase.to_string()),
+    );
     out
 }
 
@@ -359,8 +400,8 @@ pub fn analysis_command(text: &str) -> Option<AnalysisCommand> {
         .map(|(_, command)| *command)
 }
 
-/// A puzzle command said aloud: `next`.
-pub fn puzzle_command(text: &str) -> Option<&'static str> {
+/// A training board command said aloud: next, retry, hint or back.
+pub fn puzzle_command(text: &str) -> Option<PuzzleCommand> {
     let key = phrase(&split_words(text));
     PUZZLE_COMMANDS
         .iter()
@@ -688,11 +729,53 @@ mod tests {
 
     #[test]
     fn next_goes_on_to_the_next_puzzle() {
-        use super::puzzle_command;
-        assert_eq!(puzzle_command("next"), Some("next"));
-        assert_eq!(puzzle_command("  Next Puzzle "), Some("next"));
+        use super::{PuzzleCommand, puzzle_command};
+        assert_eq!(puzzle_command("next"), Some(PuzzleCommand::Next));
+        assert_eq!(puzzle_command("  Next Puzzle "), Some(PuzzleCommand::Next));
         assert_eq!(puzzle_command("e four"), None);
         assert_eq!(puzzle_command("next move"), None);
+    }
+
+    /// Retry, hint and back, each in the words a player would use for its button.
+    #[test]
+    fn retry_hint_and_back_are_said_as_their_buttons_read() {
+        use super::{PuzzleCommand, puzzle_command};
+        for (said, command) in [
+            ("retry", PuzzleCommand::Retry),
+            ("Try again!", PuzzleCommand::Retry),
+            ("restart", PuzzleCommand::Retry),
+            ("hint", PuzzleCommand::Hint),
+            ("show hint", PuzzleCommand::Hint),
+            ("back", PuzzleCommand::Back),
+            ("go back", PuzzleCommand::Back),
+            ("previous", PuzzleCommand::Back),
+            ("Show move", PuzzleCommand::ShowMove),
+            ("restart line", PuzzleCommand::RestartLine),
+        ] {
+            assert_eq!(puzzle_command(said), Some(command), "{said}");
+        }
+        // Moves and other pages' commands are not these.
+        assert_eq!(puzzle_command("take back"), None);
+        assert_eq!(puzzle_command("hint please"), None);
+        assert_eq!(puzzle_command("knight f three"), None);
+    }
+
+    /// A page listens only for the commands it has buttons for.
+    #[test]
+    fn a_page_listens_for_its_own_commands() {
+        use super::{PuzzleCommand, commands_grammar};
+        let has = |words: &[String], word: &str| words.iter().any(|w| w == word);
+        let drills = commands_grammar(&[PuzzleCommand::Hint, PuzzleCommand::Retry]);
+        assert!(has(&drills, "hint") && has(&drills, "try again") && has(&drills, "e four"));
+        assert!(!has(&drills, "next") && !has(&drills, "back"));
+        // The repertoire trainer's own buttons are heard only where it offers them.
+        assert!(!has(&drills, "show move") && !has(&drills, "restart line"));
+        let trainer = commands_grammar(&[PuzzleCommand::ShowMove, PuzzleCommand::RestartLine]);
+        assert!(has(&trainer, "show move") && has(&trainer, "restart line"));
+        let all = grammar(Grammar::Puzzle);
+        for word in ["next", "next puzzle", "retry", "hint", "back", "previous"] {
+            assert!(has(all, word), "{word}");
+        }
     }
 
     /// Silence is no move and no cancel; a cancel word is a cancel, and a square a move.

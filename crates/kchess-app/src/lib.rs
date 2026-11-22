@@ -17,6 +17,7 @@ pub mod crashes;
 pub mod loading;
 pub mod log;
 pub mod network;
+pub mod notifications;
 pub mod played;
 pub mod prefs;
 pub mod quit;

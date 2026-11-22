@@ -171,6 +171,47 @@ fn openings_that_leave_recent_let_their_preview_go(cx: &mut gpui_kit::TestAppCon
     assert_eq!(kept(&mut app), shown);
 }
 
+/// Regression: a board in an opening's card was rounded on all four corners by the board's own
+/// radius, which missed the card's outline on top and curved away from its text below. A card's
+/// board takes the card picture's corners; a Recent row's small board stays rounded all round.
+#[gpui_kit::test]
+fn a_cards_board_takes_the_cards_corners(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::openings::{OpeningChoice, OpeningsPage};
+    let mut app = openings(cx);
+    let choice = OpeningChoice {
+        name: "e2e4 g8f6".to_string(),
+        moves: vec!["e2e4".to_string(), "g8f6".to_string()],
+    };
+    app.cx
+        .update(|cx| crate::prefs::set(cx, "kchess:recent-openings", vec![choice]));
+    app.find("recent-e2e4 g8f6");
+    let corners = app.cx.update(|cx| {
+        crate::shell::view::<OpeningsPage>(cx)
+            .expect("the page")
+            .read(cx)
+            .preview_corners(cx)
+    });
+    let card = crate::widgets::card_picture_corners();
+    assert!(
+        corners.iter().any(|(in_card, _)| *in_card),
+        "a card's board"
+    );
+    assert!(
+        corners.iter().any(|(in_card, _)| !*in_card),
+        "a Recent board"
+    );
+    for (in_card, corners) in corners {
+        if in_card {
+            assert_eq!(corners, card);
+        } else {
+            assert_eq!(
+                corners,
+                gpui_kit::Corners::all(crate::theme::radii::BOX - gpui_kit::px(7.))
+            );
+        }
+    }
+}
+
 #[gpui_kit::test]
 fn a_popular_opening_is_trained_in_the_repertoire_trainer(cx: &mut gpui_kit::TestAppContext) {
     let mut app = openings(cx);
@@ -220,6 +261,64 @@ fn a_line_can_be_drilled_and_saved_as_a_study(cx: &mut gpui_kit::TestAppContext)
     app.click("save-opening");
     let studies = loop_until_saved(&mut app);
     assert!(studies.contains("King's Gambit"), "{studies}");
+}
+
+/// The repertoire trainer takes spoken moves as it takes clicked ones: one off the line is
+/// missed, one on it is played; “show move” and “restart line” do what their buttons do.
+#[gpui_kit::test]
+fn a_line_is_drilled_by_voice(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = openings(cx);
+    open_kieseritzky(&mut app);
+    app.click(("opening-move", 2usize));
+    app.click("train-line");
+    app.find(("repertoire-voice", 0usize));
+    let trainer = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).repertoire())
+            .expect("the repertoire trainer")
+    });
+    let say = |app: &mut Harness, text: &str| {
+        app.cx
+            .update(|cx| trainer.update(cx, |trainer, cx| trainer.hear(text, cx)));
+        app.cx.run_until_parked();
+    };
+    let shown = |app: &mut Harness| app.cx.update(|cx| trainer.read(cx).hint_shown());
+    let play_e4 = |app: &mut Harness| {
+        say(app, "e four");
+        say(app, "confirm");
+        wait_for_status(app, "e4");
+        app.wait_for("Black's reply", |window, _| {
+            window
+                .try_find("show-move")
+                .is_some_and(|show| show.disabled() != Some(true))
+        });
+    };
+    say(&mut app, "d four");
+    say(&mut app, "confirm");
+    wait_for_status(&mut app, "Not in your repertoire");
+    play_e4(&mut app);
+    say(&mut app, "show move");
+    assert_eq!(shown(&mut app), 1, "the line's one move is shown");
+    // Restart line goes back to a line's start, the move shown cleared.
+    say(&mut app, "restart line");
+    wait_for_status(&mut app, "New line");
+    assert_eq!(shown(&mut app), 0);
+    play_e4(&mut app);
+    say(&mut app, "f four");
+    say(&mut app, "confirm");
+    wait_for_status(&mut app, "End of this line");
+}
+
+/// Regression: the repertoire trainer sized its panel for two player lines, so it ran 44 px past
+/// the move box's row under the board.
+#[gpui_kit::test]
+fn the_repertoire_panel_ends_with_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = openings(cx);
+    open_kieseritzky(&mut app);
+    app.click("train-line");
+    app.find(("repertoire-voice", 0usize));
+    super::puzzles::panel_ends_with_column(&mut app, "repertoire-panel", "repertoire-column");
 }
 
 /// The library as the core has it, once the study was saved to it.

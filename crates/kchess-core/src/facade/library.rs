@@ -1,20 +1,21 @@
 //! The library: studies, played games, drills, sessions and repertoire notes.
 
 use kchess_contracts::check::{
-    ArchivedGame, LibraryId, MissCounts, PgnText, Position, RepertoireKey, RepertoireLine,
-    ReviewKey, SessionObject, Side, ViewPreferenceKey,
+    ArchivedGame, LibraryId, MissCounts, NotificationId, PgnText, Position, RepertoireKey,
+    RepertoireLine, ReviewKey, SessionObject, Side, ViewPreferenceKey,
 };
 use kchess_contracts::core_api::LibraryApi;
 use kchess_contracts::types::{
-    Drill, JoinedTournament, Library, MistakeGame, MistakesAdded, RepertoireMisses,
-    RepertoireSchedule, SessionDocument, SessionKind, StudyCommand, StudyCommandResult,
+    Drill, JoinedTournament, Library, MistakeGame, MistakesAdded, NotificationEntry,
+    NotificationInput, RepertoireMisses, RepertoireSchedule, SessionDocument, SessionKind,
+    StudyCommand, StudyCommandResult,
 };
 use kchess_domain::misc::documents;
 use kchess_domain::misc::value::J;
 use serde_json::{Map, Value};
 
 use crate::core::Core;
-use crate::store::{library, library_import, view_preferences};
+use crate::store::{library, library_import, notifications, view_preferences};
 use crate::time::now_ms;
 use kchess_contracts::error::{CoreError, Result};
 
@@ -165,6 +166,47 @@ impl LibraryApi for Core {
         let value = value.unwrap_or(Value::Null);
         self.database
             .write_async(move |ctx| view_preferences::set(ctx, &key.0, &value))
+            .await
+    }
+
+    async fn notifications(&self) -> Result<Vec<NotificationEntry>> {
+        let now = now_ms() as f64;
+        self.database
+            .read_async(move |ctx| notifications::list(ctx.host, ctx.db, now))
+            .await
+    }
+
+    async fn record_notification(
+        &self,
+        entry: NotificationInput,
+    ) -> Result<Vec<NotificationEntry>> {
+        let (id, now) = (crate::ids::random_uuid()?, now_ms() as f64);
+        self.database
+            .write_async(move |ctx| notifications::record(ctx.host, ctx.db, entry, id, now))
+            .await
+    }
+
+    async fn mark_notifications_read(
+        &self,
+        id: Option<NotificationId>,
+    ) -> Result<Vec<NotificationEntry>> {
+        let now = now_ms() as f64;
+        self.database
+            .write_async(move |ctx| {
+                notifications::mark_read(ctx.host, ctx.db, id.as_ref().map(|id| id.0.as_str()), now)
+            })
+            .await
+    }
+
+    async fn clear_notifications(
+        &self,
+        id: Option<NotificationId>,
+    ) -> Result<Vec<NotificationEntry>> {
+        let now = now_ms() as f64;
+        self.database
+            .write_async(move |ctx| {
+                notifications::clear(ctx.host, ctx.db, id.as_ref().map(|id| id.0.as_str()), now)
+            })
             .await
     }
 }

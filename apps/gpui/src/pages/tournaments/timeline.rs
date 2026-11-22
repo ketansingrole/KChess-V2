@@ -191,7 +191,7 @@ pub fn legend(palette: &Palette) -> impl IntoElement {
         .children(CATEGORIES.iter().map(|(_, label, color)| {
             h_flex()
                 .gap(px(8.))
-                .child(div().size(px(10.)).rounded(radii::XS).bg(rgb(*color)))
+                .child(div().size(px(10.)).rounded(radii::SMALL).bg(rgb(*color)))
                 .child(*label)
         }))
 }
@@ -355,7 +355,7 @@ impl TournamentsPage {
                             .pr(px(12.))
                             .gap(px(8.))
                             .overflow_hidden()
-                            .rounded(radii::SM)
+                            .rounded(radii::BOX)
                             .border_1()
                             .border_color(tint(rgb(color).into(), 40.))
                             .bg(tint(
@@ -473,7 +473,7 @@ impl TournamentsPage {
                         // Redraw so the pinned names follow the scroll.
                         cx.notify();
                     }))
-                    .rounded(radii::LG)
+                    .rounded(radii::BOX)
                     .border_1()
                     .border_color(palette.border)
                     .bg(palette.bg)

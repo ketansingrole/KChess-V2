@@ -292,7 +292,7 @@ impl LocalPage {
                 .items_center()
                 .justify_center()
                 .overflow_hidden()
-                .rounded(radii::XL)
+                .rounded(radii::BOX)
                 .border_1()
                 .border_color(palette.border)
                 .bg(background)

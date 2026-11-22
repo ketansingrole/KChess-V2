@@ -238,7 +238,7 @@ impl TournamentsPage {
                 h_flex()
                     .gap(px(8.))
                     .p(px(12.))
-                    .rounded(radii::MD)
+                    .rounded(radii::BOX)
                     .bg(palette.accented)
                     .text_size(px(13.))
                     .child(icon("eye").size(px(16.)))
@@ -361,7 +361,7 @@ impl TournamentsPage {
                                     .items_center()
                                     .gap(px(2.))
                                     .p(px(12.))
-                                    .rounded(radii::LG)
+                                    .rounded(radii::BOX)
                                     .bg(palette.accented)
                                     .child(icon("trophy").size(px(20.)).text_color(rgb(
                                         match index {
@@ -398,7 +398,7 @@ impl TournamentsPage {
                     .gap(px(8.))
                     .px(px(8.))
                     .py(px(6.))
-                    .rounded(radii::SM)
+                    .rounded(radii::BOX)
                     .text_size(px(13.))
                     .when(mine, |row| row.bg(crate::theme::tint(palette.primary, 14.)))
                     .child(
@@ -625,7 +625,7 @@ fn duels(detail: &TournamentDetail, palette: &Palette) -> Option<Div> {
                     .mx(px(-8.))
                     .px(px(8.))
                     .py(px(6.))
-                    .rounded(radii::MD)
+                    .rounded(radii::BOX)
                     .text_size(px(13.))
                     .cursor_pointer()
                     .pressable(palette)

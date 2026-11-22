@@ -1071,6 +1071,20 @@ mod tests {
         assert_eq!(pin_scroll(Pin::Left, px(0.), view, px(400.), max), None);
     }
 
+    /// Regression: an option's frame (8px) sat 6px from a picture rounded 8px too, so the two
+    /// corners did not follow each other. The picture is the option's corner less its inset.
+    #[test]
+    fn an_options_picture_is_concentric_with_its_frame() {
+        assert_eq!(
+            crate::theme::radii::BOX - super::rows::OPTION_INSET,
+            crate::theme::radii::SMALL
+        );
+        assert_eq!(
+            super::appearance::picture_width(px(100.)) + super::rows::OPTION_INSET * 2.,
+            px(100.)
+        );
+    }
+
     #[test]
     fn pickers_fill_the_width_in_whole_columns() {
         let (count, item) = columns(px(900.), OPTION_MIN, OPTION_GAP);

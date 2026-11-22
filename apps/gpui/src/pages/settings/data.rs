@@ -254,7 +254,7 @@ impl SettingsPage {
                 .gap(px(2.))
                 .px(px(16.))
                 .py(px(14.))
-                .rounded(radii::LG)
+                .rounded(radii::BOX)
                 .border_1()
                 .border_color(palette.border)
                 .bg(palette.bg)

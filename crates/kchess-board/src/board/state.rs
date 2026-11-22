@@ -166,6 +166,9 @@ pub struct BoardState {
     pub pockets: Option<ByColor<ByRole<u8>>>,
     /// Crazyhouse: where each piece in the mover's pocket may be dropped.
     pub drops: HashMap<Role, Vec<Square>>,
+    /// The board's corners, which its corner squares take too: `radii::BOARD`, or those of the
+    /// box it sits flush in (a card's picture, `widgets::card_picture_corners`).
+    pub corners: Corners<Pixels>,
 }
 
 impl BoardState {
@@ -222,6 +225,7 @@ impl BoardState {
             premove: None,
             pockets: position.pockets().copied(),
             drops,
+            corners: Corners::all(radii::BOARD),
         }
     }
 }
