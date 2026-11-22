@@ -39,9 +39,14 @@ const LISTED: usize = 5;
 #[derive(Clone, Debug, PartialEq)]
 enum Choice {
     Open,
+    /// The window, with the notification centre's panel open.
+    Notifications,
     Page(Page),
     DailyPuzzle,
-    Game { account: String, id: String },
+    Game {
+        account: String,
+        id: String,
+    },
     Accept(String),
     Decline(String),
     DoNotDisturb,
@@ -85,10 +90,12 @@ pub fn init(cx: &mut App) {
         }
     });
     let settings = cx.global::<crate::settings::SettingsHandle>().0.clone();
+    let centre = kchess_app::notifications::handle(cx);
     let subscriptions = vec![
         cx.observe(&settings, |_, cx| refresh(cx)),
         cx.observe(&crate::online::handle(cx), |_, cx| refresh(cx)),
         cx.observe(&crate::accounts::handle(cx), |_, cx| refresh(cx)),
+        cx.observe(&centre, |_, cx| refresh(cx)),
     ];
     cx.set_global(Background {
         shown: None,
@@ -234,6 +241,14 @@ fn show(
 fn menu(cx: &App) -> (Vec<tray::Item>, HashMap<u32, Choice>) {
     let mut built = Menu::default();
     built.action("Open KChess", Choice::Open);
+    let unread = kchess_app::notifications::unread(cx);
+    built.action(
+        &match unread {
+            0 => "Notifications".to_string(),
+            n => format!("Notifications ({n})"),
+        },
+        Choice::Notifications,
+    );
     built.separator();
     if !crate::accounts::handle(cx).read(cx).connected().is_empty() {
         built.action("Play on Lichess", Choice::Page(Page::Online));
@@ -342,6 +357,10 @@ fn clicked(event: tray::Event, cx: &mut App) {
 fn act(choice: Choice, cx: &mut App) {
     match choice {
         Choice::Open => show_window(None, cx),
+        Choice::Notifications => {
+            show_window(None, cx);
+            crate::notifications::centre::open_panel(cx);
+        }
         Choice::Page(page) => show_window(Some(page), cx),
         Choice::DailyPuzzle => {
             crate::pages::puzzles::Tab::Daily.store(cx);

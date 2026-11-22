@@ -151,10 +151,12 @@ fn do_not_disturb_turns_notifications_off(cx: &mut gpui_kit::TestAppContext) {
     app.wait_for_saved("notificationsEnabled", json!(true));
 }
 
-/// A challenge received shows in the menu with its terms, and Decline there answers it.
+/// A challenge received in the background shows in the menu with its terms, and Decline there
+/// answers it; the menu counts it among the notifications missed, and Notifications opens them.
 #[gpui_kit::test]
 fn a_challenge_is_answered_from_the_menu(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, lichess) = Harness::signed_in(cx, false);
+    gpui_kit::VisualTestContext::from_window(app.window, &app.cx).deactivate_window();
     app.wait_for_app("Play on Lichess in the menu", |cx| {
         menu_labels(cx).contains(&"Play on Lichess".to_string())
     });
@@ -192,4 +194,9 @@ fn a_challenge_is_answered_from_the_menu(cx: &mut gpui_kit::TestAppContext) {
             .writes
             .contains(&"POST /api/challenge/Menu0001/decline".to_string())
     });
+    app.wait_for_app("the missed challenge counted", |cx| {
+        menu_labels(cx).contains(&"Notifications (1)".to_string())
+    });
+    app.cx.update(|cx| pick("Notifications (1)", None, cx));
+    app.find("notifications-panel");
 }
