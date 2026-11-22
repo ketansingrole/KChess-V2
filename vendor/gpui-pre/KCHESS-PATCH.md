@@ -35,6 +35,10 @@ through `Window::zoom_requests`): the test platform's `zoom` and `titlebar_doubl
 each instead of panicking or doing nothing, so `e2e::shell` can check that one double click on the
 title bar zooms or restores the window exactly once.
 
+A test-only patch counts the app's **quit requests** (`TestAppContext::quit_requests`): the test
+platform's `quit` adds one instead of doing nothing, so `e2e::background` can check that closing
+the last window quits only when KChess asks to, never through GPUI's own `QuitMode`.
+
 A test-only patch lists the views **notified while the window drew**
 (`Window::views_notified_while_drawing`, `src/window.rs`), each with the app's own frames that
 notified it. GPUI draws such a view again in the next frame, with every view it is in, so a page
