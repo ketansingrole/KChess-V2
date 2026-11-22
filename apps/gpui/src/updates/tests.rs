@@ -1642,15 +1642,19 @@ fn download_starts_the_offered_update(cx: &mut gpui_kit::TestAppContext) {
     );
 }
 
-/// A release offering `version` for this platform's package.
-fn release_of(version: &str) -> Release {
+/// A release offering `version` for this platform's package, as the feed answers it.
+fn release_json(version: &str) -> serde_json::Value {
     let package = Package::for_platform().unwrap();
     let name = asset_name(version, package).unwrap();
-    serde_json::from_value(serde_json::json!({
+    serde_json::json!({
         "tag_name": format!("v{version}"),
         "assets": [{ "name": name, "browser_download_url": "http://127.0.0.1:9/pkg", "size": 1 }],
-    }))
-    .unwrap()
+    })
+}
+
+/// A release offering `version` for this platform's package.
+fn release_of(version: &str) -> Release {
+    serde_json::from_value(release_json(version)).unwrap()
 }
 
 /// After an install failed, its download was kept; a check that then found a newer release
@@ -1659,7 +1663,7 @@ fn release_of(version: &str) -> Release {
 fn a_newer_release_replaces_a_download_whose_install_failed(cx: &mut gpui_kit::TestAppContext) {
     use super::{Phase, UpdatesHandle};
     let mut app = crate::e2e::Harness::start(cx);
-    let (phase, staged) = app.with_window(|_, cx| {
+    let (version, phase, staged) = app.with_window(|_, cx| {
         let updates = cx.global::<UpdatesHandle>().0.clone();
         updates.update(cx, |updates, cx| {
             // The running app, older than both releases whatever this build's version is.
@@ -1667,11 +1671,17 @@ fn a_newer_release_replaces_a_download_whose_install_failed(cx: &mut gpui_kit::T
             updates.version = Some("2026.11.8".into());
             updates.staged = Some(std::path::PathBuf::from("/nonexistent/KChess-2026.11.8"));
             updates.phase = Phase::Error;
-            updates.found(release_of("2026.11.9"), false, cx);
-            (updates.phase, updates.staged.clone())
+            updates.found(release_of("2026.11.9"), cx);
+            (
+                updates.version.clone(),
+                updates.phase,
+                updates.staged.clone(),
+            )
         })
     });
-    assert_eq!(phase, Phase::Available);
+    // Offered, and its download started (`updates_download_once_found`), not the old one ready.
+    assert_eq!(version.as_deref(), Some("2026.11.9"));
+    assert_ne!(phase, Phase::Downloaded);
     assert_eq!(staged, None);
 }
 
@@ -1690,11 +1700,138 @@ fn a_failed_install_is_retried_from_its_download(cx: &mut gpui_kit::TestAppConte
             updates.staged = Some(std::path::PathBuf::from("/nonexistent/KChess-2026.11.9"));
             updates.phase = Phase::Error;
             let retries = updates.retries_install();
-            updates.found(release_of("2026.11.9"), false, cx);
+            updates.found(release_of("2026.11.9"), cx);
             (retries, updates.phase, updates.staged.is_some())
         })
     });
     assert!(retries);
     assert_eq!(phase, Phase::Downloaded);
     assert!(staged);
+}
+
+/// What `download` says in a build with no download folder, as the tests' app is: proof that a
+/// download started.
+const NO_FOLDER: &str = "KChess has no private folder to download the update to";
+
+/// The tests' app checking `feed` as an older KChess, with nowhere to download to.
+fn checking(app: &mut crate::e2e::Harness, feed: String) -> gpui_kit::Entity<super::Updates> {
+    let updates = app.with_window(|_, cx| cx.global::<super::UpdatesHandle>().0.clone());
+    app.cx.update(|cx| {
+        updates.update(cx, |updates, cx| {
+            updates.feed = Some(feed);
+            updates.workspace = None;
+            updates.current = "2026.11.0".into();
+            cx.notify();
+        });
+    });
+    updates
+}
+
+/// A check at login, before the network was up, failed and was not tried again for six hours,
+/// so the update waited for **Download update**. It is now tried again after a minute, then
+/// after five and fifteen, and then waits for the six-hourly check.
+#[gpui_kit::test]
+fn a_failed_check_is_tried_again_soon(cx: &mut gpui_kit::TestAppContext) {
+    use super::{CHECK_AGAIN_AFTER, Phase};
+    use std::sync::atomic::Ordering::SeqCst;
+    let mut app = crate::e2e::Harness::start(cx);
+    let release = release_json("2026.11.9").to_string().into_bytes();
+    let (feed, asked) = answers(vec![("404 Not Found", Vec::new()), ("200 OK", release)]);
+    let updates = checking(&mut app, feed);
+    app.cx
+        .update(|cx| updates.update(cx, |updates, cx| updates.check(cx)));
+    app.wait_for("the failed check", |_, cx| {
+        updates.read(cx).phase == Phase::Error
+    });
+    assert_eq!(asked.load(SeqCst), 1);
+    app.cx.executor().advance_clock(CHECK_AGAIN_AFTER[0]);
+    app.wait_for("the update's download", |_, cx| {
+        updates.read(cx).error.as_deref() == Some(NO_FOLDER)
+    });
+    assert_eq!(asked.load(SeqCst), 2);
+
+    // A feed that keeps failing is asked once after each wait, and then left to the next
+    // six-hourly check.
+    let (feed, asked) = answers(vec![("404 Not Found", Vec::new())]);
+    let updates = checking(&mut app, feed);
+    app.cx.update(|cx| {
+        updates.update(cx, |updates, cx| {
+            updates.failed_checks = 0;
+            updates.phase = Phase::Idle;
+            updates.check(cx);
+        })
+    });
+    for (tries, wait) in CHECK_AGAIN_AFTER.iter().enumerate() {
+        app.wait_for("a failed check", |_, cx| {
+            updates.read(cx).phase == Phase::Error && asked.load(SeqCst) == tries + 1
+        });
+        app.cx.executor().advance_clock(*wait);
+    }
+    app.wait_for("the last failed check", |_, cx| {
+        updates.read(cx).phase == Phase::Error && asked.load(SeqCst) == CHECK_AGAIN_AFTER.len() + 1
+    });
+    app.cx.executor().advance_clock(CHECK_AGAIN_AFTER[2] * 2);
+    app.cx.run_until_parked();
+    assert_eq!(
+        updates.read_with(&app.cx, |updates, _| updates.phase),
+        Phase::Error
+    );
+    assert_eq!(asked.load(SeqCst), CHECK_AGAIN_AFTER.len() + 1);
+}
+
+/// **Check for updates** found the update and left it at **Download update**, although
+/// updates download in the background: only an automatic check downloaded.
+#[gpui_kit::test]
+fn updates_download_once_found(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = crate::e2e::Harness::start(cx);
+    let release = release_json("2026.11.9").to_string().into_bytes();
+    let (feed, _) = answers(vec![("200 OK", release)]);
+    let updates = checking(&mut app, feed);
+    app.open_settings("Updates");
+    app.click("update-check");
+    app.wait_for("the update's download", |_, cx| {
+        updates.read(cx).error.as_deref() == Some(NO_FOLDER)
+    });
+}
+
+/// Turning on background downloads while an update waits for **Download update** starts its
+/// download; another setting changed meanwhile does not.
+#[gpui_kit::test]
+fn turning_on_background_downloads_downloads_the_waiting_update(cx: &mut gpui_kit::TestAppContext) {
+    use super::Phase;
+    let mut app = crate::e2e::Harness::start(cx);
+    let updates = checking(&mut app, "http://127.0.0.1:9".into());
+    let set = |app: &mut crate::e2e::Harness,
+               change: fn(&mut kchess_contracts::types::Settings)| {
+        app.cx.update(|cx| crate::settings::change(cx, change));
+        app.cx.run_until_parked();
+    };
+    set(&mut app, |settings| {
+        settings.frontend.update_auto_download = false
+    });
+    app.cx.update(|cx| {
+        updates.update(cx, |updates, cx| {
+            updates.found(release_of("2026.11.9"), cx);
+        })
+    });
+    assert_eq!(
+        updates.read_with(&app.cx, |updates, _| updates.phase),
+        Phase::Available
+    );
+    set(&mut app, |settings| {
+        settings.frontend.sound_enabled = !settings.frontend.sound_enabled
+    });
+    assert_eq!(
+        updates.read_with(&app.cx, |updates, _| updates.phase),
+        Phase::Available
+    );
+    set(&mut app, |settings| {
+        settings.frontend.update_auto_download = true
+    });
+    assert_eq!(
+        updates
+            .read_with(&app.cx, |updates, _| updates.error.clone())
+            .as_deref(),
+        Some(NO_FOLDER)
+    );
 }

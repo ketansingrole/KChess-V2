@@ -46,6 +46,14 @@ const IDLE: Duration = if cfg!(test) {
 };
 /// On startup and every six hours.
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+/// The waits before checking again after a check failed, one after each failure in a row: a
+/// check at login often runs before the network is up, and used to wait six hours for the next.
+/// After the last, the six-hourly check takes over.
+const CHECK_AGAIN_AFTER: [Duration; 3] = [
+    Duration::from_secs(60),
+    Duration::from_secs(5 * 60),
+    Duration::from_secs(15 * 60),
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -139,6 +147,9 @@ pub struct Updates {
     feed: Option<String>,
     work: Option<Task<()>>,
     _timer: Option<Task<()>>,
+    /// The next check after a failed one (`CHECK_AGAIN_AFTER`), and how many failed in a row.
+    _again: Option<Task<()>>,
+    failed_checks: usize,
 }
 
 /// How views reach updates: `cx.global::<UpdatesHandle>().0`.
@@ -238,7 +249,12 @@ pub fn init(cx: &mut App) {
     let updates = cx.new(|cx: &mut Context<Updates>| {
         let settings = cx.global::<SettingsHandle>().0.clone();
         cx.subscribe(&settings, |this, _, _: &SettingsChanged, cx| {
-            this.schedule(cx)
+            this.schedule(cx);
+            // Background downloads just turned on, with an update waiting for its download.
+            if this.phase == Phase::Available && crate::settings::frontend(cx).update_auto_download
+            {
+                this.download(cx);
+            }
         })
         .detach();
         let mut updates = Updates {
@@ -265,6 +281,8 @@ pub fn init(cx: &mut App) {
             feed,
             work: None,
             _timer: None,
+            _again: None,
+            failed_checks: 0,
         };
         updates.schedule(cx);
         updates
@@ -310,20 +328,22 @@ impl Updates {
         let auto = crate::settings::frontend(cx).update_auto_check;
         if !auto || !self.can_check() {
             self._timer = None;
+            self._again = None;
             return;
         }
         if self._timer.is_some() {
             return;
         }
-        self.check(true, cx);
+        self.check(cx);
         self._timer = Some(crate::timer::every(CHECK_EVERY, cx, |this, cx| {
-            this.check(true, cx);
+            this.check(cx);
             true
         }));
     }
 
-    /// `check`: ask the feed for the latest release.
-    pub fn check(&mut self, automatic: bool, cx: &mut Context<Self>) {
+    /// `check`: ask the feed for the latest release, and download a newer one when background
+    /// downloads are on, whether the check was automatic or asked for.
+    pub fn check(&mut self, cx: &mut Context<Self>) {
         let Some(feed) = self.feed.clone() else {
             return;
         };
@@ -344,10 +364,14 @@ impl Updates {
             let _ = this.update(cx, |this, cx| {
                 this.checked_at = Some(crate::dates::now_millis());
                 match answer {
-                    Ok(release) => this.found(release, automatic, cx),
+                    Ok(release) => {
+                        this.failed_checks = 0;
+                        this._again = None;
+                        this.found(release, cx);
+                    }
                     Err(cause) => {
-                        log(&format!("check failed: {cause}"));
                         this.phase = Phase::Error;
+                        this.check_again(&cause, cx);
                         this.error = Some(cause);
                     }
                 }
@@ -356,8 +380,30 @@ impl Updates {
         }));
     }
 
-    fn found(&mut self, release: Release, automatic: bool, cx: &mut Context<Self>) {
+    /// After a failed check, check again soon while automatic checks are on (`CHECK_AGAIN_AFTER`).
+    fn check_again(&mut self, cause: &str, cx: &mut Context<Self>) {
+        let wait = CHECK_AGAIN_AFTER
+            .get(self.failed_checks)
+            .copied()
+            .filter(|_| crate::settings::frontend(cx).update_auto_check);
+        let Some(wait) = wait else {
+            log(&format!("check failed: {cause}"));
+            return;
+        };
+        self.failed_checks += 1;
+        log(&format!(
+            "check failed: {cause}; checking again in {} s",
+            wait.as_secs()
+        ));
+        self._again = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            this.update(cx, |this, cx| this.check(cx)).ok();
+        }));
+    }
+
+    fn found(&mut self, release: Release, cx: &mut Context<Self>) {
         let Some(version) = offer(&release, &self.current, self.package()) else {
+            log(&format!("up to date at {}", self.current));
             self.phase = Phase::UpToDate;
             self.version = None;
             self.release = None;
@@ -369,6 +415,7 @@ impl Updates {
         // newer one replaces it, which used to install the old one on quit while offering the new.
         if self.staged.is_some() {
             if self.version.as_deref() == Some(version.as_str()) {
+                log(&format!("found {version}, downloaded before"));
                 self.phase = Phase::Downloaded;
                 self.released = release.published_at.clone();
                 self.release = Some(release);
@@ -377,6 +424,11 @@ impl Updates {
             self.staged = None;
         }
         self.phase = Phase::Available;
+        let auto_download = crate::settings::frontend(cx).update_auto_download;
+        log(&format!(
+            "found {version}{}",
+            if auto_download { ", downloading" } else { "" }
+        ));
         // Kept in the notification centre once per version: found again on the next start,
         // it stays as it was, read or not.
         crate::notifications::centre::record(
@@ -393,8 +445,7 @@ impl Updates {
         self.version = Some(version);
         self.released = release.published_at.clone();
         self.release = Some(release);
-        let auto_download = crate::settings::frontend(cx).update_auto_download;
-        if automatic && auto_download {
+        if auto_download {
             self.download(cx);
         }
     }
@@ -402,9 +453,11 @@ impl Updates {
     /// `download`: fetch, check and stage the package this app was installed from.
     pub fn download(&mut self, cx: &mut Context<Self>) {
         let (Some(release), Some(package)) = (self.release.clone(), self.package()) else {
+            log("no download: no release or no package for this platform");
             return;
         };
         if !matches!(self.phase, Phase::Available | Phase::Error) {
+            log(&format!("no download while {:?}", self.phase));
             return;
         }
         let version = release.tag_name.trim_start_matches('v').to_string();
@@ -415,6 +468,9 @@ impl Updates {
                 .find(|asset| asset.name == name)
                 .cloned()
         }) else {
+            log(&format!(
+                "no download: {version} has no {package:?} package"
+            ));
             return;
         };
         self.phase = Phase::Downloading;
