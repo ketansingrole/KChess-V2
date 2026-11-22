@@ -131,15 +131,16 @@ fn the_engine_line_holds_still_as_its_search_ends(cx: &mut gpui_kit::TestAppCont
     assert_eq!(places(&mut app, &ids)[0].origin, during[0].origin);
 }
 
-/// Turn voice on and off on `page`, its Voice button holding its place under the pointer while
-/// the bar fills in beside it (here with the error a test machine's missing speech model gives,
-/// and Try again).
-fn voice_holds_still(app: &mut Harness, page: &str, bar: &'static str) {
+/// Turn voice on and off on `page` (`open` shows it), its Voice button holding its place under
+/// the pointer while the bar fills in beside it (here with the error a test machine's missing
+/// speech model gives, and Try again).
+fn voice_holds_still(app: &mut Harness, page: &str, open: fn(&mut Harness), bar: &'static str) {
     let button: ElementId = (bar, 0usize).into();
     for (width, height) in &SIZES[1..] {
         app.cx
             .simulate_window_resize(app.window, size(px(*width), px(*height)));
-        app.open(page);
+        open(app);
+        app.find(button.clone());
         app.settle();
         let ids = [button.clone()];
         let off = places(app, &ids);
@@ -164,13 +165,114 @@ fn voice_holds_still(app: &mut Harness, page: &str, bar: &'static str) {
 #[gpui_kit::test]
 fn the_voice_button_holds_still_beside_the_move_box(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    voice_holds_still(&mut app, "Play with computer", "computer-voice");
+    voice_holds_still(
+        &mut app,
+        "Play with computer",
+        |app| app.open("Play with computer"),
+        "computer-voice",
+    );
 }
 
 #[gpui_kit::test]
 fn the_voice_button_holds_still_under_the_board_editor(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    voice_holds_still(&mut app, "Board editor", "editor-voice");
+    voice_holds_still(
+        &mut app,
+        "Board editor",
+        |app| app.open("Board editor"),
+        "editor-voice",
+    );
+}
+
+#[gpui_kit::test]
+fn the_voice_button_holds_still_under_an_endgame_lesson(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    voice_holds_still(
+        &mut app,
+        "An endgame lesson",
+        |app| {
+            app.open("Practice");
+            if !app.shows(("lesson-voice", 0usize)) {
+                super::practice::tab(app, crate::pages::practice::Tab::Endgames);
+                app.click("card-checkmate-patterns-2");
+                app.click("training-cp2-balestra");
+            }
+        },
+        "lesson-voice",
+    );
+}
+
+#[gpui_kit::test]
+fn the_voice_button_holds_still_under_an_endgame_drill(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Practice");
+    super::practice::tab(&mut app, crate::pages::practice::Tab::Endgames);
+    super::practice::reveal(&mut app, "endgame-courses", "card-drills");
+    app.click("card-drills");
+    voice_holds_still(
+        &mut app,
+        "An endgame drill",
+        |app| app.open("Practice"),
+        "drill-voice",
+    );
+}
+
+#[gpui_kit::test]
+fn the_voice_button_holds_still_under_the_repertoire_trainer(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    voice_holds_still(
+        &mut app,
+        "The repertoire trainer",
+        |app| {
+            app.open("Practice");
+            if !app.shows(("repertoire-voice", 0usize)) {
+                app.open("Openings");
+                super::openings::open_kieseritzky(app);
+                app.click("train-line");
+            }
+        },
+        "repertoire-voice",
+    );
+}
+
+/// The drills with a board have Voice in the row under it, as the game pages do.
+#[gpui_kit::test]
+fn the_voice_button_holds_still_on_every_drill(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::practice::Tab;
+    let mut app = Harness::start(cx);
+    voice_holds_still(
+        &mut app,
+        "Coordinates",
+        |app| {
+            app.open("Practice");
+            app.click(super::tab("practice-tabs", Tab::Coordinates));
+            app.click(("coordinates-mode", 1usize));
+        },
+        "coordinates-voice",
+    );
+    voice_holds_still(
+        &mut app,
+        "Knight paths",
+        |app| {
+            app.open("Practice");
+            app.click(super::tab("practice-tabs", Tab::Knight));
+        },
+        "knight-voice",
+    );
+}
+
+#[gpui_kit::test]
+fn the_voice_button_holds_still_in_guess_the_move(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Practice");
+    super::practice::guess_game(&mut app, "1. e4 e5 2. Nf3 Nc6 *");
+    // The game stays on the tab as the page opens again at each size.
+    voice_holds_still(
+        &mut app,
+        "Guess the move",
+        |app| app.open("Practice"),
+        "guess-voice",
+    );
 }
 
 /// Choosing a spare piece in the Board editor leaves the row where it was.

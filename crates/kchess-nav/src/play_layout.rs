@@ -385,7 +385,18 @@ impl PlayLayout {
     /// without player lines sizes here: `panel_height`'s two lines made such a panel run past
     /// the column, and a panel as tall as the board alone stopped short of the move box.
     pub fn board_and_panel(&self, around: Pixels, window: &Window) -> (Pixels, Length) {
-        let side = self.board_size_around(px(0.), px(0.), around, window);
+        self.board_and_panel_beside(px(0.), around, window)
+    }
+
+    /// `board_and_panel` with `extra_width` beside the board's column as well (a lesson's
+    /// chapters).
+    pub fn board_and_panel_beside(
+        &self,
+        extra_width: Pixels,
+        around: Pixels,
+        window: &Window,
+    ) -> (Pixels, Length) {
+        let side = self.board_size_around(extra_width, px(0.), around, window);
         (side, self.fixed(side + around))
     }
 

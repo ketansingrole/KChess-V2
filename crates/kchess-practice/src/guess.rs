@@ -27,6 +27,7 @@ use crate::game::view;
 use crate::live_game::LiveGameHandle;
 use crate::position_engine::{EngineLook, PositionEngine};
 use crate::theme::Palette;
+use crate::voice::moves::{Access, Action, BoardBar, Turn, VoiceMoves, board_bar};
 use crate::widgets::{self, Pill, Tone};
 use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding, tab_bar_height};
 use kchess_ui::icon;
@@ -172,6 +173,8 @@ pub struct GuessMoves {
     board: Entity<ChessBoard>,
     layout: PlayLayout,
     move_box: crate::game::surface::MoveBox,
+    /// A guess said aloud, beside the move box as on the game pages.
+    voice: VoiceMoves,
     pgn: Entity<TextareaState>,
     finder: Entity<GameFinder>,
     look: EngineLook,
@@ -214,6 +217,11 @@ impl GuessMoves {
                 }
             }),
             typed,
+            cx.subscribe(
+                &crate::voice::handle(cx),
+                |this, _, event: &crate::voice::VoiceEvent, cx| this.voice_heard(event, cx),
+            ),
+            cx.observe(&crate::voice::handle(cx), |_, _, cx| cx.notify()),
             cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
                 if let ClientEvent::Event(CoreEvent::Analysis(update)) = event {
                     this.engine_update(update, cx);
@@ -249,6 +257,7 @@ impl GuessMoves {
             board,
             layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             move_box,
+            voice: VoiceMoves::new(crate::voice::VoiceSource::Guess, cx),
             pgn,
             finder,
             look: EngineLook::default(),
@@ -404,6 +413,86 @@ impl GuessMoves {
         if let Some(uci) = self.move_box.take(position.as_ref(), window, cx) {
             self.guess(uci, cx);
         }
+    }
+
+    /// The position to guess from, as voice reads a move in it.
+    fn setup_now(&self) -> Setup {
+        self.game
+            .as_ref()
+            .and_then(|game| view::position_at(&game.setup, &game.moves, self.ply))
+            .map(|position| Setup {
+                variant: Variant::Standard,
+                fen: kchess_domain::rules::make_fen(&position),
+            })
+            .unwrap_or_else(|| Setup::standard_at(""))
+    }
+
+    /// A spoken move is a guess at this position's move, taken while it is yours to guess.
+    fn sync_voice(&mut self, cx: &mut Context<Self>) {
+        let (context, line) = match &self.game {
+            Some(game) => (
+                format!(
+                    "{}:{}:{}:{}",
+                    game.white,
+                    game.black,
+                    self.ply,
+                    self.pending.is_some()
+                ),
+                Some(game.sans[..self.ply.min(game.sans.len())].to_vec()),
+            ),
+            None => (String::new(), None),
+        };
+        let listening = self.your_turn();
+        self.voice.sync(
+            &context,
+            line,
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Game).to_vec(),
+            listening,
+            cx,
+        );
+    }
+
+    fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
+        if !self.voice.owns(event) {
+            return;
+        }
+        let setup = self.setup_now();
+        let taking = self.your_turn();
+        let heard = match event {
+            crate::voice::VoiceEvent::Missed { heard, .. } => {
+                self.voice.missed(heard, &setup.fen, taking, cx);
+                return;
+            }
+            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        };
+        let turn = Turn {
+            taking,
+            idle: Some(if self.finished() {
+                "The game is over"
+            } else {
+                "Wait for your move to guess"
+            }),
+            immediate: false,
+        };
+        if let Action::Play(uci) = self.voice.hear(&heard, &setup, turn, |_| None, cx) {
+            self.guess(uci, cx);
+        }
+        cx.notify();
+    }
+
+    /// `text` said clearly, with voice on: as the recognizer's phrase reaches the page.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hear_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.voice.control.enabled = true;
+        let heard = crate::voice::Heard {
+            text: text.into(),
+            raw: text.into(),
+            confidence: 1.,
+            words: Vec::new(),
+            unclear: false,
+        };
+        let owner = self.voice.control.owner;
+        self.voice_heard(&crate::voice::VoiceEvent::Heard { owner, heard }, cx);
     }
 
     /// `uci` from the position at `ply` as `position::canonical_uci` writes it, so guesses, the
@@ -705,6 +794,7 @@ impl GuessMoves {
     }
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
+        self.sync_voice(cx);
         let Some(game) = &self.game else {
             return cx.notify();
         };
@@ -983,17 +1073,42 @@ impl GuessMoves {
         let Some(game) = self.game.clone() else {
             return div().into_any_element();
         };
-        let board_size = self.layout.board_size(window);
+        // The column holds the board and the move box's row.
+        let (board_size, panel_height) = self
+            .layout
+            .board_and_panel(widgets::STACK_GAP + widgets::PLAYER_LINE, window);
         let your_turn = self.your_turn();
         let finished = self.finished();
         let judged: Vec<Judged> = self.guesses.iter().map(|guess| guess.judged).collect();
         let summary = guess::summarize(&judged);
+        let entry = widgets::move_entry(&self.move_box.input, your_turn, palette);
+        let (voice, voice_line) = board_bar(
+            &self.voice,
+            cx.entity().downgrade(),
+            Access {
+                write: |this: &mut Self| &mut this.voice,
+                play: |this: &mut Self, uci, _, cx| this.guess(uci.to_string(), cx),
+            },
+            BoardBar {
+                id: "guess-voice",
+                hint: "Say “E four” or “Knight F three”",
+                active: your_turn,
+                listening: your_turn,
+                grammar: kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Game)
+                    .to_vec(),
+            },
+            cx,
+        );
         let board_column = v_flex()
+            .id("guess-column")
+            .test_support()
             .w(board_size)
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(crate::board::cached(&self.board))
-            .child(self.move_box.lone(your_turn, palette));
+            .child(widgets::input_row(entry, voice))
+            .children(voice_line)
+            .children(self.move_box.message(palette));
         let page = cx.entity().downgrade();
         let shown = self.viewing.unwrap_or(self.ply);
         // The moves so far, a guessed one marked as the engine found it.
@@ -1024,7 +1139,9 @@ impl GuessMoves {
             summary.guesses
         );
         let panel = widgets::side_panel(palette)
-            .h(self.layout.panel_height(board_size))
+            .id("guess-panel")
+            .test_support()
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)

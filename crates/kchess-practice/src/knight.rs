@@ -6,13 +6,14 @@ use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
-use gpui_kit::component::{IndexPath, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{IndexPath, Sizable as _, h_flex};
 use gpui_kit::*;
 use kchess_contracts::types::{CoordinateMode, RunKind};
 use serde_json::json;
 use shakmaty::{Color, Square};
 
 use super::run::{self, Drill, DrillRun, Stage};
+use super::under_board::{self, SquareBox};
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
 use crate::theme::Palette;
 use crate::voice::control::{BarSpec, Control, DrillLog};
@@ -73,6 +74,8 @@ pub struct KnightPaths {
     board: Entity<ChessBoard>,
     layout: PlayLayout,
     advance: Option<Task<()>>,
+    /// The square to jump to, typed under the board.
+    square_box: SquareBox,
     /// The square to jump to, said aloud.
     voice: Control,
     voice_log: DrillLog,
@@ -108,7 +111,9 @@ impl KnightPaths {
                 cx,
             )
         });
+        let (square_box, typed) = SquareBox::new(Self::jump, window, cx);
         let subscriptions = vec![
+            typed,
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
                 if let BoardEvent::Move(uci) = event
                     && let Some(to) = uci.get(2..4)
@@ -154,6 +159,7 @@ impl KnightPaths {
             board,
             layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             advance: None,
+            square_box,
             voice: Control::new(false, cx),
             voice_log: DrillLog::default(),
             starting: false,
@@ -200,6 +206,7 @@ impl KnightPaths {
         self.redraw(cx);
     }
 
+    /// Jump to `to`, clicked, typed or said; a square that is no knight jump from here is refused.
     fn jump(&mut self, to: &str, cx: &mut Context<Self>) {
         if !self.run.running()
             || self.knight == self.goal
@@ -280,6 +287,18 @@ impl KnightPaths {
         };
         self.voice.feedback = Some(feedback.into());
         cx.notify();
+    }
+
+    /// Where the knight stands.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn knight_for_test(&self) -> &str {
+        &self.knight
+    }
+
+    /// Where the knight is to go.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn goal_for_test(&self) -> &str {
+        &self.goal
     }
 
     fn skip(&mut self, cx: &mut Context<Self>) {
@@ -374,10 +393,12 @@ impl Render for KnightPaths {
             self.best,
             if self.best == 1 { "jump" } else { "jumps" }
         );
-        let board_size = self.layout.board_size(window);
+        let (board_size, panel_height) = self.layout.board_and_panel(under_board::height(), window);
         let length = Self::length(cx);
         let mut panel = widgets::side_panel(&palette)
-            .h(self.layout.panel_height(board_size))
+            .id("knight-panel")
+            .test_support()
+            .h(panel_height)
             .flex_1()
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
@@ -386,8 +407,11 @@ impl Render for KnightPaths {
                 h_flex()
                     .justify_between()
                     .gap(px(8.))
+                    // The line wraps rather than push the toggles past a narrow panel's edge.
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
                             .text_size(px(12.))
                             .text_color(palette.text_muted)
                             .child("Reach the green square in the fewest moves"),
@@ -409,22 +433,6 @@ impl Render for KnightPaths {
                 move |seconds, _, cx| crate::prefs::set(cx, LENGTH, seconds),
                 &palette,
             ))
-            .child(
-                self.voice.bar(
-                    cx.entity().downgrade(),
-                    |this: &mut Self| &mut this.voice,
-                    BarSpec {
-                        id: "knight-voice",
-                        hint: "Say the square to jump to, such as “F three”",
-                        active: running,
-                        grammar: kchess_domain::voice::grammar(
-                            kchess_domain::voice::Grammar::Coordinate,
-                        )
-                        .to_vec(),
-                    },
-                    cx,
-                ),
-            )
             .child(div().h(px(1.)).bg(palette.border));
         if running {
             panel = panel
@@ -529,13 +537,33 @@ impl Render for KnightPaths {
                         "Start"
                     })
                     .loading(self.starting)
-                    .on_click(cx.listener(|this, _, _, cx| this.start(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.square_box.clear(window, cx);
+                        this.start(cx)
+                    })),
             );
         }
-        let board_column = v_flex()
-            .w(board_size)
-            .flex_none()
-            .child(crate::board::cached(&self.board));
+        let (voice, voice_line) = self.voice.board_bar(
+            cx.entity().downgrade(),
+            |this: &mut Self| &mut this.voice,
+            BarSpec {
+                id: "knight-voice",
+                hint: "Say the square to jump to, such as “F three”",
+                active: running,
+                grammar: kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Coordinate)
+                    .to_vec(),
+            },
+            cx,
+        );
+        let movable = running && self.knight != self.goal;
+        let row = under_board::row(Some((&self.square_box, movable)), Some(voice), &palette);
+        let board_column = under_board::column(
+            "knight-column",
+            board_size,
+            crate::board::cached(&self.board),
+            row,
+            voice_line,
+        );
         div().size_full().child(
             self.layout
                 .render("knight-paths", board_column, panel, window, cx),

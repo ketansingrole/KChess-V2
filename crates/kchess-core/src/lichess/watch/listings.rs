@@ -42,7 +42,7 @@ pub fn broadcast_summaries(entries: &[Value], section: BroadcastSection) -> Vec<
                 image: tour
                     .image
                     .map(String::from)
-                    .filter(|image| image.starts_with("https://image.lichess1.org/")),
+                    .filter(|image| lichess_image(image)),
                 round_id: round.as_ref().map(|round| round.id.0.clone()),
                 round_name: round.as_ref().map(|round| round.name.0.clone()),
                 ongoing: round.as_ref().is_some_and(|round| round.ongoing),
@@ -54,6 +54,22 @@ pub fn broadcast_summaries(entries: &[Value], section: BroadcastSection) -> Vec<
             })
         })
         .collect()
+}
+
+/// The hosts Lichess serves its pictures from: `image.lichess.org`, and the older
+/// `image.lichess1.org`, which now sends there. Only these covers are kept; the listing named
+/// the first since 2026, so keeping only the second dropped every cover.
+const IMAGE_HOSTS: [&str; 2] = ["image.lichess.org", "image.lichess1.org"];
+
+/// Whether `url` is an https address on one of Lichess's picture hosts.
+fn lichess_image(url: &str) -> bool {
+    reqwest::Url::parse(url).is_ok_and(|url| {
+        url.scheme() == "https"
+            && url.port().is_none()
+            && url
+                .host_str()
+                .is_some_and(|host| IMAGE_HOSTS.contains(&host))
+    })
 }
 
 /// An entry of a listing: a tournament and, unless null, its current round.
