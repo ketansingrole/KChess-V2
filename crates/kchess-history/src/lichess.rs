@@ -910,7 +910,7 @@ pub fn game_row(
         .px(px(12.))
         .py(px(if detailed { 12. } else { 8. }))
         .gap(px(12.))
-        .rounded(radii::MD)
+        .rounded(radii::BOX)
         .text_size(px(13.))
         .cursor_pointer()
         .pressable(palette)

@@ -401,7 +401,7 @@ impl Render for VoiceHistory {
                 .min_w(px(110.))
                 .px(px(12.))
                 .py(px(8.))
-                .rounded(radii::LG)
+                .rounded(radii::BOX)
                 .bg(palette.elevated)
                 .child(
                     div()

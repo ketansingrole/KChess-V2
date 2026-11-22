@@ -342,7 +342,7 @@ impl Render for CreateArena {
                     h_flex()
                         .gap(px(8.))
                         .p(px(12.))
-                        .rounded(radii::MD)
+                        .rounded(radii::BOX)
                         .bg(palette.accented)
                         .text_size(px(13.))
                         .child(icon("eye").size(px(16.)).flex_none())

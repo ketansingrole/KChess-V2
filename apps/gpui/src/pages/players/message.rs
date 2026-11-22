@@ -88,7 +88,7 @@ impl Render for MessageDialog {
                     h_flex()
                         .gap(px(8.))
                         .p(px(12.))
-                        .rounded(radii::MD)
+                        .rounded(radii::BOX)
                         .bg(crate::theme::tint(palette.warning, 10.))
                         .text_size(px(13.))
                         .child(icon("key-round").size(px(16.)).text_color(palette.warning))

@@ -253,7 +253,7 @@ impl Render for ImportDialog {
                 h_flex()
                     .gap(px(8.))
                     .p(px(12.))
-                    .rounded(radii::MD)
+                    .rounded(radii::BOX)
                     .bg(crate::theme::tint(palette.warning, 12.))
                     .text_size(px(13.))
                     .child(icon("triangle-alert").size(px(14.)))

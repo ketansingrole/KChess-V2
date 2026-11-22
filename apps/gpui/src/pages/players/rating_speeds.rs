@@ -330,7 +330,7 @@ impl RatingSpeeds {
                 }
             })
             .on_click(cx.listener(move |this, _, _, cx| this.toggle(key.clone(), cx)))
-            .child(div().size(px(10.)).rounded(radii::XS).map(|swatch| {
+            .child(div().size(px(10.)).rounded(radii::SMALL).map(|swatch| {
                 if hidden {
                     swatch.border_1().border_color(palette.dimmed)
                 } else {

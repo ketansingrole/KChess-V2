@@ -580,7 +580,7 @@ impl Render for PuzzleHistory {
                     .px(px(12.))
                     .py(px(8.))
                     .gap(px(12.))
-                    .rounded(radii::MD)
+                    .rounded(radii::BOX)
                     .text_size(px(13.))
                     .hover(|row| row.bg(palette.accented))
                     .child(badge)

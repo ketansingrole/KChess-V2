@@ -928,6 +928,49 @@ fn validates_watch_targets_and_broadcast_queries() {
     assert!(session(json!("3")).is_err());
 }
 
+/// Lichess's listing names its covers on `image.lichess.org` (as it did on 2026-11-22); only
+/// `image.lichess1.org` was kept, so no broadcast showed its picture.
+#[test]
+fn broadcast_covers_on_either_lichess_picture_host_are_kept() {
+    let cover = "https://image.lichess.org/display?fmt=webp&h=400&op=thumbnail&path=l8Q7G0nSOaPd.webp&w=800&sig=0f0e6de6ad747cabe47e48b0f18eb43b46ffdc95";
+    let entry = |id: &str, image: &str| {
+        json!({
+            "tour": { "id": id, "name": "Championship", "image": image },
+            "round": { "id": "round123", "name": "Game 1", "ongoing": true }
+        })
+    };
+    let found = broadcast_summaries(
+        &[
+            entry("tour0001", cover),
+            entry(
+                "tour0002",
+                "https://image.lichess1.org/display?path=old.webp",
+            ),
+            entry(
+                "tour0003",
+                "http://image.lichess.org/display?path=plain.webp",
+            ),
+            entry(
+                "tour0004",
+                "https://image.lichess.org.example.com/cover.webp",
+            ),
+            entry("tour0005", "https://image.lichess.org:8443/cover.webp"),
+        ],
+        BroadcastSection::Active,
+    );
+    let images: Vec<_> = found.iter().map(|found| found.image.as_deref()).collect();
+    assert_eq!(
+        images,
+        [
+            Some(cover),
+            Some("https://image.lichess1.org/display?path=old.webp"),
+            None,
+            None,
+            None
+        ]
+    );
+}
+
 #[test]
 fn broadcast_summaries_classify_scheduled_rounds_and_keep_trusted_images() {
     let entries = [

@@ -1273,6 +1273,86 @@ mod tests {
         assert!(toolbar, "an open tour has its toolbar");
     }
 
+    /// Broadcasts show their covers. Lichess names them on `image.lichess.org`, which the core
+    /// dropped (it kept only `image.lichess1.org`); the old host now sends to the new one, which
+    /// the app refused to follow. A cover Lichess refuses leaves its placeholder and is logged.
+    #[gpui_kit::test]
+    fn broadcasts_show_their_covers(cx: &mut gpui_kit::TestAppContext) {
+        const NEW: &str = "https://image.lichess.org/display?fmt=webp&h=400&op=thumbnail&path=new.png&w=800&sig=0f0e";
+        const OLD: &str =
+            "https://image.lichess1.org/display?h=400&op=thumbnail&path=old.png&w=800&sig=9ff3";
+        const REFUSED: &str = "https://image.lichess.org/display?path=refused.png";
+        /// A 1×1 PNG.
+        const PNG: &[u8] = &[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        let tour = |id: &str, image: &str| {
+            serde_json::json!({
+                "tour": { "id": id, "name": format!("Open {id}"), "image": image },
+                "round": { "id": "roundid1", "name": "Round 1", "ongoing": true }
+            })
+        };
+        let listing = serde_json::json!({
+            "active": [tour("tourid01", NEW), tour("tourid02", OLD), tour("tourid03", REFUSED)],
+            "upcoming": [],
+            "past": { "currentPageResults": [] }
+        });
+        let server = kchess_testkit::Server::start(move |request, out| {
+            match (request.path(), request.query("path").as_deref()) {
+                ("/api/broadcast/top", _) => kchess_testkit::json(out, 200, &listing),
+                ("/display", Some("new.png")) => {
+                    kchess_testkit::respond(out, 200, "image/png", PNG)
+                }
+                // As image.lichess1.org answers now.
+                ("/display", Some("old.png")) => {
+                    let head = kchess_testkit::sized_head(
+                        301,
+                        &[(
+                            "Location",
+                            "https://image.lichess.org/display?h=400&op=thumbnail&path=new.png&w=800&sig=9ff3",
+                        )],
+                        0,
+                    );
+                    std::io::Write::write_all(out, head.as_bytes())
+                }
+                // A challenge page in place of the picture.
+                ("/display", Some("refused.png")) => kchess_testkit::respond(
+                    out,
+                    403,
+                    "text/html; charset=UTF-8",
+                    b"<!DOCTYPE html><html></html>",
+                ),
+                _ => kchess_testkit::respond(out, 404, "text/plain", b""),
+            }
+        })
+        .expect("a stand-in Lichess");
+        let mut app =
+            kchess_board::testing::Started::with_lichess(cx, Some(server.base().to_string()));
+        let before = kchess_app::tests::logged_in("app");
+        let window = app.cx().add_window(WatchPage::new);
+        window
+            .update(app.cx(), |page, _, cx| {
+                page.tab = Tab::Broadcasts;
+                page.broadcasts.load(cx);
+            })
+            .expect("the window");
+        let covers = app.with_window(|_, cx| crate::remote_image::handle(cx));
+        // Each frame draws the cards, which ask for their covers.
+        app.wait_for("the covers", |_, cx| {
+            window.update(cx, |_, window, _| window.refresh()).ok();
+            let covers = covers.read(cx);
+            use crate::remote_image::probe::{arrived, failed};
+            arrived(covers, NEW) && arrived(covers, OLD) && failed(covers, REFUSED)
+        });
+        app.wait_for("the refusal logged", |_, _| {
+            kchess_app::tests::logged_in("app") > before
+        });
+    }
+
     /// Watch follows the live game: engine help (the engine's arrows, the grid's evaluation bars)
     /// only while it is allowed, and its own feed stops while a game holds the connection.
     #[gpui_kit::test]
