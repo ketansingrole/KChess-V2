@@ -23,7 +23,7 @@ use crate::voice::moves::{
 };
 use crate::widgets::{self, Tone};
 use kchess_domain::voice::PuzzleCommand;
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar_height};
 use kchess_ui::icon;
 
 const GROUPS: [&str; 3] = ["Basic mates", "Pawn endings", "Rook endings"];
@@ -115,7 +115,7 @@ impl EndgameDrills {
             board,
             move_box,
             voice: VoiceMoves::new(crate::voice::VoiceSource::Endgames, cx),
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             _subscriptions: subscriptions,
         };
         run::load_summary(RunKind::Endgame, cx, |this, summary, cx| {

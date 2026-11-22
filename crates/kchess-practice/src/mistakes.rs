@@ -20,7 +20,7 @@ use crate::puzzle_board::{PuzzleBoard, PuzzleBoardEvent};
 use crate::theme::{Palette, judgment_color};
 use crate::widgets;
 use kchess_nav::page::Page;
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding, tab_bar_height};
 use kchess_ui::icon;
 
 /// Answered right this many times in a row, a position is next due in four days or more: learned
@@ -156,7 +156,7 @@ impl Mistakes {
             show_all: false,
             now: kchess_games::now_ms(),
             puzzle,
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             _clock: clock,
             _subscriptions: subscriptions,
         };

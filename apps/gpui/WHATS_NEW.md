@@ -16,7 +16,7 @@ refuses to release with nothing there.
 - **Matching corners**: buttons, menus, dialogs, cards and panels now round their corners just like the board, as on Lichess. Boards in study and opening cards follow the card's edge, and Settings and the promotion picker stay inside their rounded corners.
 - **Roomier broadcasts**: Watch → Broadcasts fills your window with live and upcoming tournaments, their pictures larger on wide screens, finished ones in a compact list below, and a round's boards grow to use the width too.
 - **Broadcast alerts**: tap the bell on a broadcast, or pick rounds from its Round alerts menu, and KChess tells you when a round starts, even while it's in the background. Clicking the alert opens the round. Your alerts are listed on Broadcasts, where you can remove them.
-- **Fixes**: Broadcasts show their pictures again. If a study chapter couldn't be saved when you quit, Retry now saves it. The opening explorer offers Connect Lichess or Try again, and looks again on its own when it can. Small buttons are easier to click. Plus many smaller fixes.
+- **Fixes**: Watch TV shows its moves at once, and Broadcasts show their pictures again. If a study chapter couldn't be saved when you quit, Retry now saves it. The opening explorer offers Connect Lichess or Try again. Small buttons are easier to click. Plus many smaller fixes.
 
 ## 2026.11.8 (2026-11-21)
 

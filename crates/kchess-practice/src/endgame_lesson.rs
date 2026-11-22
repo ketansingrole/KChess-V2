@@ -29,7 +29,7 @@ use crate::voice::moves::{
 use crate::widgets::{self, Tone};
 use kchess_domain::training::endgames::san_from;
 use kchess_domain::voice::PuzzleCommand;
-use kchess_nav::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_nav::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar_height};
 use kchess_ui::icon;
 
 /// The chapters' column beside the board, and the page width below which it goes under it.
@@ -221,7 +221,7 @@ impl EndgameLesson {
             board,
             move_box,
             voice: VoiceMoves::new(crate::voice::VoiceSource::Endgames, cx),
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             _subscriptions: subscriptions,
         };
         EngineMove::check(cx);

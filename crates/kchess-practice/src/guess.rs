@@ -29,7 +29,7 @@ use crate::position_engine::{EngineLook, PositionEngine};
 use crate::theme::Palette;
 use crate::voice::moves::{Access, Action, BoardBar, Turn, VoiceMoves, board_bar};
 use crate::widgets::{self, Pill, Tone};
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding, tab_bar_height};
 use kchess_ui::icon;
 
 const SIDE: &str = "kchess:guess-side";
@@ -255,7 +255,7 @@ impl GuessMoves {
             engine_ready: None,
             error: None,
             board,
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             move_box,
             voice: VoiceMoves::new(crate::voice::VoiceSource::Guess, cx),
             pgn,

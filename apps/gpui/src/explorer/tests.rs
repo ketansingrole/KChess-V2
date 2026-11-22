@@ -31,8 +31,12 @@ fn a_lookup_for_another_database_does_not_land_on_the_player_tab(
 fn a_refusal_while_help_was_held_back_is_looked_up_again(cx: &mut gpui_kit::TestAppContext) {
     use kchess_contracts::{CoreError, ErrorKind};
     let mut app = Harness::start(cx);
+    // Help starts unverified until the core answers what it lends, which a loaded machine
+    // answered after the window opened: the test read it too soon.
+    app.wait_for("engine help to be lent", |_, cx| {
+        crate::online::handle(cx).read(cx).assistance_allowed()
+    });
     let (explorer, asked) = app.with_window(|window, cx| {
-        assert!(crate::online::handle(cx).read(cx).assistance_allowed());
         let explorer = cx.new(|cx| PositionExplorer::new(Layout::List, window, cx));
         let asked = explorer.update(cx, |explorer, _| {
             explorer.failure = Some(CoreError::new("Held back.").with_kind(ErrorKind::Withheld));

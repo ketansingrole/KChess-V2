@@ -20,7 +20,7 @@ use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent, VoiceOutcome, VoiceSource};
 use crate::widgets::{self, Tone};
 use kchess_games::random_unit;
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar_height};
 use kchess_ui::icon;
 
 const DEFAULT_SECONDS: u32 = 60;
@@ -157,7 +157,7 @@ impl KnightPaths {
             notice: None,
             level_select,
             board,
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             advance: None,
             square_box,
             voice: Control::new(false, cx),
