@@ -61,6 +61,8 @@ pub struct Core {
     /// The battery reading the engine scheduler consults.
     pub(crate) battery: Arc<Battery>,
     battery_started: AtomicBool,
+    /// The watch that tells the player when a broadcast round they are alerted to starts.
+    pub(crate) broadcast_alerts: crate::lichess::watch::alerts::AlertWatch,
     pub(crate) ctx: EngineContext,
     pub(crate) search: Search,
     pub(crate) analysis: Analysis,
@@ -235,6 +237,7 @@ impl Core {
             database,
             battery,
             battery_started: AtomicBool::new(false),
+            broadcast_alerts: Default::default(),
             ctx,
             search,
             analysis,
@@ -456,6 +459,16 @@ impl Core {
         self.database.hold_execution().await
     }
 
+    /// Tests only: the broadcast alert watch looks at every alerted tournament now, and this
+    /// returns once it has.
+    #[doc(hidden)]
+    pub async fn look_at_broadcast_alerts_for_tests(&self) {
+        let ticket = self.broadcast_alerts.look_now();
+        while self.broadcast_alerts.served() < ticket {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+
     /// Tests only: the profile's database, to seed and read it with the store's typed calls.
     #[doc(hidden)]
     pub fn database_for_tests(&self) -> &Arc<Database> {
@@ -477,6 +490,16 @@ impl Core {
             self.battery.refresh();
             self.battery.start_refreshing();
             self.reviews.setup_reviews(Arc::new(self.review_bridge()));
+            // On the tracker, so closing the core waits for it to stop.
+            self.broadcast_alerts.start(
+                &self.tracker,
+                crate::lichess::watch::alerts::Watching {
+                    database: Arc::clone(&self.database),
+                    lichess: Arc::clone(self.services.lichess()),
+                    host: Arc::clone(&self.host),
+                    lifetime: self.services.lifetime(),
+                },
+            );
         }
     }
 

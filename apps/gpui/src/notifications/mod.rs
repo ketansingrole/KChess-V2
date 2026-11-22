@@ -95,6 +95,9 @@ fn open_from(tag: &str, action: Option<&str>, cx: &mut App) {
     if let Some(game) = tag.strip_prefix(CONFIRM_TAG) {
         return confirm_move(tag, game, action, cx);
     }
+    if let Some(place) = tag.strip_prefix(BROADCAST_TAG) {
+        return open_broadcast_round(place, cx);
+    }
     show_page(NotificationKind::from_key(tag).and_then(game_page), cx);
 }
 
@@ -108,6 +111,69 @@ fn show_page(page: Option<Page>, cx: &mut App) {
                 crate::shell::open(page, window, cx);
             }
         });
+    }
+}
+
+/// A broadcast round's notification's tag: this, then `tour/round`.
+const BROADCAST_TAG: &str = "broadcast:";
+
+/// Alert the player when a broadcast round they asked to be alerted to starts (the core tells
+/// each round once), for as long as KChess runs, with or without a window.
+pub fn alert_on_broadcasts(cx: &mut App) {
+    let events = cx.global::<crate::core::AppCore>().events.clone();
+    cx.subscribe(&events, |_, event: &crate::core::ClientEvent, cx| {
+        if let crate::core::ClientEvent::Event(
+            kchess_contracts::CoreEvent::BroadcastRoundStarted(started),
+        ) = event
+        {
+            broadcast_round(started, cx);
+        }
+    })
+    .detach();
+}
+
+/// Alert the player that `started`'s round is live; clicking it opens the round on Watch.
+pub fn broadcast_round(
+    started: &kchess_contracts::types::BroadcastRoundStarted,
+    cx: &mut App,
+) -> Outcome {
+    let tag = format!("{BROADCAST_TAG}{}/{}", started.tour_id, started.round_id);
+    let announcement = Announcement {
+        kind: NotificationKind::Broadcast,
+        title: started.tour_name.clone(),
+        body: format!("{} has started", started.round_name),
+        link: NotificationLink::BroadcastRound {
+            round: started.round_id.clone(),
+            game: String::new(),
+        },
+        key: Some(tag.clone()),
+    };
+    alert(announcement, Some((tag, Vec::new())), cx)
+}
+
+/// KChess comes forward on Watch at the broadcast round `place` (`tour/round`) names, opening a
+/// window when it had none (in the background, in the tray or menu bar).
+fn open_broadcast_round(place: &str, cx: &mut App) {
+    let Some((_, round)) = place.split_once('/') else {
+        return show_page(Some(Page::Watch), cx);
+    };
+    let round = round.to_string();
+    cx.activate(true);
+    if cx.windows().is_empty() && cx.has_global::<crate::startup::Started>() {
+        crate::open_main_window(cx);
+    }
+    if let Some(window) = cx.windows().into_iter().next() {
+        // A window closing meanwhile leaves nothing to open it in.
+        window
+            .update(cx, |_, window, cx| {
+                window.activate_window();
+                let link = kchess_domain::links::BroadcastLink::Round {
+                    round,
+                    game: String::new(),
+                };
+                crate::pages::watch::open_broadcast(link, window, cx);
+            })
+            .ok();
     }
 }
 
@@ -370,7 +436,8 @@ fn category(settings: &Settings, kind: NotificationKind) -> bool {
         NotificationKind::GameEvents => core.notify_game_events,
         NotificationKind::ComputerMove => core.notify_computer_move,
         NotificationKind::Challenge => core.notify_challenges,
-        NotificationKind::Test => true,
+        // The player turned the broadcast's bell on for this.
+        NotificationKind::Broadcast | NotificationKind::Test => true,
     }
 }
 
@@ -390,7 +457,7 @@ fn game_page(kind: NotificationKind) -> Option<Page> {
         | NotificationKind::LowTime
         | NotificationKind::GameEvents => Some(Page::Online),
         NotificationKind::ComputerMove => Some(Page::Computer),
-        NotificationKind::Challenge | NotificationKind::Test => None,
+        NotificationKind::Challenge | NotificationKind::Broadcast | NotificationKind::Test => None,
     }
 }
 

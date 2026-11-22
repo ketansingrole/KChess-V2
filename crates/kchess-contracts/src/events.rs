@@ -43,6 +43,7 @@ impl EventPayload for LobbyState {}
 impl EventPayload for WatchState {}
 impl EventPayload for Box<WatchFrame> {}
 impl EventPayload for BroadcastUpdate {}
+impl EventPayload for BroadcastRoundStarted {}
 impl EventPayload for Box<ChallengeInfo> {}
 impl EventPayload for CoreSettings {}
 impl EventPayload for ProfileChange {}
@@ -114,6 +115,9 @@ core_events! {
     WatchState = "watch:state" (WatchState),
     WatchFrame = "watch:frame" (Box<WatchFrame>),
     WatchBroadcast = "watch:broadcast" (BroadcastUpdate),
+    /// A broadcast round the player asked to be alerted to went live (`broadcastAlerts`), told
+    /// once; frontends decide how to alert.
+    BroadcastRoundStarted = "broadcast:round-started" (BroadcastRoundStarted),
     /// A challenge that was not pending before; frontends decide how to alert.
     ChallengeReceived = "challenge:received" (Box<ChallengeInfo>),
     SettingsSaved = "settings:saved" (CoreSettings),

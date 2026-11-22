@@ -448,6 +448,7 @@ mod tests {
             ProfileArea::Puzzles => "puzzle_db.rs",
             ProfileArea::VoiceHistory | ProfileArea::Engine => "pages/settings",
             ProfileArea::ViewPreferences => "prefs.rs",
+            ProfileArea::Broadcasts => "kchess-watch broadcasts.rs: the alerts shown",
             ProfileArea::Notifications => "apps/gpui notifications/centre.rs",
         }
     }

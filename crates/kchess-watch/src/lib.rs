@@ -253,10 +253,23 @@ impl WatchPage {
                     ClientEvent::Event(CoreEvent::Analysis(update)) => {
                         this.engine_update(update, cx)
                     }
+                    // A round went live: its alert may have ended.
+                    ClientEvent::Event(CoreEvent::BroadcastRoundStarted(_)) => this.load_alerts(cx),
                     ClientEvent::Reconnected => this.reconnected(window, cx),
                     _ => {}
                 },
             ),
+            // Another window, or the core's watch, changed the alerts.
+            {
+                let page = cx.entity().downgrade();
+                core::profile_changes(
+                    cx,
+                    &[kchess_contracts::types::ProfileArea::Broadcasts],
+                    move |cx| {
+                        page.update(cx, |page, cx| page.load_alerts(cx)).ok();
+                    },
+                )
+            },
             // The player's own game pauses the engine and leaves an explored line.
             cx.observe(&online, |this, online, cx| {
                 if !online.read(cx).assistance_allowed() {
@@ -328,6 +341,7 @@ impl WatchPage {
         self.load_channels(cx);
         self.refresh_presence(cx);
         self.load_broadcasts(cx);
+        self.load_alerts(cx);
         self.resume(window, cx);
         self.start_ticking(cx);
         self.read_engine_status(cx);

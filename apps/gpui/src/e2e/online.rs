@@ -144,6 +144,99 @@ fn watch_shows_its_feed_failing_and_the_following_and_broadcasts(
     assert!(app.enabled("watch-try-again"));
 }
 
+/// A broadcast's bell alerts you to its rounds: the alert is listed on Broadcasts until you
+/// remove it, and the bell shows it.
+#[gpui_kit::test]
+fn a_broadcasts_bell_lists_its_alert_until_removed(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = open(cx, "Watch", true);
+    app.click(super::tab(
+        "watch-tabs",
+        crate::pages::watch::Tab::Broadcasts,
+    ));
+    let bell = ("broadcast-bell", 1usize);
+    assert_eq!(app.find(bell).label(), Some("Alert me when a round starts"));
+    app.click(bell);
+    app.find(("broadcast-alert", 0usize));
+    assert_eq!(
+        app.find(bell).label(),
+        Some("Stop round alerts"),
+        "the bell shows the alert"
+    );
+    let kept = app.with_window(|_, cx| {
+        cx.global::<crate::core::AppCore>()
+            .request(kchess_contracts::calls::BroadcastAlerts {})
+    });
+    let kept = app
+        .cx
+        .foreground_executor()
+        .block_test(kept)
+        .expect("the alerts");
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].tour_name, "KChess Open");
+    assert_eq!(kept[0].round_id, None, "every round");
+
+    app.click(("broadcast-alert-remove", 0usize));
+    app.wait_gone(("broadcast-alert", 0usize));
+    assert_eq!(app.find(bell).label(), Some("Alert me when a round starts"));
+}
+
+/// A round's alert names the broadcast and the round, and clicking it opens that round on Watch.
+#[gpui_kit::test]
+fn a_broadcast_rounds_alert_opens_the_round(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::{BROADCAST_ROUNDS, BROADCAST_TOUR};
+    let mut app = Harness::start(cx);
+    app.set_online(true);
+    let tag = format!("broadcast:{BROADCAST_TOUR}/{}", BROADCAST_ROUNDS[1]);
+    // The system's notifications are drawn by the app on Windows and Linux alone.
+    #[cfg(any(windows, target_os = "linux"))]
+    {
+        app.cx.update(|cx| {
+            crate::settings::change(cx, |s| {
+                s.frontend.notifications_enabled = true;
+                s.frontend.notify_background = true;
+            })
+        });
+        gpui_kit::VisualTestContext::from_window(app.window, &app.cx).deactivate_window();
+        app.with_window(|_, cx| {
+            let started = kchess_contracts::types::BroadcastRoundStarted {
+                tour_id: BROADCAST_TOUR.into(),
+                tour_name: "KChess Open".into(),
+                round_id: BROADCAST_ROUNDS[1].into(),
+                round_name: "Round 2".into(),
+            };
+            crate::notifications::broadcast_round(&started, cx);
+        });
+        let shown =
+            app.wait_for_notification("the round's alert", |shown| shown.tag.as_ref() == tag);
+        assert_eq!(shown.title.as_ref(), "KChess Open");
+        assert_eq!(shown.body.as_ref(), "Round 2 has started");
+        // Kept under the top bar's bell too, pointing at the round.
+        app.wait_for("the alert in the notification centre", |_, cx| {
+            crate::notifications::centre::handle(cx)
+                .read(cx)
+                .entries()
+                .iter()
+                .any(|entry| {
+                    entry.link
+                        == kchess_contracts::types::NotificationLink::BroadcastRound {
+                            round: BROADCAST_ROUNDS[1].into(),
+                            game: String::new(),
+                        }
+                })
+        });
+    }
+    app.cx
+        .simulate_system_notification_response(gpui_kit::SystemNotificationResponse {
+            tag: tag.into(),
+            action_id: None,
+        });
+    app.wait_for_page(Page::Watch);
+    app.wait_for("the round", |_, cx| {
+        crate::shell::view::<crate::pages::watch::WatchPage>(cx)
+            .is_some_and(|watch| watch.read(cx).broadcast_round() == BROADCAST_ROUNDS[1])
+    });
+}
+
 #[gpui_kit::test]
 fn a_player_lookup_checks_the_name_and_survives_a_failed_request(
     cx: &mut gpui_kit::TestAppContext,

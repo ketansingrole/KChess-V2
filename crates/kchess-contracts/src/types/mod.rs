@@ -148,6 +148,8 @@ pub enum ProfileArea {
     Usage,
     Engine,
     ViewPreferences,
+    /// The broadcast alerts (`broadcastAlerts`).
+    Broadcasts,
     Notifications,
 }
 
