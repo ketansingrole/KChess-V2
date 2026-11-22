@@ -3,9 +3,12 @@ name: Dependabot hack
 # files written from those: the workspace hack and the lock, the hack's hold list in
 # dependabot.yml and the fuzz targets' own lock. `cargo xtask check` refuses each out of date, and
 # Dependabot cannot run cargo-hakari, so every such update needed a hand (2026-11-18, 11-20). This
-# writes them (`cargo xtask hack`) and commits them to the pull request. CI then tests that commit:
-# a push by GITHUB_TOKEN starts no `pull_request` run, so this starts ci.yml on the branch, as a
-# pull request onto its base, and that run's `ci-passed` is the commit's.
+# writes them (`cargo xtask hack`) and commits them to the pull request. CI then tests that commit.
+# GitHub holds the `pull_request` runs a push by GITHUB_TOKEN starts (`action_required`, with no
+# jobs), and the pull request shows each workflow's newest run, so a held CI hid a passing run
+# started by hand and left the pull request with no checks (#388, 2026-11-22). This approves the
+# held runs, which then test the commit as the pull request's own; only when none is held does it
+# start ci.yml on the branch, as a pull request onto its base.
 on:
   pull_request:
 
@@ -21,6 +24,8 @@ jobs:
   write:
     if: github.event.pull_request.user.login == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/cargo/')
     runs-on: ubuntu-latest
+    # Its slowest green run took three minutes.
+    timeout-minutes: 15
     permissions:
       contents: read
     outputs:
@@ -65,9 +70,11 @@ jobs:
     needs: write
     if: needs.write.outputs.changed == 'true'
     runs-on: ubuntu-latest
+    # Its wait for the held runs gives up after three minutes.
+    timeout-minutes: 10
     permissions:
       contents: write
-      # `gh workflow run`.
+      # Approving the held runs, or `gh workflow run`.
       actions: write
     steps:
       # The token is not kept in the checkout: only the push below is given it.
@@ -106,4 +113,30 @@ jobs:
           # Refused when Dependabot pushed since: its push starts this workflow again.
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
             push "https://github.com/$REPOSITORY.git" "HEAD:refs/heads/$BRANCH"
-          gh workflow run ci.yml --ref "$BRANCH" -f base="$BASE"
+          sha="$(git rev-parse HEAD)"
+          # The held runs appear a few seconds after the push; three minutes is the deadline.
+          held() {
+            gh api "repos/$REPOSITORY/actions/runs?head_sha=$sha&status=action_required" \
+              --jq '.workflow_runs[] | select(.event == "pull_request") | "\(.id) \(.path)"'
+          }
+          for _ in $(seq 36); do
+            runs="$(held)"
+            echo "$runs" | grep -q ' \.github/workflows/ci\.yml$' && break
+            sleep 5
+          done
+          if ! echo "$runs" | grep -q ' \.github/workflows/ci\.yml$'; then
+            echo "No held CI run for $sha: starting ci.yml on the branch."
+            gh workflow run ci.yml --ref "$BRANCH" -f base="$BASE"
+            exit 0
+          fi
+          # Every workflow's run is created with CI's; this one's own held run is left: it would
+          # write nothing, and in this concurrency group it would cancel this run.
+          sleep 5
+          held | while read -r id path; do
+            [ "$path" != .github/workflows/dependabot-hack.yml ] || continue
+            echo "Approving held run $id ($path)."
+            gh api -X POST "repos/$REPOSITORY/actions/runs/$id/approve" > /dev/null || {
+              echo "::error::GitHub refused to approve run $id: approve it on the pull request"
+              exit 1
+            }
+          done
