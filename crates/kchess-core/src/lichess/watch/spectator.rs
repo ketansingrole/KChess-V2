@@ -497,7 +497,7 @@ impl Inner {
                         let missed = track
                             .raw
                             .last()
-                            .and_then(|before| Some(fen_ply(&raw)?.checked_sub(fen_ply(before)?)?));
+                            .and_then(|before| fen_ply(&raw)?.checked_sub(fen_ply(before)?));
                         if moved {
                             track.feed.push(key);
                             track.raw.push(raw);

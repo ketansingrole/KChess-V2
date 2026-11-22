@@ -7,7 +7,7 @@ use crate::fixtures;
 use crate::support::wait_until;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -295,16 +295,12 @@ async fn a_slow_export_leaves_the_board_live_and_its_moves_catch_up_when_it_answ
 /// the moves come with the next export Lichess answers.
 #[tokio::test]
 async fn a_rate_limited_export_says_why_and_the_moves_come_once_lichess_answers() {
-    let limited = Arc::new(AtomicUsize::new(1));
+    // Only the first export is refused.
+    let limited = Arc::new(AtomicBool::new(true));
     let tv = Tv::new({
         let limited = Arc::clone(&limited);
         move |_, ply| {
-            if limited
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                    left.checked_sub(1)
-                })
-                .is_ok()
-            {
+            if limited.swap(false, Ordering::SeqCst) {
                 Reply::WithHeaders(
                     429,
                     vec![("Retry-After", "1".into())],

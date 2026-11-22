@@ -82,7 +82,7 @@ impl Search<'_> {
         }
         for m in pos.legal_moves() {
             let mut next = pos.clone();
-            next.play_unchecked(m.clone());
+            next.play_unchecked(m);
             self.path.push(m);
             let visited = self.visit(&next, plies - 1);
             self.path.pop();
