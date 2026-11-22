@@ -8,6 +8,7 @@ use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
 use gpui_kit::{App, AppContext as _, Bounds, ElementId, Pixels, Point, Role, Window, px, size};
 
 use crate::pages::Page;
+use kchess_nav::page::PageTab;
 
 use super::{Harness, SIZES};
 
@@ -539,24 +540,72 @@ fn moved_since(
         .collect()
 }
 
-/// The pages whose first frame is checked: not Settings, which opens as a dialog and slides in,
-/// nor Practice and Puzzles. Their pill tabs, above the board, wrap to a height nothing knows
-/// before they are laid out (two lines at 1320×880 beside the sidebar, one in a wider window),
-/// so the first frame sizes the board from the wrong area: its inset from the page as it last
-/// measured, or before that the page's whole height, a few pixels off for one frame. Practice
-/// showed it once Coordinates' board, with the row under it, came to fit the height rather than
-/// the width. A stopgap until "Practice and Puzzles boards size from their own measured area",
-/// which checks both again.
-fn checked_pages() -> Vec<Page> {
+/// What keeps a tab as its page's tab.
+type KeepTab = Box<dyn Fn(&mut App)>;
+
+/// A page as the first-frame tests open it: at the tab it was left on, or at `tab`.
+struct Opening {
+    page: Page,
+    /// The tab's name, and what keeps it as the page's tab.
+    tab: Option<(&'static str, KeepTab)>,
+}
+
+impl Opening {
+    fn name(&self) -> String {
+        match &self.tab {
+            Some((tab, _)) => format!("{}'s {tab} tab", self.page.info().label),
+            None => self.page.info().label.to_string(),
+        }
+    }
+
+    /// Opens the page, at its tab, in one update: the next frame is its first.
+    fn open(&self, window: &mut Window, cx: &mut App) {
+        if let Some((_, keep)) = &self.tab {
+            keep(cx);
+        }
+        crate::shell::open(self.page, window, cx);
+    }
+}
+
+/// Every page whose first frame is checked, not Settings, which opens as a dialog and slides in;
+/// Practice and Puzzles at each of their tabs, whose boards sit under a row of tabs that takes
+/// two lines in a narrower window.
+fn checked_openings() -> Vec<Opening> {
+    fn tabs<T: PageTab>(page: Page) -> Vec<Opening> {
+        T::ALL
+            .iter()
+            .map(|&tab| Opening {
+                page,
+                tab: Some((
+                    tab.info().label,
+                    Box::new(move |cx: &mut App| tab.store(cx)),
+                )),
+            })
+            .collect()
+    }
     Page::all()
-        .filter(|&page| !matches!(page, Page::Settings | Page::Practice | Page::Puzzles))
+        .filter(|&page| page != Page::Settings)
+        .flat_map(|page| match page {
+            Page::Practice => tabs::<kchess_practice::Tab>(page),
+            Page::Puzzles => tabs::<kchess_puzzles::Tab>(page),
+            _ => vec![Opening { page, tab: None }],
+        })
         .collect()
 }
 
+/// Leaves the page `opening` opens, when it shows, so opening it is opening it again.
+fn leave(app: &mut Harness, opening: &Opening) {
+    if app.cx.update(|cx| crate::shell::current_page(cx)) == Some(opening.page) {
+        app.with_window(|window, cx| crate::shell::open(Page::Dashboard, window, cx));
+        app.settle();
+    }
+}
+
 /// Where the elements of each page's first frame have moved to once the page has settled.
-fn moved_after_first_frame(app: &mut Harness, page: Page, moved: &mut Vec<String>) {
-    let first = first_frame(app, |window, cx| crate::shell::open(page, window, cx));
-    moved.extend(moved_since(app, &first, page.info().label));
+fn moved_after_first_frame(app: &mut Harness, opening: &Opening, moved: &mut Vec<String>) {
+    leave(app, opening);
+    let first = first_frame(app, |window, cx| opening.open(window, cx));
+    moved.extend(moved_since(app, &first, &opening.name()));
 }
 
 /// Open every page for the first time at `width`×`height`, its data loading as it shows.
@@ -567,9 +616,9 @@ fn first_openings_hold_still(cx: &mut gpui_kit::TestAppContext, (width, height):
     app.settle();
     let mut moved = Vec::new();
     // Home is open from the start.
-    for page in checked_pages() {
-        if page != Page::Dashboard {
-            moved_after_first_frame(&mut app, page, &mut moved);
+    for opening in checked_openings() {
+        if opening.page != Page::Dashboard {
+            moved_after_first_frame(&mut app, &opening, &mut moved);
         }
     }
     assert!(
@@ -592,26 +641,96 @@ fn a_page_holds_still_as_it_first_loads_in_a_narrow_window(cx: &mut gpui_kit::Te
     first_openings_hold_still(cx, SIZES[0]);
 }
 
-#[gpui_kit::test]
-fn a_page_opens_laid_out_for_the_window_it_opens_in(cx: &mut gpui_kit::TestAppContext) {
-    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
-    let pages = checked_pages();
+/// Opens each of `openings` at `sizes.0`, then again after the window changed to `sizes.1`,
+/// and back: each first frame after the change is laid out for the window it opens in.
+fn reopenings_hold_still(
+    app: &mut Harness,
+    openings: &[Opening],
+    sizes: [(f32, f32); 2],
+) -> Vec<String> {
     let mut moved = Vec::new();
-    for (was, now) in [(SIZES[0], SIZES[2]), (SIZES[2], SIZES[0])] {
+    for (was, now) in [(sizes[0], sizes[1]), (sizes[1], sizes[0])] {
         app.cx
             .simulate_window_resize(app.window, size(px(was.0), px(was.1)));
-        for &page in &pages {
-            app.with_window(|window, cx| crate::shell::open(page, window, cx));
+        for opening in openings {
+            leave(app, opening);
+            app.with_window(|window, cx| opening.open(window, cx));
             app.settle();
         }
         app.cx
             .simulate_window_resize(app.window, size(px(now.0), px(now.1)));
         app.settle();
         // Each page last drawn at the other size, its own measures from then.
-        for &page in &pages {
-            moved_after_first_frame(&mut app, page, &mut moved);
+        for opening in openings {
+            moved_after_first_frame(app, opening, &mut moved);
         }
     }
+    moved
+}
+
+#[gpui_kit::test]
+fn a_page_opens_laid_out_for_the_window_it_opens_in(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    let moved = reopenings_hold_still(&mut app, &checked_openings(), [SIZES[0], SIZES[2]]);
+    assert!(
+        moved.is_empty(),
+        "moved after their first frame:\n  {}",
+        moved.join("\n  ")
+    );
+}
+
+/// Short windows, where a board under a page's tabs is as large as the height left under them,
+/// and Practice's tabs take one line in the wider and two in the narrower: its boards and
+/// Puzzles' were sized for the whole page, or for the tabs' rows at the other width, and moved
+/// once laid out (Coordinates' 16px).
+const SHORT: [(f32, f32); 2] = [(1600., 760.), (1320., 760.)];
+
+/// How tall the tabs `id` of the page open now are, from the first's top to the last's foot.
+fn tab_row_height(app: &mut Harness, id: &'static str, count: usize) -> Pixels {
+    app.with_window(|window, _| {
+        let first = window.find(ElementId::NamedInteger(id.into(), 0)).bounds();
+        let last = window
+            .find(ElementId::NamedInteger(id.into(), count as u64 - 1))
+            .bounds();
+        last.bottom() - first.top()
+    })
+}
+
+#[gpui_kit::test]
+fn a_board_under_tabs_opens_sized_for_the_room_left_under_them(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    let under_tabs: Vec<Opening> = checked_openings()
+        .into_iter()
+        .filter(|opening| matches!(opening.page, Page::Practice | Page::Puzzles))
+        .collect();
+    // The tabs do wrap between the two widths, or this checks nothing.
+    let mut heights = Vec::new();
+    for (width, height) in SHORT {
+        app.cx
+            .simulate_window_resize(app.window, size(px(width), px(height)));
+        app.with_window(|window, cx| crate::shell::open(Page::Practice, window, cx));
+        app.settle();
+        heights.push(tab_row_height(
+            &mut app,
+            "practice-tabs",
+            kchess_practice::Tab::ALL.len(),
+        ));
+    }
+    assert!(
+        heights[0] < heights[1],
+        "Practice's tabs at {SHORT:?}: {heights:?}"
+    );
+    // First openings, then each opened again after the window changed.
+    let (width, height) = SHORT[1];
+    app.cx
+        .simulate_window_resize(app.window, size(px(width), px(height)));
+    app.with_window(|window, cx| crate::shell::open(Page::Dashboard, window, cx));
+    app.settle();
+    let mut moved = Vec::new();
+    for opening in &under_tabs {
+        moved_after_first_frame(&mut app, opening, &mut moved);
+    }
+    moved.extend(reopenings_hold_still(&mut app, &under_tabs, SHORT));
     assert!(
         moved.is_empty(),
         "moved after their first frame:\n  {}",

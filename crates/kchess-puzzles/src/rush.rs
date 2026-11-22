@@ -23,7 +23,7 @@ use crate::game::puzzle::PuzzleStatus;
 use crate::puzzle_board::{PuzzleBoard, PuzzleBoardEvent};
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::{self, KeyboardFocus as _, Tone};
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar_height};
 use kchess_ui::icon;
 
 /// The opponent replies faster in a run.
@@ -144,7 +144,7 @@ impl PuzzleRush {
             warned: false,
             generation: Epoch::default(),
             board,
-            layout: PlayLayout::default(),
+            layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
             timers: Vec::new(),
             stats,
             _subscriptions: subscriptions,
