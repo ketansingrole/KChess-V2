@@ -8,7 +8,7 @@ refuses to release with nothing there.
 
 ## Unreleased
 
-- **Fixes**: updates download on their own again when KChess couldn't reach the internet as it opened, when you press Check for updates, or when you turn on Download updates in the background. Plus many smaller fixes.
+- **Fixes**: updates download on their own again after KChess opened offline, after Check for updates, or once you turn on Download updates in the background. Settings → Updates no longer hides “Update available” behind its buttons. Plus many smaller fixes.
 
 ## 2026.11.9 (2026-11-22)
 
