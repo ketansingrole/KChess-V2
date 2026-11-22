@@ -50,7 +50,7 @@ block2 = "0.6"
 # Microphone access status, and whether the output is a Bluetooth one: what Windows keeps in the
 # registry (already in Cargo.lock through GPUI).
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-registry = "0.6"
+windows-registry = "0.100"
 # The "playing" state some Bluetooth speakers wait for before they play a sound
 # (`src/sound/playing.rs`): Windows' media controls and its list of what is playing. The crate is
 # already in Cargo.lock through GPUI; these features are this crate's alone.
