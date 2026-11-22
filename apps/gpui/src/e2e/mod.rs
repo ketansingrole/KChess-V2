@@ -21,6 +21,7 @@ mod history;
 mod live_game;
 mod local;
 mod memory;
+mod notification_centre;
 mod online;
 mod openings;
 mod palette;

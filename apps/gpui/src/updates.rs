@@ -377,6 +377,19 @@ impl Updates {
             self.staged = None;
         }
         self.phase = Phase::Available;
+        // Kept in the notification centre once per version: found again on the next start,
+        // it stays as it was, read or not.
+        crate::notifications::centre::record(
+            kchess_contracts::types::NotificationInput {
+                title: format!("KChess {version} is available"),
+                link: kchess_contracts::types::NotificationLink::Update {
+                    version: version.clone(),
+                },
+                key: Some("update".into()),
+                ..Default::default()
+            },
+            cx,
+        );
         self.version = Some(version);
         self.released = release.published_at.clone();
         self.release = Some(release);
