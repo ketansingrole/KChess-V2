@@ -8,7 +8,7 @@ refuses to release with nothing there.
 
 ## Unreleased
 
-- **Fixes**: on Windows and Linux, closing the window keeps KChess in the system tray when you chose Keep running, instead of quitting. Settings → Updates no longer hides “Update available” behind the Download update button.
+- **Fixes**: closing the window on Windows and Linux keeps KChess in the system tray when you chose Keep running. Updates download on their own again after an offline start or Check for updates. Settings → Updates no longer hides “Update available”. Plus many smaller fixes.
 
 ## 2026.11.9 (2026-11-22)
 

@@ -295,7 +295,7 @@ impl SettingsPage {
                 .label("Check for updates")
                 .loading(phase == Phase::Checking)
                 .disabled(phase == Phase::Checking)
-                .on_click(act(|updates, cx| updates.check(false, cx)))
+                .on_click(act(|updates, cx| updates.check(cx)))
         });
         let link = |id: &'static str, label: &'static str| {
             div()
