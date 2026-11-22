@@ -249,7 +249,10 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &Zoom, cx| on_window(cx, |window, _| window.zoom_window()));
     cx.on_action(|_: &ToggleFullScreen, cx| on_window(cx, |window, _| window.toggle_fullscreen()));
     // Closing the last window quits, which saves and closes the core, or keeps KChess running in
-    // the background, as the person chose (`background`).
+    // the background, as the person chose (`background`). That choice alone quits: GPUI's own
+    // default quits on Windows and Linux once the last window closes, even when KChess keeps
+    // running in the tray.
+    cx.set_quit_mode(QuitMode::Explicit);
     cx.on_window_closed(|cx, _| crate::background::window_closed(cx))
         .detach();
     cx.set_menus([

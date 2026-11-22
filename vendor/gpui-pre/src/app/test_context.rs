@@ -228,6 +228,13 @@ impl TestAppContext {
         self.test_platform.set_idle_sleep_prevention_delay(delay);
     }
 
+    // KChess patch: how many times the app asked the platform to quit (`App::quit`, or GPUI's
+    // own quit when the last window closes under its `QuitMode`).
+    /// Returns how many times the app asked the platform to quit.
+    pub fn quit_requests(&self) -> usize {
+        self.test_platform.quit_requests()
+    }
+
     /// Makes subsequent idle sleep prevention acquisitions fail or succeed.
     pub fn set_idle_sleep_prevention_fails(&self, fails: bool) {
         self.test_platform.set_idle_sleep_prevention_fails(fails);

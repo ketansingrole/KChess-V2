@@ -8,6 +8,8 @@ refuses to release with nothing there.
 
 ## Unreleased
 
+- **Fixes**: on Windows and Linux, closing the window keeps KChess in the system tray when you chose Keep running, instead of quitting.
+
 ## 2026.11.9 (2026-11-22)
 
 - **Keep KChess running**: close the window and KChess can stay in the menu bar or system tray, still telling you about challenges and your moves. Answer a challenge or open a puzzle from its menu. Choose this, and opening KChess when you log in, in Settings → Notifications.

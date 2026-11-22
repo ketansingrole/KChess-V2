@@ -75,8 +75,6 @@ pub struct Background {
     events: futures::channel::mpsc::UnboundedSender<tray::Event>,
     _clicks: Task<()>,
     _subscriptions: Vec<Subscription>,
-    /// Closing the window asked the app to quit (read by the tests).
-    pub(crate) quit_asked: bool,
 }
 
 impl Global for Background {}
@@ -106,7 +104,6 @@ pub fn init(cx: &mut App) {
         events,
         _clicks: task,
         _subscriptions: subscriptions,
-        quit_asked: false,
     });
     refresh(cx);
 }
@@ -413,7 +410,6 @@ pub fn window_closed(cx: &mut App) {
     if keeps_running(cx) {
         went_to_background(cx);
     } else {
-        cx.global_mut::<Background>().quit_asked = true;
         cx.quit();
     }
 }

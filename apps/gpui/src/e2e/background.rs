@@ -5,7 +5,7 @@
 use serde_json::json;
 
 use super::Harness;
-use crate::background::{Background, menu_labels, pick};
+use crate::background::{menu_labels, pick};
 
 /// The close choice's pills: Keep running, then Quit.
 const KEEP_RUNNING: (&str, usize) = ("close-action", 0);
@@ -38,8 +38,10 @@ fn choose_close(app: &mut Harness, background: bool) {
     app.click("settings-close");
 }
 
-fn quit_asked(app: &mut Harness) -> bool {
-    app.cx.read(|cx| cx.global::<Background>().quit_asked)
+/// How many times KChess asked to quit: by its own choice, or by GPUI's once the last window
+/// closed, which on Windows and Linux used to quit a KChess kept running in the tray.
+fn quits(app: &mut Harness) -> usize {
+    app.cx.quit_requests()
 }
 
 fn still_running_shown(app: &mut Harness) -> usize {
@@ -55,9 +57,9 @@ fn still_running_shown(app: &mut Harness) -> usize {
 fn closing_quits_when_quit_is_chosen(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     choose_close(&mut app, false);
-    assert!(!quit_asked(&mut app));
+    assert_eq!(quits(&mut app), 0);
     app.close_window();
-    assert!(quit_asked(&mut app), "closing the window quits");
+    assert_eq!(quits(&mut app), 1, "closing the window quits, once");
     assert_eq!(still_running_shown(&mut app), 0);
 }
 
@@ -69,7 +71,7 @@ fn closing_keeps_running_and_the_menu_opens_it_again(cx: &mut gpui_kit::TestAppC
     let mut app = Harness::start(cx);
     choose_close(&mut app, true);
     app.close_window();
-    assert!(!quit_asked(&mut app), "still running");
+    assert_eq!(quits(&mut app), 0, "still running");
     assert_eq!(still_running_shown(&mut app), 1);
     // The core still answers with no window open.
     assert_eq!(app.saved_settings()["closeAction"], stored(true));
@@ -88,7 +90,7 @@ fn closing_keeps_running_and_the_menu_opens_it_again(cx: &mut gpui_kit::TestAppC
     app.adopt_window();
 
     app.close_window();
-    assert!(!quit_asked(&mut app));
+    assert_eq!(quits(&mut app), 0);
     assert_eq!(still_running_shown(&mut app), 1, "told once");
     app.cx.update(|cx| pick("Puzzles", None, cx));
     app.adopt_window();
@@ -97,6 +99,7 @@ fn closing_keeps_running_and_the_menu_opens_it_again(cx: &mut gpui_kit::TestAppC
     app.close_window();
     app.cx.update(|cx| pick("Open KChess", None, cx));
     app.adopt_window();
+    assert_eq!(quits(&mut app), 0);
 }
 
 /// Without the menu bar or tray icon, nothing shows KChess runs on Windows and Linux, so closing
@@ -111,7 +114,7 @@ fn without_the_icon_closing_quits_where_nothing_else_shows_it(cx: &mut gpui_kit:
     assert!(!app.cx.read(crate::background::tray_shown));
     app.click("settings-close");
     app.close_window();
-    assert_eq!(quit_asked(&mut app), !cfg!(target_os = "macos"));
+    assert_eq!(quits(&mut app), usize::from(!cfg!(target_os = "macos")));
 }
 
 /// Opening at login writes the system's login entry, which starts KChess quietly, and turning it

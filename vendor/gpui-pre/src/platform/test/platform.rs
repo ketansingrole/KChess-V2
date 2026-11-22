@@ -53,6 +53,8 @@ pub(crate) struct TestPlatform {
     idle_sleep_prevention_count: Arc<AtomicUsize>,
     idle_sleep_prevention_delay: Cell<Duration>,
     idle_sleep_prevention_fails: Cell<bool>,
+    // KChess patch: quit requests are counted, so a test sees an app asked to quit.
+    quit_requests: Cell<usize>,
     headless_renderer_factory:
         Option<Box<dyn Fn() -> anyhow::Result<Option<Box<dyn PlatformHeadlessRenderer>>>>>,
     weak: Weak<Self>,
@@ -260,6 +262,8 @@ impl TestPlatform {
             idle_sleep_prevention_count: Arc::new(AtomicUsize::new(0)),
             idle_sleep_prevention_delay: Cell::new(Duration::ZERO),
             idle_sleep_prevention_fails: Cell::new(false),
+            // KChess patch: see `quit_requests`.
+            quit_requests: Cell::new(0),
             weak: weak.clone(),
             opened_url: Default::default(),
             system_notifications: Default::default(),
@@ -426,6 +430,11 @@ impl TestPlatform {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    // KChess patch: how many times the app asked to quit.
+    pub(crate) fn quit_requests(&self) -> usize {
+        self.quit_requests.get()
+    }
+
     pub(crate) fn set_idle_sleep_prevention_fails(&self, fails: bool) {
         self.idle_sleep_prevention_fails.set(fails);
     }
@@ -533,7 +542,10 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn quit(&self) {}
+    fn quit(&self) {
+        // KChess patch: counted instead of ignored (`quit_requests`).
+        self.quit_requests.set(self.quit_requests.get() + 1);
+    }
 
     fn restart(&self, path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
         if let Some(tx) = self.expect_restart.take() {
