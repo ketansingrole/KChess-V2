@@ -41,6 +41,14 @@ pub fn init(cx: &mut App) {
         changes: 0,
         _events: cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
             if let ClientEvent::Event(CoreEvent::PuzzleDbProgress(progress)) = event {
+                // A download that ended is no longer running, whatever an earlier status read
+                // said, and a read still on its way is out of date: a window that had read it
+                // busy kept showing it downloading, with a Cancel that did nothing, after the
+                // window that started it closed or it failed.
+                if progress.phase.is_terminal() {
+                    this.status.busy = false;
+                    this.changes += 1;
+                }
                 this.progress = Some(progress.clone());
                 cx.notify();
             }
@@ -174,7 +182,8 @@ impl PuzzleDb {
         .detach();
     }
 
-    fn busy(&self) -> bool {
+    /// Whether a download runs: the card then shows its progress and Cancel.
+    pub fn busy(&self) -> bool {
         self.status.busy
             || self
                 .progress

@@ -59,12 +59,33 @@ impl TournamentsApi for Core {
     ) -> Result<TournamentDetail> {
         let page = page.map_or(1, |page| page.0 as u32);
         let lichess = self.services.lichess();
-        let detail = tournaments::tournament(lichess, system, &id.0, &account.0, page).await?;
+        // Whether the account's membership was kept as the lookup began: one a join kept
+        // meanwhile (another window) is newer than this answer, which an answer from before the
+        // join erased, and pairings stopped keeping the account's stream open.
+        let was_kept = if system == TournamentSystem::Arena && !account.0.is_empty() {
+            let (tournament, name) = (id.0.clone(), account.0.clone());
+            let now = now_ms() as f64;
+            self.database
+                .read_async(move |ctx| library::joined_tournaments(ctx.host, ctx.db, now))
+                .await?
+                .iter()
+                .any(|entry| {
+                    entry.system == system && entry.id == tournament && entry.joined_by(&name)
+                })
+        } else {
+            false
+        };
+        let (detail, signed) =
+            tournaments::tournament_signed(lichess, system, &id.0, &account.0, page).await?;
         if system == TournamentSystem::Arena {
             // An arena that is over is over for every account.
             if detail.summary.status == TournamentStatus::Finished {
                 self.forget_tournament(system, &id.0, None).await?;
-            } else if !account.0.is_empty() && detail.me.as_ref().is_none_or(|me| me.withdraw) {
+            } else if was_kept
+                // An anonymous answer (the login unreadable) has no place for anyone.
+                && signed
+                && detail.me.as_ref().is_none_or(|me| me.withdraw)
+            {
                 // `me` is the looked-up account's place only: another account's stays.
                 self.forget_tournament(system, &id.0, Some(&account.0))
                     .await?;

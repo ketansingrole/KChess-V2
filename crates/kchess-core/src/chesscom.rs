@@ -456,11 +456,13 @@ impl Chesscom {
                     }
                 }
                 StatusCode::OK => {
-                    let games: Vec<Value> = Self::json(&answer)?
-                        .get("games")
-                        .and_then(Value::as_array)
-                        .map(Vec::as_slice)
-                        .unwrap_or_default()
+                    // A month without its list of games is not read as an empty one: a past
+                    // month saved so was marked imported and never asked for again.
+                    let body = Self::json(&answer)?;
+                    let listed = body.get("games").and_then(Value::as_array).ok_or_else(|| {
+                        CoreError::new("Chess.com sent an answer KChess cannot read.")
+                    })?;
+                    let games: Vec<Value> = listed
                         .iter()
                         .filter_map(|game| game_row(name, game))
                         .collect();

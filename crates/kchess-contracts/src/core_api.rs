@@ -559,10 +559,11 @@ core_api! {
             key: RepertoireKey,
             fen: Position
         ) -> RepertoireMisses;
+        /// Forget a repertoire's misses; answers the misses left and the ones removed (for Undo).
         #[writes(Repertoire)]
         ClearRepertoireMisses = "clearRepertoireMisses" fn clear_repertoire_misses(
             key: RepertoireKey
-        ) -> RepertoireMisses;
+        ) -> ClearedMisses;
         /// Put back a cleared repertoire's misses (Undo), added to any recorded since.
         #[writes(Repertoire)]
         RestoreRepertoireMisses = "restoreRepertoireMisses" fn restore_repertoire_misses(

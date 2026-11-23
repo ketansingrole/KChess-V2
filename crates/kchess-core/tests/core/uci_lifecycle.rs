@@ -117,6 +117,37 @@ async fn cancels_an_active_search_after_the_stop_acknowledgment() {
     engine.close();
 }
 
+/// A search cancelled as the engine finishes is cancelled, whichever the controller hears first:
+/// the engine's `bestmove` could win the race with the stop, and a stopped analysis was
+/// published as completed.
+#[tokio::test]
+async fn a_search_cancelled_as_it_finishes_is_cancelled() {
+    let host = support::host();
+    let hub = support::hub(&host);
+    for _ in 0..20 {
+        let engine = UciController::start(&hub, support::fake("search", None), HANDSHAKE)
+            .expect("spawn the fake engine");
+        engine.ready().await.expect("handshake");
+        let token = CancellationToken::new();
+        let cancels = token.clone();
+        // Cancelled on the search's last line, its `bestmove` right behind it.
+        let result = engine
+            .search(
+                "go depth 1",
+                move |line: &str| {
+                    if line.starts_with("info") {
+                        cancels.cancel();
+                    }
+                },
+                None,
+                Some(&token),
+            )
+            .await;
+        assert_eq!(result.unwrap_err(), search_cancelled());
+        engine.close();
+    }
+}
+
 /// A search whose future is dropped (its client went away and the call was aborted) still has a
 /// `bestmove` on the way, which would answer the next search on the process: the engine is
 /// failed and stopped, so the next search starts a fresh one.

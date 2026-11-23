@@ -187,9 +187,18 @@ impl State {
             .map(|(id, added)| (id.clone(), *added))
             .collect();
         for id in found {
-            if !self.finished.iter().any(|done| *done == id) {
-                let added = self.elsewhere.get(&id).copied().unwrap_or(began);
-                next.entry(id).or_insert(added);
+            if !self.finished.iter().any(|done| *done == id) && !next.contains_key(&id) {
+                // A game a check adds is a change of its own: a check that began before it and
+                // answers later without it keeps it. Stamped with the check's start, it was
+                // dropped by an older check of another window answering after this one.
+                let added = match self.elsewhere.get(&id) {
+                    Some(added) => *added,
+                    None => {
+                        self.elsewhere_changes += 1;
+                        self.elsewhere_changes
+                    }
+                };
+                next.insert(id, added);
             }
         }
         self.elsewhere = next;

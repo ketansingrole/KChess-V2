@@ -454,6 +454,41 @@ fn forgotten_mistakes_come_back_with_undo(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
+/// A miss another window recorded just before Forget mistakes, not yet read here, comes back
+/// with Undo too: Undo put back only this window's copy, and the other miss was lost.
+#[gpui_kit::test]
+fn undo_brings_back_a_miss_recorded_in_another_window(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_contracts::check::{Position, RepertoireKey};
+    let mut app = openings(cx);
+    open_kieseritzky(&mut app);
+    app.click("train-line");
+    app.click_square("d2", true);
+    app.click_square("d4", true);
+    wait_for_status(&mut app, "Not in your repertoire");
+    let core = app
+        .cx
+        .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
+    let misses = move || {
+        core.request_now(kchess_contracts::calls::Library {})
+            .map(|library| library.repertoire_misses)
+            .unwrap_or_default()
+    };
+    app.wait_for("the miss to be kept", |_, _| !misses().0.is_empty());
+    let key = misses().0[0].0.clone();
+    // Another window's miss, in the same repertoire; this window has not read it.
+    let other = "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1";
+    app.request(kchess_contracts::calls::RecordRepertoireMiss {
+        key: RepertoireKey(key.clone()),
+        fen: Position(other.into()),
+    });
+    app.click("forget-mistakes");
+    app.wait_for("the misses to be forgotten", |_, _| misses().0.is_empty());
+    app.click("undo-forget-mistakes");
+    app.wait_for("both misses to come back", |_, _| {
+        misses().get(&key).is_some_and(|table| table.0.len() == 2)
+    });
+}
+
 /// White's moves of the King's Gambit, 1. e4 e5 2. f4, with Black's reply between them.
 fn play_kings_gambit(app: &mut Harness) {
     app.click_square("e2", true);

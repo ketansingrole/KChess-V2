@@ -325,10 +325,12 @@ impl TreeView<'_> {
                 });
             }
             numbered = false;
+            // The node itself, not its move: a tree with two siblings of one move drew the second
+            // as the main line's alternatives again, without end.
             let is_main = parent
                 .children
                 .first()
-                .is_some_and(|main| main.uci == current.uci);
+                .is_some_and(|main| std::ptr::eq(main, current));
             if is_main && parent.children.len() > 1 {
                 if depth == 0 {
                     let rows: Vec<AnyElement> = parent.children[1..]

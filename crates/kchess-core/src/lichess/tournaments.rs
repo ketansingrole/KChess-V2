@@ -633,12 +633,27 @@ pub async fn tournament(
     account: &str,
     page: u32,
 ) -> CoreResult<TournamentDetail> {
+    Ok(tournament_signed(lichess, system, id, account, page)
+        .await?
+        .0)
+}
+
+/// `tournament`, and whether it was asked with the account's login: only then does its missing
+/// place (`me`) say the account is not in it.
+pub async fn tournament_signed(
+    lichess: &Lichess,
+    system: TournamentSystem,
+    id: &str,
+    account: &str,
+    page: u32,
+) -> CoreResult<(TournamentDetail, bool)> {
     let auth = lichess.optional_login(account, UsageKind::Tournament).await;
-    if system == TournamentSystem::Arena {
+    let detail = if system == TournamentSystem::Arena {
         arena_detail(lichess, id, page, &auth).await
     } else {
         swiss_detail(lichess, id, &auth).await
-    }
+    }?;
+    Ok((detail, auth.signed()))
 }
 
 async fn arena_detail(

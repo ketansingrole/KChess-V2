@@ -2057,6 +2057,50 @@ async fn a_check_of_every_account_settles_a_finish_that_went_unheard() {
     online.close();
 }
 
+/// A check of every account that began first and answers last, from before a bullet game
+/// began, leaves the game a later check found locked: two windows checking at once once let the
+/// older empty answer lend help in the middle of the game.
+#[tokio::test]
+async fn an_older_check_answering_last_keeps_a_game_a_newer_one_found() {
+    use kchess_contracts::types::Assistance;
+    let (release, gate) = watch::channel(false);
+    let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = Arc::clone(&asked);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/account/playing" => {
+            if count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                Reply::Gated(
+                    gate.clone(),
+                    Box::new(Reply::Json(200, json!({ "nowPlaying": [] }).to_string())),
+                )
+            } else {
+                Reply::Json(
+                    200,
+                    json!({ "nowPlaying": [
+                        { "gameId": "Else1234", "speed": "bullet", "compat": { "board": false } }
+                    ] })
+                    .to_string(),
+                )
+            }
+        }
+        _ => Reply::Hang,
+    })
+    .await;
+    let (_host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &_host, &store, &tokens);
+    let older = tokio::spawn({
+        let online = online.clone();
+        async move { online.ongoing().await }
+    });
+    fixture.requested("/api/account/playing", 1).await;
+    online.ongoing().await.expect("the newer check");
+    assert_eq!(online.assistance(), Assistance::LiveGame);
+    let _ = release.send(true);
+    older.await.unwrap().expect("the older check");
+    assert_eq!(online.assistance(), Assistance::LiveGame);
+    online.close();
+}
+
 /// The start of the game a challenge asked for reaches the window once, however often the
 /// event stream repeats it.
 #[tokio::test]

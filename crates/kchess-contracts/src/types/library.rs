@@ -20,6 +20,15 @@ pub struct Library {
     pub study_error: Option<String>,
 }
 
+/// A repertoire's misses cleared: every repertoire's misses left, and the cleared one's counts as
+/// they were stored, for Undo. The window that cleared knew only its own copy, so Undo once put
+/// back that copy and lost a miss another window had recorded meanwhile.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct ClearedMisses {
+    pub misses: RepertoireMisses,
+    pub removed: Keyed<serde_json::Number>,
+}
+
 /// The drills after adding a review's mistakes; `added` counts the new ones.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct MistakesAdded {

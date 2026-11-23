@@ -225,9 +225,10 @@ fn an_earlier_database_leaves_its_tokens_out_when_os_encryption_is_unavailable()
     assert_eq!(store.token("Erin"), None);
 }
 
-/// A login waiting to be sealed (`legacy_logins`) is no longer waited for once its player signed
-/// in again or removed the account: it never comes back over what they chose. One still waiting
-/// is due, and counted.
+/// The import records every login of the earlier database as waiting to be sealed
+/// (`legacy_logins`), its account disconnected until it is. One whose player signed in again or
+/// removed the account is given up on: it never comes back over what they chose, and it stays
+/// recorded until its plaintext is removed. One still waiting is due, and counted.
 #[test]
 fn a_waiting_login_gives_way_to_what_the_player_did_since() {
     let (_earlier, legacy) = earlier_database(
@@ -241,17 +242,21 @@ fn a_waiting_login_gives_way_to_what_the_player_did_since() {
          INSERT INTO lichess_tokens VALUES ('Erin', 'lip_erin');",
     );
     let store = Store::new(Some(legacy), Secrets::OFF);
-    store
+    let data = store
         .read(|c| games::load_app_data(c.db))
         .expect("imported");
-    for name in ["Carol", "Dave", "Erin"] {
-        store
-            .write_direct(|c| {
-                import::defer_legacy_login(c.db, name)?;
-                games::disconnect_account(c.db, name)
-            })
-            .expect("waiting");
-    }
+    assert!(
+        data["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|account| account["connected"] == json!(false)),
+        "{data}"
+    );
+    assert_eq!(
+        store.rows("SELECT COUNT(*) AS n FROM legacy_logins"),
+        [json!({ "n": 3 })]
+    );
     store
         .write_direct(|c| games::save_login(c.db, "Carol", &encrypt("lip_new")))
         .expect("Carol signs in");
@@ -269,8 +274,14 @@ fn a_waiting_login_gives_way_to_what_the_player_did_since() {
             .expect("due")
     };
     assert_eq!(due(&store), json!([["Erin"], ["Carol", "Dave"]]));
-    // Each is decided once: Carol and Dave are no longer waited for.
-    assert_eq!(due(&store), json!([["Erin"], []]));
+    // Carol and Dave are no longer waited for; their plaintext is still to remove.
+    assert_eq!(due(&store), json!([["Erin"], ["Carol", "Dave"]]));
+    let gone = vec![Some("Carol".to_string()), Some("Dave".to_string())];
+    store
+        .write_direct(|c| import::forget_legacy_logins(c.db, &gone))
+        .expect("removed");
+    // Tried at each of these starts, Erin's login is given up on and its plaintext goes too.
+    assert_eq!(due(&store), json!([[], ["Erin"]]));
     assert_eq!(
         store
             .read_direct(|c| games::token_ciphertext(c.db, "Carol"))
@@ -299,8 +310,10 @@ fn damaged_backups_are_read_as_no_backup_and_nothing_is_imported_from_them() {
     );
 }
 
+/// A NULL token is no login: the rest of the earlier database is imported. It rolled the whole
+/// import back when the import sealed the logins itself, and that profile was never imported.
 #[test]
-fn a_null_token_rolls_the_whole_earlier_import_back_when_encryption_is_available() {
+fn a_null_token_is_skipped_and_the_rest_imported() {
     let (_earlier, legacy) = earlier_database(
         "CREATE TABLE app_settings (key TEXT, value TEXT);
          INSERT INTO app_settings VALUES ('app.appearance_mode', 'dark');
@@ -314,7 +327,7 @@ fn a_null_token_rolls_the_whole_earlier_import_back_when_encryption_is_available
         store
             .read(|c| games::get_settings(c.db))
             .expect("getSettings")["appearance"],
-        json!("system")
+        json!("dark")
     );
     assert_eq!(
         usernames(
@@ -322,7 +335,7 @@ fn a_null_token_rolls_the_whole_earlier_import_back_when_encryption_is_available
                 .read(|c| games::load_app_data(c.db))
                 .expect("loadData")
         ),
-        Vec::<String>::new()
+        ["Frank"]
     );
 }
 
@@ -472,7 +485,7 @@ fn a_backup_whose_games_or_accounts_are_not_a_list_is_refused_in_plain_words() {
     fs::write(&backup, json!({ "games": "none" }).to_string()).expect("backup written");
     let refused = store
         .db
-        .write(|c| import::migrate(c, false).map(|_| ()))
+        .write(import::migrate)
         .expect_err("games that are not a list");
     assert_eq!(refused.message, "The old profile's games are not a list.");
     assert!(backup.exists());
@@ -486,7 +499,7 @@ fn a_backup_whose_games_or_accounts_are_not_a_list_is_refused_in_plain_words() {
     .expect("backup written");
     store
         .db
-        .write(|c| import::migrate(c, false).map(|_| ()))
+        .write(import::migrate)
         .expect("an import that fails is logged");
     assert!(
         store

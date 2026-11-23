@@ -101,6 +101,47 @@ struct Building {
     next: usize,
 }
 
+/// Puts `node` among `siblings`, merged into the sibling of the same move when there is one: its
+/// comments and NAGs join that sibling's, and its moves are merged the same way. A move is
+/// addressed by its path of moves, so a PGN variation repeating its main move (`1. e4 (1. e4 e5)`)
+/// made a second node no edit could reach: an edit of its note changed the main line's.
+fn adopt(siblings: &mut Vec<TreeNode>, node: TreeNode) {
+    // Merged a level at a time, not by recursing: two long identical lines are deep.
+    let mut work: Vec<(Vec<usize>, TreeNode)> = vec![(Vec::new(), node)];
+    while let Some((path, mut node)) = work.pop() {
+        let mut list = &mut *siblings;
+        for &at in &path {
+            list = &mut list[at].children;
+        }
+        let Some(at) = list.iter().position(|sibling| sibling.uci == node.uci) else {
+            list.push(node);
+            continue;
+        };
+        let same = &mut list[at];
+        for (into, from) in [
+            (&mut same.comments, node.comments.take()),
+            (&mut same.starting_comments, node.starting_comments.take()),
+        ] {
+            if let Some(from) = from {
+                into.get_or_insert_with(Vec::new).extend(from);
+            }
+        }
+        if let Some(nags) = node.nags.take() {
+            let into = same.nags.get_or_insert_with(Vec::new);
+            for nag in nags {
+                if !into.contains(&nag) {
+                    into.push(nag);
+                }
+            }
+        }
+        let mut inner = path;
+        inner.push(at);
+        for child in std::mem::take(&mut node.children).into_iter().rev() {
+            work.push((inner.clone(), child));
+        }
+    }
+}
+
 /// The game's moves under `root`, depth first; `None` as soon as the document is found invalid.
 fn walk(game: &Game, root: TreeNode, start: VariantPosition) -> Option<TreeNode> {
     let mut count = 0;
@@ -116,7 +157,7 @@ fn walk(game: &Game, root: TreeNode, start: VariantPosition) -> Option<TreeNode>
         let Some(&child) = top.moves.get(top.next) else {
             let done = stack.pop()?;
             match stack.last_mut() {
-                Some(parent) => parent.node.children.push(done.node),
+                Some(parent) => adopt(&mut parent.node.children, done.node),
                 None => return Some(done.node),
             }
             continue;
@@ -666,6 +707,31 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    /// A variation repeating its main move joins it: both notes and both continuations are kept,
+    /// and an edit by path reaches them. It was a second node of the same move that no path
+    /// reached, so editing its note changed the main line's.
+    #[test]
+    fn a_variation_repeating_its_main_move_joins_it() {
+        let tree =
+            TreeNode::from_pgn("1. e4 {Main} $1 (1. e4 {Alternative} $1 $3 e5) c5 *").unwrap();
+        assert_eq!(tree.children.len(), 1);
+        let e4 = &tree.children[0];
+        assert_eq!(
+            e4.comments.as_deref(),
+            Some(&["Main".to_string(), "Alternative".to_string()][..])
+        );
+        assert_eq!(e4.nags.as_deref(), Some(&[1, 3][..]));
+        let replies: Vec<&str> = e4.children.iter().map(|c| c.uci.as_str()).collect();
+        assert_eq!(replies, ["c7c5", "e7e5"]);
+        assert_eq!(tree.existing_path("e2e4 e7e5"), "e2e4 e7e5");
+        // Repeated deeper too, and repeated again inside the repeat.
+        let tree = TreeNode::from_pgn("1. e4 e5 2. Nf3 (2. Nf3 Nc6 (2... Nc6 3. Bb5)) *").unwrap();
+        let nf3 = &tree.children[0].children[0].children;
+        assert_eq!(nf3.len(), 1);
+        assert_eq!(nf3[0].children.len(), 1);
+        assert_eq!(nf3[0].children[0].children[0].uci, "f1b5");
     }
 
     /// The analysis board's edits through paths: adding, following, finding, promoting and

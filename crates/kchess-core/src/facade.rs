@@ -329,83 +329,14 @@ struct Migration {
 impl Migration {
     async fn run(self) -> Result<()> {
         let _running = self.running.lock().await;
-        // Asking the OS secret store can show a keychain prompt: only when tokens may be imported.
-        let pending = self
-            .database
-            .read_async(import::legacy_import_pending)
-            .await?;
-        let available = pending && self.capabilities.secrets_available().await?;
-        let legacy = self
-            .database
-            .write_async(move |ctx| import::migrate(ctx, available))
-            .await?;
-        if pending {
-            // Logins the import could not seal wait for a later start, which seals them then.
-            let mut sealed = Vec::new();
-            for entry in legacy {
-                let account = entry.account;
-                let stored = if available {
-                    self.seal(account.as_deref(), &entry.token).await
-                } else {
-                    Err(CoreError::new("The keychain is unavailable."))
-                };
-                match stored {
-                    Ok(()) => sealed.push(account),
-                    Err(cause) => match account {
-                        Some(account) => self.defer(account, &cause).await,
-                        // A login of no account is never asked for again.
-                        None => sealed.push(None),
-                    },
-                }
-            }
-            self.scrub(sealed).await
-        } else {
-            self.retry_deferred().await
-        }
+        self.database.write_async(import::migrate).await?;
+        // The earlier database's logins, recorded by its import, are sealed here: on the start
+        // that imported them, and on a later one when the keychain refused or the start ended.
+        self.retry_deferred().await
     }
 
-    /// Seals one login of the earlier database into this profile.
-    async fn seal(&self, account: Option<&str>, token: &str) -> Result<()> {
-        let encrypted = self.capabilities.encrypt(token).await?;
-        let owner = account.map(str::to_string);
-        self.database
-            .write_async(move |ctx| {
-                store::games::import_token_ciphertext(ctx.db, owner.as_deref(), &encrypted)
-            })
-            .await
-    }
-
-    /// A login the import could not seal: its account is disconnected, so it never shows
-    /// connected without a login, and a later start seals it (`legacy_logins`). Its imported
-    /// games stay: a logout would delete them. It was once scrubbed with the sealed ones, and the
-    /// keychain refusing once lost the login for good (2026-11-23).
-    async fn defer(&self, account: String, cause: &CoreError) {
-        self.host.log(
-            Level::Warn,
-            "store",
-            &format!(
-                "Legacy login of {account} not sealed yet: {}",
-                cause.message
-            ),
-        );
-        let name = account.clone();
-        let deferred = self
-            .database
-            .write_async(move |ctx| {
-                import::defer_legacy_login(ctx.db, &account)?;
-                store::games::disconnect_account(ctx.db, &account)
-            })
-            .await;
-        if let Err(cause) = deferred {
-            self.host.log(
-                Level::Warn,
-                "store",
-                &format!("Could not disconnect {name}: {}", cause.message),
-            );
-        }
-    }
-
-    /// Seals the logins an earlier start could not, and reconnects their accounts.
+    /// Seals the waiting logins of the earlier database and reconnects their accounts; a login
+    /// the keychain refuses waits for the next start (2026-11-23: one refusal once lost it).
     async fn retry_deferred(&self) -> Result<()> {
         let logins = self.database.write_async(import::due_legacy_logins).await?;
         let mut done = logins.done;
@@ -442,13 +373,22 @@ impl Migration {
         self.scrub(done).await
     }
 
-    /// The earlier database's plaintext copies of these logins go, sealed or given up on.
+    /// The earlier database's plaintext copies of these logins go, sealed or given up on; once
+    /// gone they are no longer recorded, and a removal that failed is tried on the next start.
     async fn scrub(&self, accounts: Vec<Option<String>>) -> Result<()> {
         if accounts.is_empty() {
             return Ok(());
         }
-        self.database
-            .read_async(move |ctx| import::scrub_legacy_tokens(ctx, &accounts))
-            .await
+        let removed = accounts.clone();
+        let gone = self
+            .database
+            .read_async(move |ctx| import::scrub_legacy_tokens(ctx, &removed))
+            .await?;
+        if gone {
+            self.database
+                .write_async(move |ctx| import::forget_legacy_logins(ctx.db, &accounts))
+                .await?;
+        }
+        Ok(())
     }
 }

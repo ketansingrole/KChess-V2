@@ -237,16 +237,23 @@ impl OnlineSession {
                 }
             };
             let id = challenge["id"].as_str().unwrap_or("").to_string();
-            // A server may finish creating the challenge just as cancellation arrives.
-            if handle.token.is_cancelled() {
+            // A server may finish creating the challenge just as cancellation arrives. Checked
+            // and kept under one lock: Cancel cancels the start's token under it and withdraws
+            // the pending challenge, so a challenge kept after a separate check was missed.
+            let kept = {
+                let mut st = self.st();
+                let kept = !handle.token.is_cancelled();
+                if kept && st.live.is_none() {
+                    st.pending_challenge = Some(id.clone()).filter(|id| !id.is_empty());
+                }
+                kept
+            };
+            if !kept {
                 if let Some((id, auth)) = unclaimed {
                     let this = self.clone();
                     tokio::spawn(async move { this.cancel_challenge(&id, &auth).await });
                 }
                 return Err(crate::lichess::aborted());
-            }
-            if self.st().live.is_none() {
-                self.st().pending_challenge = Some(id.clone()).filter(|id| !id.is_empty());
             }
             return Ok(StartResult {
                 id: Some(id),

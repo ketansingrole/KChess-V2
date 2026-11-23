@@ -212,6 +212,60 @@ async fn a_login_the_keychain_refused_is_sealed_on_a_later_start() {
     assert_eq!(plaintext(&legacy), 0, "gone once sealed");
 }
 
+/// A start that ended between the import and the sealing of its logins (KChess quit at the
+/// keychain's prompt) left Carol shown connected without a login, and her plaintext was never
+/// tried again: the next start found the profile imported. The import now records her login as
+/// waiting, with her account, in its own transaction.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_start_that_ended_after_the_import_seals_on_the_next() {
+    let earlier = tempfile::tempdir().unwrap();
+    let legacy = earlier_database(&earlier);
+    let dir = tempfile::tempdir().unwrap();
+    // The import alone, as a start that ended before it sealed anything.
+    {
+        let config = Config {
+            legacy_database_path: Some(legacy.clone()),
+            ..Config::new(dir.path().to_path_buf())
+        };
+        let database = Database::new(config, Arc::new(Sealer::default()));
+        let data = database
+            .write(|c| {
+                kchess_core::store::import::migrate(c)?;
+                games::load_app_data(c.db)
+            })
+            .expect("imported");
+        assert!(!data.accounts[0].connected, "{data:?}");
+        database.close();
+    }
+    let (carol, sealed) = start(dir.path(), &legacy, 0).await;
+    assert_eq!(carol["connected"], json!(true));
+    assert_eq!(sealed.as_deref(), Some("sealed:lip_carol"));
+    assert_eq!(plaintext(&legacy), 0);
+}
+
+/// An earlier database that cannot be read at a start (damaged, or held by another program) is
+/// not a login gone: it was forgotten, its plaintext kept for good. It waits for a start that can.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_login_unreadable_at_a_start_waits_for_the_next() {
+    let earlier = tempfile::tempdir().unwrap();
+    let legacy = earlier_database(&earlier);
+    let dir = tempfile::tempdir().unwrap();
+    let (carol, _) = start(dir.path(), &legacy, 1).await;
+    assert_eq!(carol["connected"], json!(false));
+    {
+        let kept = earlier.path().join("kept.db");
+        std::fs::rename(&legacy, &kept).unwrap();
+        std::fs::write(&legacy, b"not a database at all, not even close to one").unwrap();
+        let (carol, sealed) = start(dir.path(), &legacy, 0).await;
+        assert_eq!((carol["connected"].clone(), sealed), (json!(false), None));
+        std::fs::rename(&kept, &legacy).unwrap();
+    }
+    let (carol, sealed) = start(dir.path(), &legacy, 0).await;
+    assert_eq!(carol["connected"], json!(true));
+    assert_eq!(sealed.as_deref(), Some("sealed:lip_carol"));
+    assert_eq!(plaintext(&legacy), 0);
+}
+
 /// A keychain refused at every start is asked a few times only: then the plaintext login goes
 /// unsealed, and Carol stays disconnected until she signs in.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -219,8 +273,8 @@ async fn a_login_refused_at_every_start_is_given_up() {
     let earlier = tempfile::tempdir().unwrap();
     let legacy = earlier_database(&earlier);
     let dir = tempfile::tempdir().unwrap();
-    // The import, then each start that tries again.
-    for _ in 0..=kchess_core::store::import::LEGACY_LOGIN_ATTEMPTS {
+    // Each start tries, the importing one first.
+    for _ in 0..kchess_core::store::import::LEGACY_LOGIN_ATTEMPTS {
         let (carol, sealed) = start(dir.path(), &legacy, usize::MAX).await;
         assert_eq!((carol["connected"].clone(), sealed), (json!(false), None));
         assert_eq!(plaintext(&legacy), 1);

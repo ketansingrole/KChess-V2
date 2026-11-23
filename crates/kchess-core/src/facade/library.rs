@@ -6,7 +6,7 @@ use kchess_contracts::check::{
 };
 use kchess_contracts::core_api::LibraryApi;
 use kchess_contracts::types::{
-    Drill, JoinedTournament, Library, MistakeGame, MistakesAdded, NotificationEntry,
+    ClearedMisses, Drill, JoinedTournament, Library, MistakeGame, MistakesAdded, NotificationEntry,
     NotificationInput, RepertoireMisses, RepertoireSchedule, SessionDocument, SessionKind,
     StudyCommand, StudyCommandResult,
 };
@@ -122,7 +122,7 @@ impl LibraryApi for Core {
             .await
     }
 
-    async fn clear_repertoire_misses(&self, key: RepertoireKey) -> Result<RepertoireMisses> {
+    async fn clear_repertoire_misses(&self, key: RepertoireKey) -> Result<ClearedMisses> {
         self.database
             .write_async(move |ctx| library::clear_repertoire_misses(ctx.host, ctx.db, &key.0))
             .await

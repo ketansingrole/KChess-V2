@@ -194,6 +194,11 @@ impl std::fmt::Debug for Auth {
 impl Auth {
     /// The same caller with `token`'s login.
     #[must_use]
+    /// Whether the requests go with a login.
+    pub fn signed(&self) -> bool {
+        self.token.is_some()
+    }
+
     pub fn with_token(mut self, token: impl Into<String>) -> Auth {
         self.token = Some(token.into());
         self
