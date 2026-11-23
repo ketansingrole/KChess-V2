@@ -313,6 +313,69 @@ fn stop_child(app: &mut Option<Child>) -> Result {
     Ok(())
 }
 
+/// The executables a running app holds, in `binary`'s folder: Windows refuses a build that
+/// replaces one, but lets it be renamed while it runs. They are moved aside for the build and put
+/// back unless it made new ones, so a build that fails leaves the app running and startable.
+/// 2026-11-23: the watch stopped the app before building on Windows, and a build that failed left
+/// no app at all.
+#[derive(Default)]
+struct SetAside(Vec<(PathBuf, PathBuf)>);
+
+impl SetAside {
+    fn new(binary: &Path) -> Self {
+        let Some(folder) = binary.parent() else {
+            return Self::default();
+        };
+        let exe = std::env::consts::EXE_SUFFIX;
+        let mut moved = Vec::new();
+        for name in ["KChess", "kchess-service", "kchess-voice"] {
+            let path = folder.join(format!("{name}{exe}"));
+            let aside = folder.join(format!("{name}{exe}.watch-old"));
+            // One a previous build could not remove while it still ran.
+            remove_quietly(&aside);
+            if path.exists() {
+                match std::fs::rename(&path, &aside) {
+                    Ok(()) => moved.push((path, aside)),
+                    Err(cause) => say(&format!("Could not move {} aside: {cause}", path.display())),
+                }
+            }
+        }
+        Self(moved)
+    }
+
+    /// Puts back each executable the build did not make anew. The ones it replaced stay aside
+    /// until `remove`, once the app that runs them has stopped.
+    fn put_back(&mut self) {
+        self.0.retain(|(path, aside)| {
+            if path.exists() {
+                return true;
+            }
+            match std::fs::rename(aside, path) {
+                Ok(()) => false,
+                Err(cause) => {
+                    say(&format!("Could not put {} back: {cause}", path.display()));
+                    true
+                }
+            }
+        });
+    }
+
+    fn remove(self) {
+        for (_, aside) in self.0 {
+            remove_quietly(&aside);
+        }
+    }
+}
+
+/// Removes `path`, saying so only when it is there and stays.
+fn remove_quietly(path: &Path) {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => {}
+        Err(cause) => say(&format!("Could not remove {}: {cause}", path.display())),
+    }
+}
+
 /// Starts the app, then rebuilds and restarts it whenever a source changes, until it is quit or
 /// stopped. A build that fails leaves the running app alone, and the next save tries again.
 fn watch(profile: &Path, args: &[String]) -> Result {
@@ -341,14 +404,18 @@ fn watch(profile: &Path, args: &[String]) -> Result {
             continue;
         };
         known = changed;
-        // Windows cannot replace a running executable.
-        if cfg!(windows) {
-            stop_child(&mut app)?;
-        }
         let before = modified(&binary);
+        // Windows cannot replace a running executable, but can rename it.
+        let mut aside = if cfg!(windows) {
+            SetAside::new(&binary)
+        } else {
+            SetAside::default()
+        };
         let began = std::time::Instant::now();
         say("Rebuilding…");
-        match build() {
+        let built = build();
+        aside.put_back();
+        match built {
             Ok(built) => binary = built,
             Err(cause) => {
                 say(&format!("{cause} Save to try again."));
@@ -361,6 +428,7 @@ fn watch(profile: &Path, args: &[String]) -> Result {
             continue;
         }
         stop_child(&mut app)?;
+        aside.remove();
         app = Some(launch(&binary, profile, &engine, args, true)?);
         say(&format!(
             "Restarted in {:.1}s.",
@@ -446,6 +514,35 @@ mod tests {
         let mut after = Sources::new();
         add_sources(dir.path(), &mut after);
         assert_ne!(before, after);
+    }
+
+    /// A watched rebuild on Windows moves the running executables aside: one the build did not
+    /// make anew (a build that failed, or changed nothing) is put back, so the app keeps running
+    /// and can start again; one it replaced is removed once the app has stopped.
+    #[test]
+    fn a_rebuild_puts_back_the_executables_it_did_not_replace() {
+        let dir = tempfile::tempdir().expect("folder");
+        let exe = std::env::consts::EXE_SUFFIX;
+        let app = dir.path().join(format!("KChess{exe}"));
+        let service = dir.path().join(format!("kchess-service{exe}"));
+        std::fs::write(&app, "old app").expect("app");
+        std::fs::write(&service, "old service").expect("service");
+        // A leftover a previous rebuild could not remove.
+        std::fs::write(dir.path().join(format!("KChess{exe}.watch-old")), "older").expect("left");
+
+        // A build that failed after relinking the service alone.
+        let mut aside = SetAside::new(&app);
+        assert!(!app.exists() && !service.exists());
+        std::fs::write(&service, "new service").expect("relinked");
+        aside.put_back();
+        assert_eq!(std::fs::read_to_string(&app).unwrap(), "old app");
+        assert_eq!(std::fs::read_to_string(&service).unwrap(), "new service");
+        aside.remove();
+        let left: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left.len(), 2, "{left:?}");
     }
 
     /// 2026-11-11: the guard named `~/.config/KChess` itself, so on Linux with

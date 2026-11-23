@@ -211,6 +211,18 @@ pub async fn serve(options: ServeOptions) -> Result<(), String> {
         .map_err(|error| format!("The socket folder is unavailable: {error}"))?;
     let listener =
         Listener::bind(&socket).map_err(|error| format!("The socket could not open: {error}"))?;
+    // Removed while the closing core still holds the lock: once it is released, a successor may
+    // bind the same socket path and write its own discovery files, which a removal after the close
+    // took away, leaving the new core unreachable.
+    {
+        let profile = profile.clone();
+        let socket = socket.clone();
+        core.before_release(move || {
+            transport::remove(&socket);
+            let _ = std::fs::remove_file(profile.join(discovery::INFO_FILE));
+            let _ = std::fs::remove_file(profile.join(discovery::TOKEN_FILE));
+        });
+    }
     let token = discovery::new_token().map_err(|error| format!("No token: {error}"))?;
     discovery::write_private(&profile.join(discovery::TOKEN_FILE), token.as_bytes())
         .map_err(|error| format!("The token could not be written: {error}"))?;
@@ -265,11 +277,6 @@ pub async fn serve(options: ServeOptions) -> Result<(), String> {
 
     host.log(Level::Info, "service", "Closing.");
     core.close().await;
-    transport::remove(&socket);
-    if discovery::read_info(&profile).is_some_and(|written| written.pid == std::process::id()) {
-        let _ = std::fs::remove_file(profile.join(discovery::INFO_FILE));
-        let _ = std::fs::remove_file(profile.join(discovery::TOKEN_FILE));
-    }
     Ok(())
 }
 

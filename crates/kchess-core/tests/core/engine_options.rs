@@ -138,6 +138,47 @@ async fn forgets_confirmed_options_when_the_engine_is_closed() {
     next.close();
 }
 
+/// A change dropped while it waits for `readyok` (its client left mid-search) has reached the
+/// engine, so the value it replaced is no longer known: the next search sends it again. The cache
+/// once kept the old value, and the next weak search played at the dropped one's full strength.
+#[tokio::test]
+async fn a_change_dropped_before_its_acknowledgement_is_sent_again() {
+    let dir = TempDir::new().expect("temp dir");
+    let log = dir.path().join("commands.log");
+    let host = support::host();
+    let hub = support::hub(&host);
+    let engine = UciController::start(&hub, support::fake("handshake", Some(&log)), HANDSHAKE)
+        .expect("spawn the fake engine");
+    engine.ready().await.expect("handshake");
+    engine
+        .ensure_options(&[("Skill Level", "5")])
+        .await
+        .expect("options");
+    let mark = support::received(&log).len();
+
+    // On this one-thread runtime the engine's answer cannot arrive during the single poll.
+    let mut stronger = Box::pin(engine.ensure_options(&[("Skill Level", "20")]));
+    tokio::select! {
+        biased;
+        _ = &mut stronger => panic!("acknowledged within one poll"),
+        () = std::future::ready(()) => {}
+    }
+    drop(stronger);
+
+    engine
+        .ensure_options(&[("Skill Level", "5")])
+        .await
+        .expect("options");
+    assert_eq!(
+        setoptions(&since_of(&log, mark)),
+        [
+            "setoption name Skill Level value 20",
+            "setoption name Skill Level value 5"
+        ]
+    );
+    engine.close();
+}
+
 fn since_of(log: &std::path::Path, mark: usize) -> Vec<String> {
     support::received(log)[mark..].to_vec()
 }

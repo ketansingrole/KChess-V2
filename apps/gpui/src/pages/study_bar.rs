@@ -320,6 +320,7 @@ impl StudyBar {
         };
         let study = analysis.read(cx).study_id().to_string();
         let flushed = analysis.update(cx, |analysis, cx| analysis.flush_study(cx));
+        let navigation = analysis.read(cx).navigation();
         let library = Self::library(cx);
         cx.spawn_in(window, async move |this, cx| {
             let outcome = async {
@@ -336,7 +337,10 @@ impl StudyBar {
                         library.apply(&result);
                         cx.notify();
                     });
-                    if let Some(id) = result.id.as_deref() {
+                    // A board that moved on meanwhile (another study, a position) stays as it
+                    // is: the copy or the new chapter is in the study, not opened over the board.
+                    let still = analysis.read(cx).navigation() == navigation;
+                    if let Some(id) = result.id.as_deref().filter(|_| still) {
                         this.chapter_error = analysis
                             .update(cx, |analysis, cx| analysis.open_study(&study, Some(id), cx))
                             .err();
@@ -422,7 +426,7 @@ impl StudyBar {
         );
     }
 
-    fn duplicate_chapter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn duplicate_chapter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((study, chapter)) = self.open(cx) else {
             return;
         };

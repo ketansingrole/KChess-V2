@@ -347,8 +347,14 @@ pub fn tree_to_pgn(
     } else if fen != rules::INITIAL_FEN
         && let Some(pos) = rules::standard_from_fen(fen)
     {
-        // Standard rules, so no Variant header; a FEN unless the usual start.
-        game.remove_header("Variant");
+        // Standard rules, so no Variant header, but for Chess960's, which names its shuffled
+        // start (an edited Chess960 chapter once reopened as standard chess); a FEN unless the
+        // usual start.
+        if crate::variant::Variant::from_pgn_name(game.header("Variant"))
+            != Some(crate::variant::Variant::Chess960)
+        {
+            game.remove_header("Variant");
+        }
         let start = rules::make_fen(&pos);
         if start == rules::INITIAL_FEN {
             game.remove_header("FEN");
@@ -592,6 +598,25 @@ mod tests {
         ));
         assert!(pgn.contains(&format!("[FEN \"{held}\"]")), "{pgn}");
         assert!(pgn.contains("[Variant \"Crazyhouse\"]"), "{pgn}");
+    }
+
+    /// A Chess960 tree written out (a study chapter saved after an edit) keeps its Variant
+    /// header beside its shuffled start, so it reopens as Chess960, not standard chess.
+    #[test]
+    fn a_chess960_tree_keeps_its_variant() {
+        let start = "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1";
+        let tree = tree_from_pgn(&format!(
+            "[Variant \"Chess960\"]\n[FEN \"{start}\"]\n\n1. e4 *"
+        ))
+        .unwrap();
+        assert_eq!(tree.variant(), crate::variant::Variant::Chess960);
+        let pgn = tree.to_pgn().unwrap();
+        assert!(pgn.contains("[Variant \"Chess960\"]"), "{pgn}");
+        assert!(pgn.contains("[FEN \""), "{pgn}");
+        assert_eq!(
+            tree_from_pgn(&pgn).unwrap().variant(),
+            crate::variant::Variant::Chess960
+        );
     }
 
     /// A 1024-ply tree, the deepest the rules build, is built, written out, copied and dropped on

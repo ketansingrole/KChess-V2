@@ -712,6 +712,44 @@ fn a_position_opened_while_a_study_closes_stays_on_the_board(cx: &mut gpui_kit::
     assert_eq!(shown, opened);
 }
 
+/// A chapter duplicated just before another position is opened lands in the study, and the
+/// board keeps the position: the copy once opened over it when the core answered.
+#[gpui_kit::test]
+fn a_position_opened_while_a_chapter_is_duplicated_stays_on_the_board(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use crate::pages::analysis::AnalysisPage;
+    let mut app = Harness::start(cx);
+    import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
+    app.click("open-imported");
+    app.find("tree-e2e4");
+    let (study, opened) = app.with_window(|window, cx| {
+        let page = crate::shell::view::<AnalysisPage>(cx).expect("the analysis board");
+        let study = page.read(cx).study_id().to_string();
+        let bar = page.read(cx).study_bar();
+        bar.update(cx, |bar, cx| bar.duplicate_chapter(window, cx));
+        let opened = page.update(cx, |page, cx| {
+            page.load(Some("8/8/8/4k3/8/8/4K3/8 w - - 0 1"), cx);
+            page.shown_fen()
+        });
+        (study, opened)
+    });
+    app.wait_for("the copy", |_, cx| {
+        cx.global::<crate::studies::StudyHandle>()
+            .0
+            .read(cx)
+            .study(&study)
+            .is_some_and(|found| found.chapters.len() == 3)
+    });
+    app.settle();
+    let shown = app.with_window(|_, cx| {
+        let page = crate::shell::view::<AnalysisPage>(cx).expect("the analysis board");
+        let page = page.read(cx);
+        (page.shown_fen(), page.study_id().to_string())
+    });
+    assert_eq!(shown, (opened, String::new()));
+}
+
 /// 2026-11-15: closing a study waited for one save, then emptied the board: a move made while
 /// that save was on its way was lost. It is saved before the board empties.
 #[gpui_kit::test]

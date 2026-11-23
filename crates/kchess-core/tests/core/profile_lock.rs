@@ -85,3 +85,27 @@ async fn a_second_process_lock_refuses_core_open() {
     );
     reopened.expect("reopened").close().await;
 }
+
+/// What the service removes as it closes (its socket and discovery files) goes while the core
+/// still holds the lock: a successor that claimed the profile first could already have written
+/// its own, which a removal after the release took away (2026-11-23).
+#[tokio::test]
+async fn cleanup_before_release_runs_while_the_profile_is_still_held() {
+    let dir = tempfile::tempdir().expect("profile");
+    let host = TestHost::quiet();
+    let core = Core::open(Config::new(dir.path().to_path_buf()), host.clone()).expect("opens");
+    let lock = dir.path().join(LOCK);
+    let held = Arc::new(std::sync::Mutex::new(None));
+    {
+        let held = Arc::clone(&held);
+        core.before_release(move || {
+            let probe = File::open(&lock).expect("lock file");
+            *held.lock().unwrap() = Some(probe.try_lock().is_err());
+        });
+    }
+    core.close().await;
+    assert_eq!(*held.lock().unwrap(), Some(true), "ran, with the lock held");
+    // Released after it.
+    let probe = File::open(dir.path().join(LOCK)).expect("lock file");
+    probe.try_lock().expect("a closed core releases the lock");
+}

@@ -526,6 +526,15 @@ impl Inner {
         if pending.is_empty() {
             return Ok(());
         }
+        {
+            // Once sent, the engine may hold the new values even if this wait is dropped (a client
+            // that leaves mid-search): forget the old ones now, recorded again once acknowledged,
+            // so the next search sends them instead of trusting a stale cache.
+            let mut known = lock(&self.options);
+            for (name, _) in &pending {
+                known.remove(*name);
+            }
+        }
         for (name, value) in &pending {
             self.write(&format!("setoption name {name} value {value}"))?;
         }

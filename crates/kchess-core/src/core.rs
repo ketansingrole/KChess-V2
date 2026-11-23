@@ -103,6 +103,8 @@ pub struct Core {
     turns: AsyncMutex<()>,
     /// The close in progress, shared by every `close` call.
     pub(crate) closing: OnceCell<()>,
+    /// Run by the close while it still holds the profile's lock (`Core::before_release`).
+    pub(crate) before_release: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
     /// Ids for the managed engine requests the facade starts.
     pub(crate) requests: AtomicU64,
     /// This core's claim on its profile directory, released when it closes.
@@ -255,6 +257,7 @@ impl Core {
             migrating: Arc::new(tokio::sync::Mutex::new(())),
             turns: AsyncMutex::new(()),
             closing: OnceCell::new(),
+            before_release: Mutex::new(Vec::new()),
             requests: AtomicU64::new(0),
             claim,
         })

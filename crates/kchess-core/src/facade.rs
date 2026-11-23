@@ -14,6 +14,7 @@ use std::sync::Arc;
 use crate::core::Core;
 use crate::host::{Host, Level};
 use crate::store::{self, import};
+use crate::tasks::lock;
 use kchess_contracts::error::{CoreError, Result};
 
 mod accounts;
@@ -255,6 +256,13 @@ impl Core {
         self.requests.fetch_add(1, Ordering::SeqCst) + 1
     }
 
+    /// Runs `cleanup` when the core closes, while it still holds its profile's lock: the
+    /// service removes its socket and discovery files there, which a successor that took the
+    /// lock first would already have replaced (2026-11-23).
+    pub fn before_release(&self, cleanup: impl FnOnce() + Send + 'static) {
+        lock(&self.before_release).push(Box::new(cleanup));
+    }
+
     /// Closes the core: cancels its work, waits for its calls and releases its files.
     /// Later calls fail with `The KChess core is closed.`.
     pub async fn close(&self) {
@@ -300,6 +308,10 @@ impl Core {
         self.usage.close();
         self.puzzles.close().await;
         self.database.close_async().await;
+        let before_release = std::mem::take(&mut *lock(&self.before_release));
+        for cleanup in before_release {
+            cleanup();
+        }
         self.claim.release();
     }
 }
