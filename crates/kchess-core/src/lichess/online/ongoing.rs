@@ -14,6 +14,8 @@ pub(crate) struct Checking {
     pub(crate) error: Option<CoreError>,
     /// The real-time games found that the Board API cannot play (`State::elsewhere`).
     pub(crate) elsewhere: std::collections::BTreeSet<String>,
+    /// `State::elsewhere_changes` when the check began.
+    pub(crate) began: u64,
 }
 
 /// `finished()` of a game controller: the stream it belongs to is still the current one.

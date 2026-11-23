@@ -15,7 +15,7 @@ mod wait;
 use kchess_contracts::calls;
 use kchess_contracts::check::{Fen, GameId, LichessId, NotificationId, StudyId};
 use kchess_contracts::types::{
-    AnalysisRequest, LookupOptions, PositionLookupKind, WatchPhase, WatchTarget,
+    AnalysisReason, AnalysisRequest, LookupOptions, PositionLookupKind, WatchPhase, WatchTarget,
 };
 use kchess_domain::variant::Variant;
 use std::path::PathBuf;
@@ -358,15 +358,23 @@ async fn with_core(
                 core.request(calls::ResumeOnline {}).await?;
                 core.request(calls::StartAnalysis { request }).await?;
                 let mut wait = Wait::new(&mut events);
-                loop {
+                // The search is bounded: its last update (`done`) ends the command, which once
+                // waited for Ctrl-C after the engine had finished.
+                let failed = loop {
                     match wait.next().await {
                         Next::Event(CoreEvent::Analysis(update)) => {
-                            print(serde_json::json!(update))
+                            let done = update.done;
+                            let failed = (update.reason == Some(AnalysisReason::Failed))
+                                .then(|| update.error.clone());
+                            print(serde_json::json!(update));
+                            if done {
+                                break failed;
+                            }
                         }
                         Next::Event(_) | Next::Line(_) | Next::Tick => {}
-                        Next::Interrupted | Next::Closed | Next::InputEnded => break,
+                        Next::Interrupted | Next::Closed | Next::InputEnded => break None,
                     }
-                }
+                };
                 told_if_failed(
                     "Stopping the analysis",
                     core.request(calls::StopAnalysis {
@@ -375,6 +383,9 @@ async fn with_core(
                     })
                     .await,
                 );
+                if let Some(error) = failed {
+                    return Err(error.unwrap_or_else(|| "The analysis failed.".into()));
+                }
             }
             Command::Play | Command::Local => {
                 let computer = command == Command::Play;

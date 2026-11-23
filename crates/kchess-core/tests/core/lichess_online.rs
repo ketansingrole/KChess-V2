@@ -360,6 +360,42 @@ async fn a_challenge_whose_start_is_dropped_is_withdrawn() {
     online.close();
 }
 
+/// Lichess names the challenge before the start that asked for it is dropped, but after the
+/// creation last looked whether it was cancelled: the start never took the challenge over, and
+/// it stayed open. The dropped start withdraws it.
+#[tokio::test]
+async fn a_challenge_named_just_before_its_start_is_dropped_is_withdrawn() {
+    let (gate_tx, gate) = watch::channel(false);
+    let fixture = serve(move |seen| match (seen.method.as_str(), seen.path()) {
+        ("POST", "/api/challenge/Bob") => Reply::Gated(
+            gate.clone(),
+            Box::new(Reply::Json(
+                200,
+                json!({ "id": "AbCd1234", "url": "https://lichess.org/AbCd1234" }).to_string(),
+            )),
+        ),
+        ("POST", _) => Reply::Json(200, json!({ "ok": true }).to_string()),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let options = seek_options(Some("Bob"));
+    let mut start = Box::pin(online.start(&options));
+    tokio::select! {
+        _ = &mut start => panic!("answered before Lichess"),
+        _ = fixture.requested("/api/challenge/Bob", 1) => {}
+    }
+    // Lichess answers while nothing polls the start, which is then dropped.
+    let _ = gate_tx.send(true);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    drop(start);
+    fixture.requested("/api/challenge/AbCd1234/cancel", 1).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(fixture.to("/api/challenge/AbCd1234/cancel").len(), 1);
+    online.close();
+}
+
 /// A challenge whose creation fails after the player cancelled it ends as cancelled, with nothing
 /// to show.
 #[tokio::test]
@@ -1927,6 +1963,96 @@ async fn a_live_game_played_elsewhere_locks_assistance_until_it_finishes() {
 
     send(json!({ "type": "gameFinish", "game": { "gameId": "Else1234" } }));
     until("the finish is seen", || changes(&host) > 2).await;
+    assert_ne!(online.assistance(), Assistance::LiveGame);
+    online.close();
+}
+
+/// A bullet game the stream reports while a check of Lichess's games is on its way is still played
+/// when the check answers without it: the check began first, so the game keeps assistance locked.
+/// The check once replaced what the stream had said, and lent help in the middle of the game.
+#[tokio::test]
+async fn a_game_started_while_a_check_runs_stays_locked_after_it() {
+    use kchess_contracts::types::Assistance;
+    let streams: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
+        Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&streams);
+    let (release, gate) = watch::channel(false);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/stream/event" => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            *slot.lock().unwrap() = Some(tx);
+            Reply::Stream(rx)
+        }
+        "/api/account/playing" => Reply::Gated(
+            gate.clone(),
+            Box::new(Reply::Json(200, json!({ "nowPlaying": [] }).to_string())),
+        ),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    fixture.requested("/api/stream/event", 1).await;
+    let sender = streams.lock().unwrap().clone().unwrap();
+    let checking = online.clone();
+    let check = tokio::spawn(async move { checking.resume().await });
+    fixture.requested("/api/account/playing", 1).await;
+    let start = json!({ "type": "gameStart", "game":
+        { "gameId": "Else1234", "speed": "bullet", "compat": { "board": false } } });
+    sender.send(format!("{start}\n")).unwrap();
+    until("the bullet game locks help", || {
+        online.assistance() == Assistance::LiveGame
+    })
+    .await;
+    let _ = release.send(true);
+    assert_eq!(check.await.unwrap().expect("the check"), None);
+    assert_eq!(online.assistance(), Assistance::LiveGame);
+    online.close();
+}
+
+/// A game played elsewhere whose finish went unheard (its account's stream gave way to another
+/// account's) no longer locks assistance once a check of every account finds it over; a check
+/// that still finds it keeps it locked.
+#[tokio::test]
+async fn a_check_of_every_account_settles_a_finish_that_went_unheard() {
+    use kchess_contracts::types::Assistance;
+    let streams: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
+        Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&streams);
+    let playing = Arc::new(Mutex::new(json!([
+        { "gameId": "Else1234", "speed": "bullet", "compat": { "board": false } }
+    ])));
+    let listed = Arc::clone(&playing);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/stream/event" => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            *slot.lock().unwrap() = Some(tx);
+            Reply::Stream(rx)
+        }
+        "/api/account/playing" => Reply::Json(
+            200,
+            json!({ "nowPlaying": listed.lock().unwrap().clone() }).to_string(),
+        ),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    fixture.requested("/api/stream/event", 1).await;
+    let sender = streams.lock().unwrap().clone().unwrap();
+    let start = json!({ "type": "gameStart", "game":
+        { "gameId": "Else1234", "speed": "bullet", "compat": { "board": false } } });
+    sender.send(format!("{start}\n")).unwrap();
+    until("the bullet game locks help", || {
+        online.assistance() == Assistance::LiveGame
+    })
+    .await;
+    online.ongoing().await.expect("still playing");
+    assert_eq!(online.assistance(), Assistance::LiveGame);
+    *playing.lock().unwrap() = json!([]);
+    online.ongoing().await.expect("over");
     assert_ne!(online.assistance(), Assistance::LiveGame);
     online.close();
 }

@@ -37,21 +37,38 @@ struct Download {
     cancel: CancellationToken,
 }
 
-/// The running download: cancelled, and no longer running, when dropped.
+/// The running download: cancelled, and no longer running, when dropped. Dropped before it
+/// reported its end (`ended`), as when its caller went away mid-download, it reports it
+/// cancelled: the other windows once kept showing it downloading, with a Cancel that did nothing.
 struct Installing<'a> {
     inner: &'a Inner,
     download: Arc<Download>,
+    ended: bool,
 }
 
 impl Drop for Installing<'_> {
     fn drop(&mut self) {
         self.download.cancel.cancel();
-        let mut running = lock(&self.inner.running);
-        if running
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, &self.download))
-        {
-            running.take();
+        let ours = {
+            let mut running = lock(&self.inner.running);
+            let ours = running
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &self.download));
+            if ours {
+                running.take();
+            }
+            ours
+        };
+        if ours && !self.ended {
+            self.inner
+                .host
+                .emit(CoreEvent::PuzzleDbProgress(PuzzleDbProgress {
+                    phase: Phase::Cancelled,
+                    received: 0,
+                    kept: 0,
+                    total: None,
+                    message: None,
+                }));
         }
     }
 }
@@ -302,9 +319,10 @@ impl PuzzleService {
             download
         };
         // Ends this download however `install` ends, including when its caller is dropped.
-        let installing = Installing {
+        let mut installing = Installing {
             inner: &self.inner,
             download: Arc::clone(&download),
+            ended: false,
         };
         let mut progress = Progress {
             host: Arc::clone(&self.inner.host),
@@ -328,6 +346,8 @@ impl PuzzleService {
                 if aborted { Ok(()) } else { Err(error) }
             }
         };
+        // Done, Cancelled or Failed is reported.
+        installing.ended = true;
         drop(installing);
         let result = match outcome {
             Ok(()) => {
@@ -763,7 +783,7 @@ mod tests {
     #[tokio::test]
     async fn an_aborted_install_stops_its_download() {
         let dir = tempfile::tempdir().unwrap();
-        let (puzzles, _host, _) = service(dir.path());
+        let (puzzles, host, _) = service(dir.path());
         let puzzles = Arc::new(puzzles);
         let stalled = serve(200, None).await;
         let first = tokio::spawn({
@@ -774,6 +794,8 @@ mod tests {
         first.abort();
         assert!(first.await.unwrap_err().is_cancelled());
         assert!(!puzzles.status().await.unwrap().busy);
+        // Every window hears it end: one that only saw it downloading once kept showing Cancel.
+        assert_eq!(phases(&host).last().map(String::as_str), Some("cancelled"));
         puzzles.delete().await.expect("deleting is allowed again");
         puzzles.close().await;
     }

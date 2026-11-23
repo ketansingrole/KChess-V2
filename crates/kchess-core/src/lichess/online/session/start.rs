@@ -71,9 +71,18 @@ impl OnlineSession {
         let mut abandoned = Abandoned {
             session: self.clone(),
             handle: Some(handle.clone()),
+            created: Arc::default(),
         };
+        let created = Arc::clone(&abandoned.created);
         let started = self
-            .start_inner(options, &target, correspondence, perf, &label, &handle)
+            .start_inner(
+                options,
+                &target,
+                correspondence,
+                perf,
+                &label,
+                (&handle, &created),
+            )
             .await;
         let handle = abandoned.handle.take();
         match started {
@@ -112,7 +121,8 @@ impl OnlineSession {
         correspondence: bool,
         perf: &str,
         label: &str,
-        handle: &Handle,
+        // The start's handle, and where its challenge is named once created.
+        (handle, created): (&Handle, &Created),
     ) -> CoreResult<StartResult> {
         let connected = self.inner.lichess.connected_accounts().await?;
         if handle.token.is_cancelled() {
@@ -181,24 +191,36 @@ impl OnlineSession {
                 let this = self.clone();
                 let auth = auth.clone();
                 let cancelled = handle.token.clone();
+                let created = Arc::clone(created);
                 tokio::spawn(async move {
                     let reply = this
                         .post_form(&path, &form, &auth, &CancellationToken::new())
                         .await;
-                    let withdrawn = match &reply {
-                        Ok(challenge) if cancelled.is_cancelled() => {
-                            let id = challenge["id"].as_str().unwrap_or("");
-                            this.cancel_challenge(id, &auth).await;
-                            true
+                    if let Ok(challenge) = &reply {
+                        let id = challenge["id"].as_str().unwrap_or("").to_string();
+                        // Withdrawn here once cancelled, else left for the start to claim; one
+                        // abandoned before it claims it withdraws it (`Abandoned`).
+                        let cancel = {
+                            let mut unclaimed = crate::tasks::lock(&created);
+                            if cancelled.is_cancelled() {
+                                true
+                            } else {
+                                *unclaimed = Some((id.clone(), auth.clone()));
+                                false
+                            }
+                        };
+                        if cancel {
+                            this.cancel_challenge(&id, &auth).await;
                         }
-                        _ => false,
-                    };
-                    (reply, withdrawn)
+                    }
+                    reply
                 })
             };
-            let (reply, withdrawn) = creation
+            let reply = creation
                 .await
                 .map_err(|_| CoreError::new("The challenge could not be sent."))?;
+            // Claimed: from here this start withdraws it, or the session keeps it pending.
+            let unclaimed = crate::tasks::lock(created).take();
             let challenge = match reply {
                 Ok(challenge) => challenge,
                 Err(_) if handle.token.is_cancelled() => {
@@ -217,8 +239,9 @@ impl OnlineSession {
             let id = challenge["id"].as_str().unwrap_or("").to_string();
             // A server may finish creating the challenge just as cancellation arrives.
             if handle.token.is_cancelled() {
-                if !withdrawn {
-                    self.cancel_challenge(&id, &auth).await;
+                if let Some((id, auth)) = unclaimed {
+                    let this = self.clone();
+                    tokio::spawn(async move { this.cancel_challenge(&id, &auth).await });
                 }
                 return Err(crate::lichess::aborted());
             }
@@ -405,12 +428,24 @@ impl OnlineSession {
 struct Abandoned {
     session: OnlineSession,
     handle: Option<Handle>,
+    /// A challenge Lichess created and the start has not claimed yet.
+    created: Created,
 }
+
+/// A created challenge's id and its login, until the start claims it.
+type Created = Arc<std::sync::Mutex<Option<(String, Auth)>>>;
 
 impl Drop for Abandoned {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
+            // Cancelled first: a creation that answers after this withdraws its challenge
+            // itself; one that answered before left it here.
             self.session.end_start(&handle);
+            let unclaimed = crate::tasks::lock(&self.created).take();
+            if let Some((id, auth)) = unclaimed {
+                let session = self.session.clone();
+                tokio::spawn(async move { session.cancel_challenge(&id, &auth).await });
+            }
         }
     }
 }

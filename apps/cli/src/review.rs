@@ -5,6 +5,8 @@ use kchess_contracts::calls;
 use kchess_contracts::check::ReviewKey;
 use kchess_contracts::types::{ReviewRequest, ReviewStatus, StoredReview};
 use kchess_domain::pgn::parse_pgn;
+use kchess_domain::records::review::review_key;
+use kchess_domain::replay::replay_positions_in;
 use kchess_domain::review::{analyse, san_to_uci};
 use kchess_domain::variant::Variant;
 use serde_json::{Value, json};
@@ -24,11 +26,22 @@ pub struct Line {
 }
 
 impl Line {
-    /// Whether `review` is this line's: the core keys a review by its own reading of the start
-    /// position, so it is recognised by its moves and the position's pieces and turn.
-    fn reviewed_in(&self, review: &StoredReview) -> bool {
-        let start = |fen: &str| fen.split(' ').take(2).collect::<Vec<_>>().join(" ");
-        review.moves == self.moves && start(&review.fen) == start(&self.fen)
+    /// The key the core stores this line's review under: its own reading of the start position
+    /// and of the moves it reaches, by the variant's rules. Its updates and its failure carry it;
+    /// a key made from the line as written once missed a variant's or a rewritten FEN's, and the
+    /// command waited forever. `None` when the moves reach no position, which the core leaves
+    /// unreviewed.
+    fn key(&self) -> Option<String> {
+        let variant = self
+            .variant
+            .filter(|variant| variant.fairy_name().is_some())
+            .unwrap_or_default();
+        let positions = replay_positions_in(variant, &self.fen, &self.moves);
+        if positions.len() < 2 {
+            return None;
+        }
+        let moves = &self.moves[..positions.len() - 1];
+        Some(review_key(&positions[0].fen, moves, Some(variant)))
     }
 }
 
@@ -143,10 +156,9 @@ pub async fn run(
         game_id: None,
         account: None,
     };
+    let key = line.key().ok_or("That game has no moves to review.")?;
     let mut stored = core.request(calls::ReviewRequest { request }).await?;
-    let ours = |review: &StoredReview| line.reviewed_in(review);
-    // The key the core gives the review, so a failure reported for it ends the wait.
-    let key = kchess_domain::records::review::review_key(&line.fen, &line.moves, line.variant);
+    let ours = |review: &StoredReview| review.key == key;
     let mut wait = Wait::new(events);
     let done = |stored: &Option<StoredReview>| {
         stored
@@ -154,15 +166,12 @@ pub async fn run(
             .is_some_and(|review| ours(review) && review.complete)
     };
     while !done(&stored) {
-        let key = stored
-            .as_ref()
-            .map_or(key.as_str(), |review| review.key.as_str());
         match wait.next().await {
             Next::Interrupted | Next::InputEnded => {
                 crate::told_if_failed(
                     "Cancelling the review",
                     core.request(calls::ReviewCancel {
-                        key: ReviewKey(key.to_string()),
+                        key: ReviewKey(key.clone()),
                     })
                     .await,
                 );
@@ -175,7 +184,7 @@ pub async fn run(
                 }
             }
             Next::Event(CoreEvent::ReviewStatus(status)) => {
-                if let Some(failed) = failure(status, key) {
+                if let Some(failed) = failure(status, &key) {
                     return Err(failed);
                 }
             }
@@ -188,32 +197,43 @@ pub async fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::{ReviewStatus, StoredReview, Variant, failure, main_line, report};
+    use super::{ReviewStatus, Variant, failure, main_line, report};
     use serde_json::json;
 
-    /// A review is the line's when its moves and its start's pieces and turn are the line's; the
-    /// clocks of the start may differ.
+    /// The line's key is the one the core stores its review under, made from the core's reading
+    /// of the start: a FEN written with other clocks, or a variant's game, once got another key,
+    /// so its updates and its failure went unrecognised and the command never ended.
     #[test]
-    fn a_review_is_recognised_by_its_moves_and_start() {
-        let line = main_line("1. e4 e5 *").expect("a game");
-        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-        let review = |fen: &str, moves: &[&str]| -> StoredReview {
-            serde_json::from_value(json!({
-                "key": "k", "fen": fen, "moves": moves, "source": "local", "evals": [],
-                "depth": 20, "complete": true, "updatedAt": 0,
-            }))
-            .expect("a review")
+    fn a_line_is_keyed_as_the_core_keys_its_review() {
+        let core_key = |fen: &str, moves: &[&str], variant: Variant| {
+            let positions = kchess_domain::replay::replay_positions_in(variant, fen, moves);
+            let moves = &moves[..positions.len() - 1];
+            kchess_domain::records::review::review_key(&positions[0].fen, moves, Some(variant))
         };
-        assert!(line.reviewed_in(&review(start, &["e2e4", "e7e5"])));
-        assert!(line.reviewed_in(&review(
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 3 9",
-            &["e2e4", "e7e5"]
-        )));
-        assert!(!line.reviewed_in(&review(start, &["e2e4"])));
-        assert!(!line.reviewed_in(&review(
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1",
-            &["e2e4", "e7e5"]
-        )));
+        let line = main_line("1. e4 e5 *").expect("a game");
+        let start = kchess_domain::rules::INITIAL_FEN;
+        assert_eq!(
+            line.key(),
+            Some(core_key(start, &["e2e4", "e7e5"], Variant::Standard))
+        );
+        // A FEN header without its clocks: the core reads it with them.
+        let short = main_line(
+            "[SetUp \"1\"]\n[FEN \"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -\"]\n\n1. e4 e5 *",
+        )
+        .expect("a game");
+        assert_eq!(
+            short.key(),
+            Some(core_key(&short.fen, &["e2e4", "e7e5"], Variant::Standard))
+        );
+        assert_eq!(short.key(), line.key());
+        // The line as written keys it otherwise.
+        let written = kchess_domain::records::review::review_key(&short.fen, &short.moves, None);
+        assert_ne!(short.key(), Some(written));
+        let atomic = main_line("[Variant \"Atomic\"]\n\n1. e4 e5 *").expect("an atomic game");
+        assert_eq!(
+            atomic.key(),
+            Some(core_key(&atomic.fen, &["e2e4", "e7e5"], Variant::Atomic))
+        );
     }
 
     #[test]

@@ -407,14 +407,14 @@ fn scripted_engine_in(mode: &str) -> std::path::PathBuf {
     copy
 }
 
-/// `analyze` streams the engine's lines until Ctrl-C, then stops the search and exits cleanly.
+/// `analyze` streams the engine's lines and ends with the search: it once kept waiting for
+/// Ctrl-C after the last update.
 #[cfg(unix)]
 #[test]
-fn analyze_streams_until_interrupted() {
-    use std::io::BufRead;
+fn analyze_streams_until_its_search_ends() {
     let profile = tempfile::tempdir().expect("profile");
     let engine = scripted_engine();
-    let mut child = kchess_cli()
+    let output = kchess_cli()
         .args(["--embedded", "--no-credentials", "--data-dir"])
         .arg(profile.path())
         .arg("--engine")
@@ -423,24 +423,16 @@ fn analyze_streams_until_interrupted() {
         .env("KCHESS_USER_DATA_DIR", profile.path())
         .env_remove("KCHESS_SERVICE_BINARY")
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("kchess-cli starts");
-    let mut stdout = std::io::BufReader::new(child.stdout.take().expect("stdout"));
-    let mut first = String::new();
-    stdout.read_line(&mut first).expect("a line");
-    let update: Value = serde_json::from_str(&first).expect("an analysis update");
-    assert_eq!(update["lines"][0]["pv"][0], "e2e4", "{update}");
-    // Still streaming: the command waits for Ctrl-C.
-    assert!(child.try_wait().expect("status").is_none());
-    let interrupted = Command::new("kill")
-        .args(["-INT", &child.id().to_string()])
-        .status()
-        .expect("kill runs");
-    assert!(interrupted.success());
-    let status = child.wait().expect("kchess-cli finishes");
-    assert!(status.success(), "{status:?}");
+        .output()
+        .expect("kchess-cli finishes");
+    assert!(output.status.success(), "{output:?}");
+    let updates: Vec<Value> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("an analysis update"))
+        .collect();
+    assert_eq!(updates[0]["lines"][0]["pv"][0], "e2e4", "{updates:?}");
+    let last = updates.last().expect("an update");
+    assert_eq!(last["done"], true, "{last}");
     let _ = std::fs::remove_dir_all(engine.parent().expect("engine folder"));
 }
 

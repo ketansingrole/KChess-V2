@@ -146,14 +146,14 @@ impl OnlineSession {
         if correspondence || id.is_empty() {
             return;
         }
-        if self.st().elsewhere.insert(id.to_string()) {
+        if self.st().started_elsewhere(id) {
             self.refresh_assistance();
         }
     }
 
     /// A game Lichess says finished: one played elsewhere no longer locks assistance.
     pub(super) fn finished_elsewhere(&self, id: &str) {
-        if self.st().elsewhere.remove(id) {
+        if self.st().finished_elsewhere(id) {
             self.refresh_assistance();
         }
     }
