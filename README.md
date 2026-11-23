@@ -5,6 +5,17 @@
 
 **[Download KChess](https://ketansingrole.github.io/KChess-V2/)** for macOS, Windows and Linux.
 
+![Analysis board reviewing a finished game against Stockfish, with accuracy, inaccuracies, mistakes and blunders for each side](site/screenshots/analysis.jpg)
+
+<p>
+  <img src="site/screenshots/puzzles.jpg" alt="Puzzle training with theme, difficulty and side to play" width="49%">
+  <img src="site/screenshots/play.jpg" alt="Lichess tournament schedule with bullet, blitz, rapid and variant arenas" width="49%">
+</p>
+
+- **Play** Stockfish at any strength, or on Lichess with clocks, challenges, variants and tournaments.
+- **Review** every game with Stockfish: accuracy, mistakes, an opening explorer, and drills from your own errors.
+- **Train** with Lichess puzzles (rated, offline, Storm, Streak and Rush) and practice drills, by keyboard or voice.
+
 KChess is a desktop chess app written in Rust: play Stockfish, play on Lichess, follow friends, review games, solve puzzles and train. The window is [GPUI](https://github.com/zed-industries/zed) with [GPUI Kit](https://github.com/longbridge/gpui-kit); chess rules run on [`shakmaty`](https://github.com/niklasf/shakmaty) (`crates/kchess-domain`); a headless core (`crates/kchess-core`) handles Stockfish, Lichess, the local library, puzzles and OAuth. Sounds and board themes are the Lichess assets.
 
 ## Apps
