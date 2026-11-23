@@ -179,6 +179,40 @@ async fn a_change_dropped_before_its_acknowledgement_is_sent_again() {
     engine.close();
 }
 
+/// An abandoned command's answer is still on the way, and it answered the next command waiting
+/// for the same line: the `readyok` of a dropped `isready` confirmed the next options change before
+/// the engine had read it (main's CI, 2026-11-23). The engine answers the abandoned `isready`
+/// before the `uci` sent after it, so the `uci` waiter, which would take either, must get `uciok`.
+#[tokio::test]
+async fn an_abandoned_commands_answer_is_not_given_to_the_next() {
+    let host = support::host();
+    let hub = support::hub(&host);
+    let engine = UciController::start(&hub, support::fake("handshake", None), HANDSHAKE)
+        .expect("spawn the fake engine");
+    engine.ready().await.expect("handshake");
+
+    // On this one-thread runtime the engine's answer cannot arrive during the single poll.
+    let mut abandoned = Box::pin(engine.command("isready", |line| line == "readyok", None, None));
+    tokio::select! {
+        biased;
+        _ = &mut abandoned => panic!("answered within one poll"),
+        () = std::future::ready(()) => {}
+    }
+    drop(abandoned);
+
+    let answer = engine
+        .command(
+            "uci",
+            |line| line == "uciok" || line == "readyok",
+            None,
+            None,
+        )
+        .await
+        .expect("uci");
+    assert_eq!(answer, "uciok");
+    engine.close();
+}
+
 fn since_of(log: &std::path::Path, mark: usize) -> Vec<String> {
     support::received(log)[mark..].to_vec()
 }
