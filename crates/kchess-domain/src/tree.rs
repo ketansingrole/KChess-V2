@@ -101,6 +101,58 @@ struct Building {
     next: usize,
 }
 
+/// Puts `node` among `siblings`, merged into the sibling of the same move when there is one: its
+/// comments and NAGs join that sibling's, and its moves are merged the same way. A move is
+/// addressed by its path of moves, so a PGN variation repeating its main move (`1. e4 (1. e4 e5)`)
+/// made a second node no edit could reach: an edit of its note changed the main line's.
+fn adopt(siblings: &mut Vec<TreeNode>, node: TreeNode) {
+    // Merged a level at a time, not by recursing: two long identical lines are deep.
+    let mut work: Vec<(Vec<usize>, TreeNode)> = vec![(Vec::new(), node)];
+    while let Some((path, mut node)) = work.pop() {
+        let mut list = &mut *siblings;
+        for &at in &path {
+            list = &mut list[at].children;
+        }
+        let Some(at) = list.iter().position(|sibling| sibling.uci == node.uci) else {
+            list.push(node);
+            continue;
+        };
+        let same = &mut list[at];
+        // A comment before a move is the variation's opening note, and is written before it. The
+        // first of its siblings continues the line: a note written before it becomes the previous
+        // move's when read again, so it joins the move's own comments there.
+        let starting = node.starting_comments.take();
+        let comments = node.comments.take();
+        let (comments, starting) = if at == 0 {
+            let joined: Vec<String> = starting.into_iter().chain(comments).flatten().collect();
+            ((!joined.is_empty()).then_some(joined), None)
+        } else {
+            (comments, starting)
+        };
+        for (into, from) in [
+            (&mut same.comments, comments),
+            (&mut same.starting_comments, starting),
+        ] {
+            if let Some(from) = from {
+                into.get_or_insert_with(Vec::new).extend(from);
+            }
+        }
+        if let Some(nags) = node.nags.take() {
+            let into = same.nags.get_or_insert_with(Vec::new);
+            for nag in nags {
+                if !into.contains(&nag) {
+                    into.push(nag);
+                }
+            }
+        }
+        let mut inner = path;
+        inner.push(at);
+        for child in std::mem::take(&mut node.children).into_iter().rev() {
+            work.push((inner.clone(), child));
+        }
+    }
+}
+
 /// The game's moves under `root`, depth first; `None` as soon as the document is found invalid.
 fn walk(game: &Game, root: TreeNode, start: VariantPosition) -> Option<TreeNode> {
     let mut count = 0;
@@ -116,7 +168,7 @@ fn walk(game: &Game, root: TreeNode, start: VariantPosition) -> Option<TreeNode>
         let Some(&child) = top.moves.get(top.next) else {
             let done = stack.pop()?;
             match stack.last_mut() {
-                Some(parent) => parent.node.children.push(done.node),
+                Some(parent) => adopt(&mut parent.node.children, done.node),
                 None => return Some(done.node),
             }
             continue;
@@ -347,8 +399,14 @@ pub fn tree_to_pgn(
     } else if fen != rules::INITIAL_FEN
         && let Some(pos) = rules::standard_from_fen(fen)
     {
-        // Standard rules, so no Variant header; a FEN unless the usual start.
-        game.remove_header("Variant");
+        // Standard rules, so no Variant header, but for Chess960's, which names its shuffled
+        // start (an edited Chess960 chapter once reopened as standard chess); a FEN unless the
+        // usual start.
+        if crate::variant::Variant::from_pgn_name(game.header("Variant"))
+            != Some(crate::variant::Variant::Chess960)
+        {
+            game.remove_header("Variant");
+        }
         let start = rules::make_fen(&pos);
         if start == rules::INITIAL_FEN {
             game.remove_header("FEN");
@@ -554,9 +612,9 @@ impl TreeNode {
     pub fn delete_at(&mut self, path: &str) -> String {
         let plan = analysis_tree::delete_at_plan(path);
         if let Some(uci) = plan.uci {
-            self.node_at_mut(&plan.parent_path)
-                .children
-                .retain(|child| child.uci != uci);
+            let children = &mut self.node_at_mut(&plan.parent_path).children;
+            children.retain(|child| child.uci != uci);
+            continues_line(children);
         }
         plan.parent_path
     }
@@ -570,9 +628,24 @@ impl TreeNode {
             if from < holder.children.len() {
                 let child = holder.children.remove(from);
                 holder.children.insert(0, child);
+                continues_line(&mut holder.children);
             }
         }
     }
+}
+
+/// The first of `children` continues the line, so a note before it (one that opened its
+/// variation) leads its own comments: written before the move, the note was read back as the
+/// previous move's, so promoting a variation or deleting the move before it gave its note away.
+fn continues_line(children: &mut [TreeNode]) {
+    let Some(first) = children.first_mut() else {
+        return;
+    };
+    let Some(mut notes) = first.starting_comments.take() else {
+        return;
+    };
+    notes.extend(first.comments.take().into_iter().flatten());
+    first.comments = Some(notes);
 }
 
 #[cfg(test)]
@@ -592,6 +665,25 @@ mod tests {
         ));
         assert!(pgn.contains(&format!("[FEN \"{held}\"]")), "{pgn}");
         assert!(pgn.contains("[Variant \"Crazyhouse\"]"), "{pgn}");
+    }
+
+    /// A Chess960 tree written out (a study chapter saved after an edit) keeps its Variant
+    /// header beside its shuffled start, so it reopens as Chess960, not standard chess.
+    #[test]
+    fn a_chess960_tree_keeps_its_variant() {
+        let start = "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1";
+        let tree = tree_from_pgn(&format!(
+            "[Variant \"Chess960\"]\n[FEN \"{start}\"]\n\n1. e4 *"
+        ))
+        .unwrap();
+        assert_eq!(tree.variant(), crate::variant::Variant::Chess960);
+        let pgn = tree.to_pgn().unwrap();
+        assert!(pgn.contains("[Variant \"Chess960\"]"), "{pgn}");
+        assert!(pgn.contains("[FEN \""), "{pgn}");
+        assert_eq!(
+            tree_from_pgn(&pgn).unwrap().variant(),
+            crate::variant::Variant::Chess960
+        );
     }
 
     /// A 1024-ply tree, the deepest the rules build, is built, written out, copied and dropped on
@@ -641,6 +733,81 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    /// A variation repeating its main move joins it: both notes and both continuations are kept,
+    /// and an edit by path reaches them. It was a second node of the same move that no path
+    /// reached, so editing its note changed the main line's.
+    #[test]
+    fn a_variation_repeating_its_main_move_joins_it() {
+        let tree =
+            TreeNode::from_pgn("1. e4 {Main} $1 (1. e4 {Alternative} $1 $3 e5) c5 *").unwrap();
+        assert_eq!(tree.children.len(), 1);
+        let e4 = &tree.children[0];
+        assert_eq!(
+            e4.comments.as_deref(),
+            Some(&["Main".to_string(), "Alternative".to_string()][..])
+        );
+        assert_eq!(e4.nags.as_deref(), Some(&[1, 3][..]));
+        let replies: Vec<&str> = e4.children.iter().map(|c| c.uci.as_str()).collect();
+        assert_eq!(replies, ["c7c5", "e7e5"]);
+        assert_eq!(tree.existing_path("e2e4 e7e5"), "e2e4 e7e5");
+        // Repeated deeper too, and repeated again inside the repeat.
+        let tree = TreeNode::from_pgn("1. e4 e5 2. Nf3 (2. Nf3 Nc6 (2... Nc6 3. Bb5)) *").unwrap();
+        let nf3 = &tree.children[0].children[0].children;
+        assert_eq!(nf3.len(), 1);
+        assert_eq!(nf3[0].children.len(), 1);
+        assert_eq!(nf3[0].children[0].children[0].uci, "f1b5");
+    }
+
+    /// A promoted variation's opening note stays on its move when the chapter is saved and read
+    /// again: written before the move, which now follows the one before it, it was read back as
+    /// that move's note.
+    #[test]
+    fn a_promoted_variations_note_stays_on_its_move_when_saved() {
+        let mut tree = TreeNode::from_pgn("1. e4 e5 ( {Sicilian idea} 1... c5 ) *").unwrap();
+        tree.promote("e2e4 c7c5");
+        assert_eq!(tree.children[0].children[0].uci, "c7c5");
+        let saved = tree_to_pgn(&tree, None).unwrap();
+        let reopened = TreeNode::from_pgn(&saved).unwrap();
+        assert_eq!(reopened.children[0].comments, None, "{saved}");
+        let c5 = &reopened.children[0].children[0];
+        assert_eq!(c5.uci, "c7c5");
+        assert_eq!(
+            c5.comments.as_deref(),
+            Some(&["Sicilian idea".to_string()][..])
+        );
+        // Deleting the main move leaves the variation first: the same.
+        let mut tree = TreeNode::from_pgn("1. e4 e5 ( {Sicilian idea} 1... c5 ) *").unwrap();
+        tree.delete_at("e2e4 e7e5");
+        let saved = tree_to_pgn(&tree, None).unwrap();
+        let reopened = TreeNode::from_pgn(&saved).unwrap();
+        assert_eq!(reopened.children[0].comments, None, "{saved}");
+    }
+
+    /// A merged variation's opening note stays on its move when the chapter is saved and read
+    /// again: it was kept as a note before the main line's move, which is written after the move
+    /// before it, so reopening the study gave it to that move.
+    #[test]
+    fn a_merged_variations_note_stays_on_its_move_when_saved() {
+        let tree = TreeNode::from_pgn("1. e4 e5 ( {Black's idea} 1... e5 2. Nf3 ) *").unwrap();
+        let note = Some(&["Black's idea".to_string()][..]);
+        let e5 = &tree.children[0].children[0];
+        assert_eq!(e5.comments.as_deref(), note);
+        let saved = tree_to_pgn(&tree, None).unwrap();
+        let reopened = TreeNode::from_pgn(&saved).unwrap();
+        assert_eq!(reopened.children[0].comments, None, "{saved}");
+        assert_eq!(reopened.children[0].children[0].comments.as_deref(), note);
+        // A note opening a variation that differs from the main line stays where it was.
+        let tree = TreeNode::from_pgn("1. e4 e5 ( {Sharp} 1... c5 ) ( {Solid} 1... c5 2. Nf3 ) *")
+            .unwrap();
+        let c5 = &tree.children[0].children[1];
+        assert_eq!(
+            c5.starting_comments.as_deref(),
+            Some(&["Sharp".to_string(), "Solid".to_string()][..])
+        );
+        let saved = tree_to_pgn(&tree, None).unwrap();
+        assert_eq!(TreeNode::from_pgn(&saved).unwrap(), tree, "{saved}");
     }
 
     /// The analysis board's edits through paths: adding, following, finding, promoting and

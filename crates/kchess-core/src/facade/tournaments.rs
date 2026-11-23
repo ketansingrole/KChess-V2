@@ -16,20 +16,60 @@ use crate::lichess::tournaments;
 use crate::store::library;
 use crate::time::now_ms;
 use kchess_contracts::error::Result;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+/// How many times each tournament's memberships changed in this core. A lookup or a join reads
+/// its tournament's count as it begins, and its write applies only when the count is the same:
+/// an answer from before a join, a leave or both meanwhile is older than what is kept.
+#[derive(Default)]
+pub(crate) struct MembershipChanges(Mutex<HashMap<String, u64>>);
+
+impl MembershipChanges {
+    fn key(system: TournamentSystem, id: &str) -> String {
+        format!("{system:?}/{id}")
+    }
+
+    /// The tournament's count now.
+    fn seen(&self, system: TournamentSystem, id: &str) -> u64 {
+        self.0.lock().map_or(0, |counts| {
+            counts.get(&Self::key(system, id)).copied().unwrap_or(0)
+        })
+    }
+
+    /// Whether the tournament's count is still `seen`.
+    fn unchanged(&self, system: TournamentSystem, id: &str, seen: u64) -> bool {
+        self.seen(system, id) == seen
+    }
+
+    fn changed(&self, system: TournamentSystem, id: &str) {
+        if let Ok(mut counts) = self.0.lock() {
+            *counts.entry(Self::key(system, id)).or_default() += 1;
+        }
+    }
+}
 
 impl Core {
-    /// Forgets one account's membership of a tournament, or every account's without one.
+    /// Forgets one account's membership of a tournament, or every account's without one; with
+    /// `unchanged_since`, only when its memberships did not change after that count was read.
     async fn forget_tournament(
         &self,
         system: TournamentSystem,
         id: &str,
         account: Option<&str>,
+        unchanged_since: Option<u64>,
     ) -> Result<()> {
         let id = id.to_owned();
         let account = account.map(str::to_owned);
+        let memberships = Arc::clone(&self.memberships);
         self.database
             .write_async(move |ctx| {
-                library::forget_tournament(ctx.host, ctx.db, system, &id, account.as_deref())
+                if unchanged_since.is_some_and(|seen| !memberships.unchanged(system, &id, seen)) {
+                    return Ok(());
+                }
+                library::forget_tournament(ctx.host, ctx.db, system, &id, account.as_deref())?;
+                memberships.changed(system, &id);
+                Ok(())
             })
             .await
     }
@@ -59,14 +99,37 @@ impl TournamentsApi for Core {
     ) -> Result<TournamentDetail> {
         let page = page.map_or(1, |page| page.0 as u32);
         let lichess = self.services.lichess();
-        let detail = tournaments::tournament(lichess, system, &id.0, &account.0, page).await?;
+        // Whether the account's membership was kept as the lookup began, and the count of changes
+        // then: one a join kept meanwhile (another window), or a leave and a join again, is newer
+        // than this answer, which an answer from before them erased, and pairings stopped keeping
+        // the account's stream open.
+        let changes = self.memberships.seen(system, &id.0);
+        let was_kept = if system == TournamentSystem::Arena && !account.0.is_empty() {
+            let (tournament, name) = (id.0.clone(), account.0.clone());
+            let now = now_ms() as f64;
+            self.database
+                .read_async(move |ctx| library::joined_tournaments(ctx.host, ctx.db, now))
+                .await?
+                .iter()
+                .any(|entry| {
+                    entry.system == system && entry.id == tournament && entry.joined_by(&name)
+                })
+        } else {
+            false
+        };
+        let (detail, signed) =
+            tournaments::tournament_signed(lichess, system, &id.0, &account.0, page).await?;
         if system == TournamentSystem::Arena {
             // An arena that is over is over for every account.
             if detail.summary.status == TournamentStatus::Finished {
-                self.forget_tournament(system, &id.0, None).await?;
-            } else if !account.0.is_empty() && detail.me.as_ref().is_none_or(|me| me.withdraw) {
+                self.forget_tournament(system, &id.0, None, None).await?;
+            } else if was_kept
+                // An anonymous answer (the login unreadable) has no place for anyone.
+                && signed
+                && detail.me.as_ref().is_none_or(|me| me.withdraw)
+            {
                 // `me` is the looked-up account's place only: another account's stays.
-                self.forget_tournament(system, &id.0, Some(&account.0))
+                self.forget_tournament(system, &id.0, Some(&account.0), Some(changes))
                     .await?;
             }
         }
@@ -87,6 +150,10 @@ impl TournamentsApi for Core {
         // remembers no tournament for an account that is gone.
         let epoch = lichess.account_epoch(&name);
         let current = || lichess.account_epoch(&name) == epoch;
+        // A leave (another window) while this join waits for the details is newer: the join
+        // remembers nothing then. It once wrote the membership back after the leave forgot it,
+        // and the account's stream stayed open for a tournament it had left.
+        let changes = self.memberships.seen(system, &id);
         let result =
             done(tournaments::join_tournament(lichess, system, &id, &name, password).await)?;
         if result != Reply::Done(true) || !current() {
@@ -122,9 +189,15 @@ impl TournamentsApi for Core {
         if !current() {
             return Ok(result);
         }
+        let memberships = Arc::clone(&self.memberships);
         self.database
             .write_async(move |ctx| {
-                library::remember_tournament(ctx.host, ctx.db, &entry, now as f64)
+                if !memberships.unchanged(system, &entry.id, changes) {
+                    return Ok(());
+                }
+                library::remember_tournament(ctx.host, ctx.db, &entry, now as f64)?;
+                memberships.changed(system, &entry.id);
+                Ok(())
             })
             .await?;
         Ok(result)
@@ -140,7 +213,7 @@ impl TournamentsApi for Core {
         let left = tournaments::leave_tournament(lichess, system, &id.0, &account.0).await;
         let result = done(left)?;
         if result == Reply::Done(true) {
-            self.forget_tournament(system, &id.0, Some(&account.0))
+            self.forget_tournament(system, &id.0, Some(&account.0), None)
                 .await?;
         }
         Ok(result)

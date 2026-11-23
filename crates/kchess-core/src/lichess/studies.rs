@@ -308,6 +308,24 @@ fn imported_all(imported: &Value, games: usize) -> CoreResult<()> {
     Ok(())
 }
 
+/// The lock one study's uploads take turns on, by account and study; kept while one is held.
+fn upload_turn(account: &str, study: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    static TURNS: std::sync::Mutex<
+        std::collections::BTreeMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>,
+    > = std::sync::Mutex::new(std::collections::BTreeMap::new());
+    let key = format!("{}/{study}", account.to_lowercase());
+    let mut turns = TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    turns.retain(|_, turn| turn.strong_count() > 0);
+    if let Some(turn) = turns.get(&key).and_then(std::sync::Weak::upgrade) {
+        return turn;
+    }
+    let turn = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+    turns.insert(key, std::sync::Arc::downgrade(&turn));
+    turn
+}
+
 /// Uploads edits to a linked study. The cloud copy must still match
 /// the baseline the user downloaded; otherwise nothing is written and the user is told so. Only
 /// changed chapters are updated, and new chapters are appended. Returns the study's chapters
@@ -317,6 +335,11 @@ pub async fn sync_lichess_study(
     lichess: &Lichess,
     request: &StudySyncRequest,
 ) -> CoreResult<Reply<Vec<ChapterInput>>> {
+    // One upload of a study at a time, from its check of the cloud copy to the copy it answers:
+    // two windows' uploads both found the copy they started from and the later one replaced the
+    // first, which also said it succeeded.
+    let turn = upload_turn(&request.account, &request.study_id);
+    let _turn = turn.lock().await;
     let before = valid_chapters(&request.baseline)?;
     let after = valid_chapters(&request.pgn)?;
     let wanted = after.len();

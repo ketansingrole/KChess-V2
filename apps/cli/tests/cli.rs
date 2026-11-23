@@ -407,14 +407,14 @@ fn scripted_engine_in(mode: &str) -> std::path::PathBuf {
     copy
 }
 
-/// `analyze` streams the engine's lines until Ctrl-C, then stops the search and exits cleanly.
+/// `analyze` streams the engine's lines and ends with the search: it once kept waiting for
+/// Ctrl-C after the last update.
 #[cfg(unix)]
 #[test]
-fn analyze_streams_until_interrupted() {
-    use std::io::BufRead;
+fn analyze_streams_until_its_search_ends() {
     let profile = tempfile::tempdir().expect("profile");
     let engine = scripted_engine();
-    let mut child = kchess_cli()
+    let output = kchess_cli()
         .args(["--embedded", "--no-credentials", "--data-dir"])
         .arg(profile.path())
         .arg("--engine")
@@ -423,24 +423,16 @@ fn analyze_streams_until_interrupted() {
         .env("KCHESS_USER_DATA_DIR", profile.path())
         .env_remove("KCHESS_SERVICE_BINARY")
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("kchess-cli starts");
-    let mut stdout = std::io::BufReader::new(child.stdout.take().expect("stdout"));
-    let mut first = String::new();
-    stdout.read_line(&mut first).expect("a line");
-    let update: Value = serde_json::from_str(&first).expect("an analysis update");
-    assert_eq!(update["lines"][0]["pv"][0], "e2e4", "{update}");
-    // Still streaming: the command waits for Ctrl-C.
-    assert!(child.try_wait().expect("status").is_none());
-    let interrupted = Command::new("kill")
-        .args(["-INT", &child.id().to_string()])
-        .status()
-        .expect("kill runs");
-    assert!(interrupted.success());
-    let status = child.wait().expect("kchess-cli finishes");
-    assert!(status.success(), "{status:?}");
+        .output()
+        .expect("kchess-cli finishes");
+    assert!(output.status.success(), "{output:?}");
+    let updates: Vec<Value> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("an analysis update"))
+        .collect();
+    assert_eq!(updates[0]["lines"][0]["pv"][0], "e2e4", "{updates:?}");
+    let last = updates.last().expect("an update");
+    assert_eq!(last["done"], true, "{last}");
     let _ = std::fs::remove_dir_all(engine.parent().expect("engine folder"));
 }
 
@@ -738,6 +730,10 @@ struct Lichess {
     paths: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
+/// Appended to a reply's content type: its body is sent and the stream stays open, as a live
+/// game's does.
+const KEPT_OPEN: &str = "; kept-open";
+
 impl Lichess {
     fn serve(reply: impl Fn(&str) -> (&'static str, String) + Send + 'static) -> Lichess {
         use std::io::{BufRead, BufReader};
@@ -746,6 +742,8 @@ impl Lichess {
         let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = std::sync::Arc::clone(&paths);
         std::thread::spawn(move || {
+            // The streams answered `KEPT_OPEN`, held so they never end.
+            let mut kept = Vec::new();
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { return };
                 let mut reader = BufReader::new(stream.try_clone().expect("stream"));
@@ -760,6 +758,16 @@ impl Lichess {
                 }
                 seen.lock().expect("paths").push(path.clone());
                 let (kind, body) = reply(&path);
+                if let Some(kind) = kind.strip_suffix(KEPT_OPEN) {
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\ncontent-type: {kind}\r\n\
+                         transfer-encoding: chunked\r\n\r\n{:x}\r\n{body}\r\n",
+                        body.len()
+                    );
+                    kept.push(stream);
+                    continue;
+                }
                 let _ = write!(
                     stream,
                     "HTTP/1.1 200 OK\r\ncontent-type: {kind}\r\ncontent-length: {}\r\n\
@@ -865,7 +873,7 @@ fn watch_prints_the_game_until_interrupted() {
     .concat();
     let lichess = Lichess::serve(move |path| {
         if path == "/api/stream/game/VuAqDosj" {
-            ("application/x-ndjson", records.clone())
+            ("application/x-ndjson; kept-open", records.clone())
         } else {
             ("application/json", "{}".into())
         }
@@ -900,6 +908,44 @@ fn watch_prints_the_game_until_interrupted() {
     assert!(interrupted.success());
     let status = child.wait().expect("kchess-cli finishes");
     assert!(status.success(), "{status:?}");
+}
+
+/// A watched game that finishes ends `watch`: Lichess sends its description again with its result
+/// and closes the stream. A script reading the lines once waited for an end that never came.
+#[cfg(unix)]
+#[test]
+fn watch_ends_when_the_game_does() {
+    let description = |status: &str| {
+        json!({
+            "id": "VuAqDosj",
+            "variant": { "key": "standard", "name": "Standard" },
+            "speed": "rapid", "rated": true, "source": "arena",
+            "status": { "id": 30, "name": status },
+            "players": {
+                "white": { "user": { "name": "Thot_x_Thor" }, "rating": 2155 },
+                "black": { "user": { "name": "stefanoschor" }, "rating": 1766 }
+            }
+        })
+    };
+    let records = [description("started"), description("mate")]
+        .map(|record| format!("{record}\n"))
+        .concat();
+    let lichess = Lichess::serve(move |path| {
+        if path == "/api/stream/game/VuAqDosj" {
+            ("application/x-ndjson", records.clone())
+        } else {
+            ("application/json", "{}".into())
+        }
+    });
+    let profile = tempfile::tempdir().expect("profile");
+    let output = lichess.cli(profile.path(), &["watch", "VuAqDosj"], "");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frames = String::from_utf8_lossy(&output.stdout);
+    assert!(frames.lines().count() >= 1, "{frames}");
 }
 
 /// `pgn` prints a Lichess game's or a study chapter's PGN, and `review` reviews either.

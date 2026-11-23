@@ -499,7 +499,10 @@ impl Inner {
         // The search completed (even if cancelled): do not send a second `stop` on drop.
         // A cancelled search already sent `stop` above; a completed one needs none.
         _searching.completed = true;
-        if cancelled {
+        // Cancelled as the engine finished: its last lines were dropped as cancelled, so the
+        // search is not complete either. The finished reply could win the race with the stop,
+        // and a stopped analysis was published (and kept) as completed.
+        if cancelled || stop.is_cancelled() || cancel.is_some_and(CancellationToken::is_cancelled) {
             return Err(search_cancelled());
         }
         Ok(line)
@@ -525,6 +528,15 @@ impl Inner {
         };
         if pending.is_empty() {
             return Ok(());
+        }
+        {
+            // Once sent, the engine may hold the new values even if this wait is dropped (a client
+            // that leaves mid-search): forget the old ones now, recorded again once acknowledged,
+            // so the next search sends them instead of trusting a stale cache.
+            let mut known = lock(&self.options);
+            for (name, _) in &pending {
+                known.remove(*name);
+            }
         }
         for (name, value) in &pending {
             self.write(&format!("setoption name {name} value {value}"))?;

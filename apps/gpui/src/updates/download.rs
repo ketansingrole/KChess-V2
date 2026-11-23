@@ -342,8 +342,32 @@ pub(super) fn kept_folder(root: &Path, version: &str) -> PathBuf {
     root.join(KEPT).join(version)
 }
 
+/// Held (shared) by each KChess whose staged update is the package in that kept folder.
+const STAGED: &str = ".staged";
+
+/// A checked download, and the hold on its folder (`hold_kept`) while it is offered.
+pub(super) struct Downloaded {
+    pub path: PathBuf,
+    pub hold: Option<std::fs::File>,
+}
+
+/// Holds the kept download `folder` for as long as the answer lives, so another KChess's
+/// `prune_kept` leaves it: a newer download elsewhere removed a package this app still offered,
+/// and installing it failed. Taken before the download's own lock is let go, so no cleanup comes
+/// between the two.
+pub(super) fn hold_kept(folder: &Path) -> Option<std::fs::File> {
+    let hold = std::fs::File::options()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(folder.join(STAGED))
+        .warn_on_err()?;
+    hold.lock_shared().warn_on_err()?;
+    Some(hold)
+}
+
 /// Remove the kept downloads `stale` names (by version), except one another KChess is still
-/// downloading into (its folder's lock is held).
+/// downloading into (its folder's lock is held) or offers as ready (`hold_kept`).
 pub(super) fn prune_kept(root: &Path, stale: impl Fn(Option<Version>) -> bool) {
     let Ok(entries) = std::fs::read_dir(root.join(KEPT)) else {
         return;
@@ -354,10 +378,12 @@ pub(super) fn prune_kept(root: &Path, stale: impl Fn(Option<Version>) -> bool) {
             continue;
         }
         let path = entry.path();
-        let busy = std::fs::File::options()
-            .write(true)
-            .open(path.join(".lock"))
-            .is_ok_and(|lock| lock.try_lock().is_err());
+        let busy = [".lock", STAGED].iter().any(|name| {
+            std::fs::File::options()
+                .write(true)
+                .open(path.join(name))
+                .is_ok_and(|lock| lock.try_lock().is_err())
+        });
         if !busy {
             std::fs::remove_dir_all(&path).ok_if_missing().warn_on_err();
         }
@@ -403,7 +429,7 @@ pub(super) async fn download_signed(
     folder: PathBuf,
     progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
     key: Option<Vec<u8>>,
-) -> Result<PathBuf, String> {
+) -> Result<Downloaded, String> {
     let client = http()?;
     let sums = small_file(
         &client,
@@ -442,7 +468,11 @@ pub(super) async fn download_signed(
         log(&format!("{} was already downloaded", asset.name));
         let size = std::fs::metadata(&file_path).map_or(asset.size, |meta| meta.len());
         let _ = progress.unbounded_send((size, size));
-        return Ok(file_path);
+        let hold = hold_kept(&folder);
+        return Ok(Downloaded {
+            path: file_path,
+            hold,
+        });
     }
     std::fs::remove_file(&file_path)
         .ok_if_missing()
@@ -473,7 +503,12 @@ pub(super) async fn download_signed(
         return Err("The downloaded update did not match its checksum".into());
     }
     std::fs::rename(&part_path, &file_path).map_err(fail)?;
-    Ok(file_path)
+    let hold = hold_kept(&folder);
+    drop(lock);
+    Ok(Downloaded {
+        path: file_path,
+        hold,
+    })
 }
 
 /// Unpack a macOS update's zip into `folder`; the `.app` it holds. The zip stays where it was
@@ -517,14 +552,18 @@ pub(super) async fn fetch(
     work: PathBuf,
     progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
     key: Option<Vec<u8>>,
-) -> Result<PathBuf, String> {
+) -> Result<Downloaded, String> {
     let file = download_signed(release, asset, folder, progress, key).await?;
+    // The bundle unpacked on macOS is this app's own: its download needs no hold.
     let staged = match package {
-        Package::MacZip => unpack(&file, &work)?,
+        Package::MacZip => Downloaded {
+            path: unpack(&file.path, &work)?,
+            hold: None,
+        },
         _ => file,
     };
     if let Some(install) = install {
-        signed_as_running(package, &install, &staged)?;
+        signed_as_running(package, &install, &staged.path)?;
     }
     Ok(staged)
 }
@@ -557,7 +596,7 @@ pub(super) async fn fetch_update(
     work: PathBuf,
     progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
     key: Option<Vec<u8>>,
-) -> Result<PathBuf, String> {
+) -> Result<Downloaded, String> {
     let patch = install
         .clone()
         .and_then(|install| Some((install, patch_asset(&release, package, &current)?)));
@@ -575,7 +614,12 @@ pub(super) async fn fetch_update(
         )
         .await;
         match patched {
-            Ok(staged) => return Ok(staged),
+            Ok(staged) => {
+                return Ok(Downloaded {
+                    path: staged,
+                    hold: None,
+                });
+            }
             Err(cause) => log(&format!(
                 "patch failed: {cause}; downloading the whole package"
             )),
@@ -604,7 +648,9 @@ pub(super) async fn fetch_patch(
 ) -> Result<PathBuf, String> {
     let version = release.tag_name.trim_start_matches('v').to_string();
     let deb = asset_name(&version, package).unwrap_or_default();
-    let file = download_signed(release, delta, folder, progress, key).await?;
+    let file = download_signed(release, delta, folder, progress, key)
+        .await?
+        .path;
     let staged = patch::rebuild(
         &patch::Patch {
             delta: &file,

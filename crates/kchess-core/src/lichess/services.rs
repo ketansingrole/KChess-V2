@@ -87,11 +87,7 @@ impl Services {
         {
             let watch = spectator.clone();
             online.set_state_hook(Arc::new(move |live_game, blocked| {
-                if live_game {
-                    game_stops();
-                    watch.stop();
-                }
-                busy.store(blocked, std::sync::atomic::Ordering::SeqCst);
+                adopt_state(live_game, blocked, &busy, &*game_stops, &|| watch.stop());
             }));
         }
         let lookups = PositionLookups::new(
@@ -163,5 +159,74 @@ impl Services {
     pub fn forget_usage(&self, accounts: &[String]) {
         self.lichess.client().policy().forget_usage(accounts);
         self.usage.forget(accounts);
+    }
+}
+
+/// The state hook: a live game (or the startup check) stops the engines and the watch, and
+/// assistance becoming blocked otherwise (a game played elsewhere) stops the engines too; then
+/// the engines' busy state is the session's. A game played elsewhere once only blocked new
+/// help, and an analysis already running went on through it.
+fn adopt_state(
+    live_game: bool,
+    blocked: bool,
+    busy: &std::sync::atomic::AtomicBool,
+    stop_engines: &dyn Fn(),
+    stop_watch: &dyn Fn(),
+) {
+    let was_blocked = busy.load(std::sync::atomic::Ordering::SeqCst);
+    if live_game {
+        stop_engines();
+        stop_watch();
+    } else if blocked && !was_blocked {
+        stop_engines();
+    }
+    busy.store(blocked, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::adopt_state;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    /// Help becoming blocked without a game here (one played elsewhere) stops the engines once;
+    /// staying blocked, or lent again, stops nothing more, and the watch goes on.
+    #[test]
+    fn help_becoming_blocked_stops_the_engines() {
+        let busy = AtomicBool::new(false);
+        let (engines, watch) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let state = |live_game, blocked| {
+            adopt_state(
+                live_game,
+                blocked,
+                &busy,
+                &|| {
+                    engines.fetch_add(1, Ordering::SeqCst);
+                },
+                &|| {
+                    watch.fetch_add(1, Ordering::SeqCst);
+                },
+            );
+        };
+        state(false, true);
+        assert_eq!(
+            engines.load(Ordering::SeqCst),
+            1,
+            "a game elsewhere stops them"
+        );
+        assert!(busy.load(Ordering::SeqCst));
+        state(false, true);
+        state(false, false);
+        assert_eq!(
+            engines.load(Ordering::SeqCst),
+            1,
+            "only when help becomes blocked"
+        );
+        assert_eq!(watch.load(Ordering::SeqCst), 0, "the watch goes on");
+        state(true, true);
+        assert_eq!(
+            (engines.load(Ordering::SeqCst), watch.load(Ordering::SeqCst)),
+            (2, 1),
+            "a live game here stops both"
+        );
     }
 }

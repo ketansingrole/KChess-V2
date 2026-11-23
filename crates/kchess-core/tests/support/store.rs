@@ -49,6 +49,8 @@ pub struct Store {
     pub host: Arc<Recording>,
     pub db: Database,
     pub secrets: Secrets,
+    /// Whether this start sealed the earlier database's waiting logins (once per start).
+    sealed: std::sync::atomic::AtomicBool,
 }
 
 /// A fresh profile on a temporary directory, with OS encryption available.
@@ -73,6 +75,7 @@ impl Store {
             host,
             db,
             secrets,
+            sealed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -131,25 +134,39 @@ impl Store {
         self.db.write(work).and_then(games::as_json)
     }
 
-    /// The one-time import, as the facade's `migrate` runs it: its plaintext tokens are stored
-    /// encrypted with the fake secret store. Failed token imports are skipped.
+    /// The one-time import, then the sealing of its waiting logins, as the facade's `Migration`
+    /// runs them: each is stored encrypted with the fake secret store, its account reconnected,
+    /// and its plaintext removed. Without encryption they wait.
     fn migrate(&self) {
-        let available = self.secrets.available;
-        let Ok(tokens) = self.db.write(|c| import::migrate(c, available)) else {
+        if self.db.write(import::migrate).is_err()
+            || self.sealed.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        let Ok(logins) = self.db.write(import::due_legacy_logins) else {
             return;
         };
-        if !available {
+        let mut done = logins.done;
+        if self.secrets.available {
+            for entry in logins.due {
+                let Some(account) = entry.account else {
+                    continue;
+                };
+                let sealed = encrypt(&entry.token);
+                if self
+                    .db
+                    .write(|c| import::restore_legacy_login(c.db, &account, &sealed))
+                    .is_ok()
+                {
+                    done.push(Some(account));
+                }
+            }
+        }
+        if done.is_empty() {
             return;
         }
-        for entry in &tokens {
-            let sealed = encrypt(&entry.token);
-            let _ = self
-                .db
-                .write(|c| games::import_token_ciphertext(c.db, entry.account.as_deref(), &sealed));
-        }
-        // The earlier database's plaintext copies go once sealed.
-        if !tokens.is_empty() {
-            let _ = self.db.write(import::scrub_legacy_tokens);
+        if let Ok(true) = self.db.read(|c| import::scrub_legacy_tokens(c, &done)) {
+            let _ = self.db.write(|c| import::forget_legacy_logins(c.db, &done));
         }
     }
 

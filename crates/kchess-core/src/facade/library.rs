@@ -1,12 +1,12 @@
 //! The library: studies, played games, drills, sessions and repertoire notes.
 
 use kchess_contracts::check::{
-    ArchivedGame, LibraryId, MissCounts, NotificationId, PgnText, Position, RepertoireKey,
-    RepertoireLine, ReviewKey, SessionObject, Side, ViewPreferenceKey,
+    ArchivedGame, LibraryId, MissCounts, NotificationId, Position, RepertoireKey, RepertoireLine,
+    ReviewKey, SessionObject, Side, ViewPreferenceKey,
 };
 use kchess_contracts::core_api::LibraryApi;
 use kchess_contracts::types::{
-    Drill, JoinedTournament, Library, MistakeGame, MistakesAdded, NotificationEntry,
+    ClearedMisses, Drill, JoinedTournament, Library, MistakeGame, MistakesAdded, NotificationEntry,
     NotificationInput, RepertoireMisses, RepertoireSchedule, SessionDocument, SessionKind,
     StudyCommand, StudyCommandResult,
 };
@@ -31,7 +31,7 @@ impl LibraryApi for Core {
         &self,
         command: StudyCommand,
         incremental: Option<bool>,
-        based_on: Option<PgnText>,
+        based_on: Option<kchess_contracts::check::ChapterPgn>,
     ) -> Result<StudyCommandResult> {
         let (incremental, now) = (incremental == Some(true), now_ms() as f64);
         self.database
@@ -122,7 +122,7 @@ impl LibraryApi for Core {
             .await
     }
 
-    async fn clear_repertoire_misses(&self, key: RepertoireKey) -> Result<RepertoireMisses> {
+    async fn clear_repertoire_misses(&self, key: RepertoireKey) -> Result<ClearedMisses> {
         self.database
             .write_async(move |ctx| library::clear_repertoire_misses(ctx.host, ctx.db, &key.0))
             .await

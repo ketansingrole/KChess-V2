@@ -31,6 +31,23 @@ pub fn check(cx: &App) -> Result<Profile, String> {
     .map_err(|cause| cause.message)
 }
 
+/// `check`, for the startup screen's Try again: the core answers on its own threads, so the
+/// window keeps drawing while it reads the library.
+fn check_later(cx: &App) -> impl Future<Output = Result<Profile, String>> + 'static {
+    let bridge = cx.global::<AppCore>().bridge.clone();
+    async move {
+        let settings = bridge.request(calls::DesktopSettings {}).await;
+        let checked = match settings {
+            Ok(settings) => bridge
+                .request(calls::Library {})
+                .await
+                .map(|library| Profile { settings, library }),
+            Err(cause) => Err(cause),
+        };
+        checked.map_err(|cause| cause.message)
+    }
+}
+
 /// The settings must be readable, and each is read once for every model that starts from it:
 /// Settings starts from these (it read them a second time before), and each library read
 /// decodes every study and replays every played game.
@@ -64,6 +81,7 @@ fn show(message: String, cx: &mut App) {
     let opened = gpui_kit::open_window(options, cx, |_, cx| {
         cx.new(|_| StartupScreen {
             error: message.into(),
+            checking: None,
         })
     });
     if let Err(cause) = opened {
@@ -78,21 +96,37 @@ fn show(message: String, cx: &mut App) {
 
 struct StartupScreen {
     error: SharedString,
+    /// Try again's check of the profile, while the core reads it.
+    checking: Option<Task<()>>,
 }
 
 impl StartupScreen {
+    /// Checks the profile again off the main thread: it once waited for the core's library read
+    /// in the click, and the window froze until the answer came.
     fn retry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match check(cx) {
-            Ok(profile) => {
-                // The workspace opens in its own window where this one stood.
-                window.remove_window();
-                cx.defer(move |cx| crate::start_models(profile, cx));
-            }
-            Err(message) => {
-                self.error = message.into();
-                cx.notify();
-            }
+        if self.checking.is_some() {
+            return;
         }
+        let checked = check_later(cx);
+        self.checking = Some(cx.spawn_in(window, async move |this, cx| {
+            let checked = checked.await;
+            this.update_in(cx, |this, window, cx| {
+                this.checking = None;
+                match checked {
+                    Ok(profile) => {
+                        // The workspace opens in its own window where this one stood.
+                        window.remove_window();
+                        cx.defer(move |cx| crate::start_models(profile, cx));
+                    }
+                    Err(message) => {
+                        this.error = message.into();
+                        cx.notify();
+                    }
+                }
+            })
+            .ok();
+        }));
+        cx.notify();
     }
 }
 
@@ -124,6 +158,7 @@ impl Render for StartupScreen {
             )
             .child(
                 crate::widgets::try_again("startup-retry")
+                    .loading(self.checking.is_some())
                     .on_click(cx.listener(|this, _, window, cx| this.retry(window, cx))),
             )
     }
@@ -152,6 +187,43 @@ mod tests {
             Err("The settings file is locked".into())
         );
         assert!(readable(|| Ok(()), || Err::<(), _>(CoreError::new("x"))).is_err());
+    }
+
+    /// Try again returns at once and checks while the window keeps drawing: the click once waited
+    /// for the core's library read, so the screen froze until it came.
+    #[gpui_kit::test]
+    fn try_again_checks_the_profile_without_waiting(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = crate::e2e::Harness::start(cx);
+        let (window, screen) = app
+            .cx
+            .update(|cx| {
+                gpui_kit::open_window(crate::main_window_options(cx), cx, |_, cx| {
+                    cx.new(|_| super::StartupScreen {
+                        error: "The settings file is locked".into(),
+                        checking: None,
+                    })
+                })
+            })
+            .expect("the startup screen");
+        let retry = |app: &mut crate::e2e::Harness| {
+            app.cx
+                .update_window(window, |_, window, cx| {
+                    screen.update(cx, |screen, cx| {
+                        screen.retry(window, cx);
+                        screen.checking.is_some()
+                    })
+                })
+                .expect("the screen stays open while it checks")
+        };
+        assert!(retry(&mut app), "the check is under way");
+        // A second click starts no second check.
+        assert!(retry(&mut app));
+        // Closed before the answer: the check finds no window and opens nothing.
+        app.cx
+            .update_window(window, |_, window, _| window.remove_window())
+            .expect("still open");
+        app.settle();
     }
 
     /// The library is read once to start, not once for each model that starts from it, and not

@@ -854,6 +854,40 @@ fn puzzles_deleted_in_another_window_are_gone_here_too(cx: &mut gpui_kit::TestAp
     app.wait_for("the deleted puzzles", |_, cx| !installed(cx));
 }
 
+/// A download that ends without this window starting it (its window closed, or it failed) no
+/// longer shows here as running: a window that had read it busy kept its Cancel, which did nothing.
+#[gpui_kit::test]
+fn a_download_that_ended_elsewhere_stops_showing_here(cx: &mut gpui_kit::TestAppContext) {
+    use crate::core::{AppCore, ClientEvent, CoreEvent};
+    use crate::puzzle_db::PuzzleDbHandle;
+    let mut app = Harness::start(cx);
+    app.open("Puzzles");
+    // Another window's download, read here as running.
+    app.cx.update(|cx| {
+        let db = cx.global::<PuzzleDbHandle>().0.clone();
+        db.update(cx, |db, cx| {
+            db.status.busy = true;
+            cx.notify();
+        });
+    });
+    let busy = |cx: &gpui_kit::App| cx.global::<PuzzleDbHandle>().0.read(cx).busy();
+    app.wait_for("the download shown", |_, cx| busy(cx));
+    app.cx.update(|cx| {
+        let core = cx.global::<AppCore>().clone();
+        let ended = kchess_contracts::types::PuzzleDbProgress {
+            phase: kchess_contracts::types::PuzzleDbPhase::Cancelled,
+            received: 0,
+            kept: 0,
+            total: None,
+            message: None,
+        };
+        core.events.update(cx, |_, cx| {
+            cx.emit(ClientEvent::Event(CoreEvent::PuzzleDbProgress(ended)))
+        });
+    });
+    app.wait_for("the download no longer shown", |_, cx| !busy(cx));
+}
+
 /// A rated puzzle's result comes from Lichess a moment after the solve. Its line under the puzzle
 /// arrived out of nowhere and pushed the session's tally and Reset down; its place is now kept
 /// from the solve, saying what is on its way.

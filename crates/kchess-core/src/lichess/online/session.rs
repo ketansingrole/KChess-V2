@@ -61,6 +61,7 @@ impl OnlineSession {
                 state: Mutex::new(State::new()),
                 backoff,
                 state_hook: Mutex::new(None),
+                state_hook_turn: Mutex::new(()),
                 assistance_reported: Mutex::new(None),
             }),
         }
@@ -136,7 +137,7 @@ impl OnlineSession {
             kind,
         };
         let live_game = super::state::reports_live_game(phase, game_id);
-        self.run_state_hook(live_game, self.assistance_blocked());
+        self.run_state_hook(live_game);
         self.emit(CoreEvent::OnlineState(payload));
     }
 
@@ -496,6 +497,7 @@ impl OnlineSession {
             self.challenge_became_game(&game_id);
             // A game the Board API cannot play stays where it was started; it is listed only.
             if !game.board_compatible() {
+                self.started_elsewhere(&game_id, game.correspondence());
                 self.ongoing_changed();
                 return;
             }
@@ -518,6 +520,7 @@ impl OnlineSession {
         if let ServerEvent::GameFinish { game } = read {
             self.ongoing_changed();
             let game_id = game.and_then(|game| game.game_id).unwrap_or_default();
+            self.finished_elsewhere(&game_id);
             {
                 let mut st = self.st();
                 if !st.concerns(&game_id) {

@@ -3,9 +3,10 @@
 //! document in `kchess.db`. The decoders and semantic validation are `kchess_domain`'s.
 
 use kchess_contracts::types::{
-    BroadcastAlert, BroadcastRoundStarted, BroadcastTourDetail, Drill, JoinedTournament, Keyed,
-    MistakeGame, MistakesAdded, PlayedGame, RepertoireMisses, RepertoireSchedule, ReviewSource,
-    SessionDocument, SessionKind, StudyCommand, StudyCommandResult, TournamentSystem,
+    BroadcastAlert, BroadcastRoundStarted, BroadcastTourDetail, ClearedMisses, Drill,
+    JoinedTournament, Keyed, MistakeGame, MistakesAdded, PlayedGame, RepertoireMisses,
+    RepertoireSchedule, ReviewSource, SessionDocument, SessionKind, StudyCommand,
+    StudyCommandResult, TournamentSystem,
 };
 use kchess_domain::color::Color;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -571,11 +572,19 @@ pub fn clear_repertoire_misses(
     host: &dyn Host,
     db: &Connection,
     key: &str,
-) -> Result<RepertoireMisses> {
+) -> Result<ClearedMisses> {
     let mut misses = read_misses(host, db)?;
-    misses.0.retain(|(table, _)| table != key);
+    let mut removed = Keyed::default();
+    misses.0.retain_mut(|(table, counts)| {
+        if table == key {
+            removed.0.append(&mut counts.0);
+            false
+        } else {
+            true
+        }
+    });
     write_misses(db, &misses)?;
-    Ok(misses)
+    Ok(ClearedMisses { misses, removed })
 }
 
 /// Undo of a clear: the cleared table's counts, added to any missed since.
@@ -1350,7 +1359,9 @@ mod tests {
             json!({ "white": { "fen1": 2 }, "black": { "fen2": 1 } })
         );
         let cleared = clear_repertoire_misses(&QUIET, &db, "white").expect("clear");
-        assert_eq!(cleared, json!({ "black": { "fen2": 1 } }));
+        assert_eq!(cleared["misses"], json!({ "black": { "fen2": 1 } }));
+        // What it removed, as stored, for Undo.
+        assert_eq!(cleared["removed"], json!({ "fen1": 2 }));
         // Undo puts the cleared table back, adding to a miss recorded since.
         miss("white", "fen3");
         let restored =

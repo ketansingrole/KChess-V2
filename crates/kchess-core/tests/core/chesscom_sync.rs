@@ -197,6 +197,39 @@ async fn a_rate_limited_month_is_asked_again_after_the_wait() {
     assert_eq!(games[0]["status"], "outoftime");
 }
 
+/// A past month answered without its list of games is not imported as empty: it was marked
+/// complete and never asked for again, so its games never arrived.
+#[tokio::test]
+async fn a_month_without_its_games_is_asked_again() {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&asked);
+    let fixture = serve(move |request: &Request| match request.path() {
+        "/pub/player/alice" => Reply::Json(200, profile_body()),
+        "/pub/player/alice/games/archives" => Reply::Json(
+            200,
+            json!({ "archives": [format!("https://api.chess.com/pub/player/alice/games/{PAST}")] })
+                .to_string(),
+        ),
+        path if path.ends_with(PAST) => {
+            if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                Reply::Json(200, "{}".into())
+            } else {
+                Reply::Json(
+                    200,
+                    month_body(&[game(7, "Alice", "bob", "win", "timeout")]),
+                )
+            }
+        }
+        _ => Reply::Json(404, "{}".into()),
+    })
+    .await;
+    let profile = profile(&fixture);
+    assert!(profile.chesscom.add("alice").await.is_err());
+    profile.chesscom.sync(None).await.expect("the next sync");
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+    assert_eq!(profile.games("Alice@chess.com").await.len(), 1);
+}
+
 /// The player, their archives and accounts are gone, and the add that was overtaken failed
 /// without waiting for Chess.com to answer (`open` is never sent).
 async fn removed_during_add(

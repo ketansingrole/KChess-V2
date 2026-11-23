@@ -179,7 +179,10 @@ impl OnlineSession {
             st.recovery_unverified = true;
             st.resume_attempt
         };
-        let mut checking = Checking::default();
+        let mut checking = Checking {
+            began: self.st().elsewhere_changes,
+            ..Checking::default()
+        };
         let (session, account, game) = {
             let st = self.st();
             (
@@ -294,6 +297,13 @@ impl OnlineSession {
         let (session, account) = {
             let mut st = self.st();
             st.protected_game.clear();
+            // Every account was checked: this is what is played elsewhere now, and a finish
+            // missed while the stream was down no longer keeps assistance locked.
+            st.found_elsewhere(
+                std::mem::take(&mut checking.elsewhere),
+                checking.began,
+                true,
+            );
             (st.epoch, st.current_account.clone())
         };
         self.emit_state(session, &account, "", Lane::Game, OnlinePhase::Idle, None);
@@ -354,12 +364,29 @@ impl OnlineSession {
                 })
                 .and_then(|game| game["gameId"].as_str())
                 .map(str::to_string);
+            // The real-time games it cannot play lock assistance until they end, whatever this
+            // check finds for the board.
+            checking.elsewhere.extend(
+                now_playing
+                    .iter()
+                    .filter(|game| {
+                        let game = GameRef::read(game);
+                        !game.correspondence() && !game.board_compatible()
+                    })
+                    .filter_map(|game| game["gameId"].as_str())
+                    .map(str::to_string),
+            );
             if attempt != self.st().resume_attempt {
                 return Err(CoreError::aborted("Recovery cancelled."));
             }
             let Some(id) = id else {
                 return Ok(None);
             };
+            {
+                // The accounts not checked yet keep the games they were known to play.
+                let found = checking.elsewhere.clone();
+                self.st().found_elsewhere(found, checking.began, false);
+            }
             self.st().recovery_unverified = false;
             self.cancel_inner();
             {
@@ -423,9 +450,15 @@ impl OnlineSession {
             .unwrap_or(false);
         let mut games = Vec::new();
         let mut first_error: Option<CoreError> = None;
+        // What every account plays elsewhere, which also settles a game whose finish went
+        // unheard (its account's stream was replaced by another's).
+        let began = self.st().elsewhere_changes;
+        let mut elsewhere = std::collections::BTreeSet::new();
+        let mut complete = true;
         for account in accounts {
             let loaded: CoreResult<()> = async {
                 let Some(auth) = self.login(&account).await? else {
+                    complete = false;
                     return Ok(());
                 };
                 let playing: Value = self
@@ -442,6 +475,13 @@ impl OnlineSession {
                     .into_iter()
                     .flatten()
                 {
+                    let read = GameRef::read(game);
+                    if !read.correspondence()
+                        && !read.board_compatible()
+                        && let Some(id) = game["gameId"].as_str()
+                    {
+                        elsewhere.insert(id.to_string());
+                    }
                     games.push(ongoing_game(game, &account));
                 }
                 if challenges_wanted && !self.has_event_stream(&account) {
@@ -451,6 +491,7 @@ impl OnlineSession {
             }
             .await;
             if let Err(cause) = loaded {
+                complete = false;
                 if cause.aborted {
                     continue;
                 }
@@ -461,6 +502,8 @@ impl OnlineSession {
                 first_error.get_or_insert(cause);
             }
         }
+        self.st().found_elsewhere(elsewhere, began, complete);
+        self.refresh_assistance();
         if let Some(error) = first_error.filter(|_| games.is_empty()) {
             return Err(error);
         }

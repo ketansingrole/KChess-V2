@@ -238,6 +238,25 @@ async fn online_play_pauses_automatic_reviews() {
     core.close().await;
 }
 
+/// Automatic reviews wait until a check said no game is live: a core whose first call was not
+/// `resumeOnline` (a command line's `status`) ran them while the account was playing on Lichess.
+#[tokio::test]
+async fn automatic_reviews_wait_for_the_online_check() {
+    let dir = profile();
+    let host = TestHost::new();
+    let core = core(&host, dir.path());
+    core.call("loadData", vec![]).await.expect("loadData");
+    core.reviews_changed_for_tests();
+    let status = support::wait_until(WAIT, "a paused status", || {
+        host.named("review:status")
+            .into_iter()
+            .find(|status| status["paused"] == json!("online"))
+    })
+    .await;
+    assert_eq!(status["paused"], json!("online"));
+    core.close().await;
+}
+
 #[tokio::test]
 async fn closing_the_core_cancels_an_install_and_stops_engines() {
     let dir = profile();

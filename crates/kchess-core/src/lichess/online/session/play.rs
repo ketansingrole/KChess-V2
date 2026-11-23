@@ -140,13 +140,33 @@ impl OnlineSession {
     /// A game just stopped being live or protected: the engines' busy state follows now. It
     /// was taken only from the next state report, so reviews stayed paused after a game ended.
     /// Called without the state lock held.
+    /// A game Lichess says started that the Board API cannot play: a real-time one locks
+    /// assistance until it finishes (`State::elsewhere`).
+    pub(super) fn started_elsewhere(&self, id: &str, correspondence: bool) {
+        if correspondence || id.is_empty() {
+            return;
+        }
+        if self.st().started_elsewhere(id) {
+            self.refresh_assistance();
+        }
+    }
+
+    /// A game Lichess says finished: one played elsewhere no longer locks assistance.
+    pub(super) fn finished_elsewhere(&self, id: &str) {
+        if self.st().finished_elsewhere(id) {
+            self.refresh_assistance();
+        }
+    }
+
     pub(super) fn refresh_assistance(&self) {
-        self.run_state_hook(false, self.assistance_blocked());
+        self.run_state_hook(false);
     }
 
     /// Runs the state hook, if any, and reports the assistance when it changed; called without
-    /// the state lock held.
-    pub(super) fn run_state_hook(&self, live_game: bool, blocked: bool) {
+    /// the state lock held. One run at a time, each reading whether help is blocked once it is
+    /// its turn: a run that read it and then stalled once overwrote a newer run's answer, and
+    /// lent the engines to reviews in the middle of another account's game.
+    pub(super) fn run_state_hook(&self, live_game: bool) {
         let hook = self
             .inner
             .state_hook
@@ -154,7 +174,8 @@ impl OnlineSession {
             .ok()
             .and_then(|slot| slot.clone());
         if let Some(hook) = hook {
-            hook(live_game, blocked);
+            let _turn = self.inner.state_hook_turn.lock();
+            hook(live_game, self.assistance_blocked());
         }
         self.report_assistance();
     }
@@ -187,7 +208,7 @@ impl OnlineSession {
     /// comes first; otherwise a check for a game that has not answered (or failed).
     pub fn assistance(&self) -> Assistance {
         let st = self.st();
-        if st.live.is_some() || !st.protected_game.is_empty() {
+        if st.live.is_some() || !st.protected_game.is_empty() || !st.elsewhere.is_empty() {
             Assistance::LiveGame
         } else if st.recovery_unverified {
             Assistance::Unverified

@@ -925,31 +925,59 @@ impl Repertoire {
             .is_some_and(|table| !table.is_empty())
     }
 
-    /// Forget this repertoire's misses at once; Undo puts them back.
+    /// Forget this repertoire's misses at once; once forgotten, Undo puts back what the core
+    /// removed (with any miss another window had recorded), and only then.
     fn clear_misses(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let key = self.miss_key(cx);
-        let at = self.misses.0.iter().position(|(table, _)| *table == key);
-        let forgotten = at
-            .map(|at| self.misses.0.remove(at).1)
-            .filter(|table| !table.is_empty())
-            .map(|table| {
-                Keyed(
-                    table
-                        .0
-                        .into_iter()
-                        .map(|(fen, count)| (fen, count.as_f64().unwrap_or(0.)))
-                        .collect(),
-                )
-            });
-        let saved = cx
+        self.misses.0.retain(|(table, _)| *table != key);
+        cx.notify();
+        let cleared = cx
             .global::<AppCore>()
             .request(calls::ClearRepertoireMisses {
                 key: RepertoireKey(key.clone()),
             });
-        self.keep_misses(saved, "clearing repertoire misses", cx);
-        let Some(forgotten) = forgotten else {
-            return;
-        };
+        let window_handle = window.window_handle();
+        cx.spawn(async move |this, cx| {
+            let cleared = match cleared.await {
+                Ok(cleared) => cleared,
+                Err(cause) => {
+                    crate::log::write(
+                        Level::Warn,
+                        "studies",
+                        &format!("clearing repertoire misses failed: {}", cause.message),
+                    );
+                    return;
+                }
+            };
+            let forgotten: Keyed<f64> = Keyed(
+                cleared
+                    .removed
+                    .0
+                    .into_iter()
+                    .map(|(fen, count)| (fen, count.as_f64().unwrap_or(0.)))
+                    .collect(),
+            );
+            let _ = window_handle.update(cx, |_, window, cx| {
+                let _ = this.update(cx, |this, cx| {
+                    this.misses = cleared.misses;
+                    if !forgotten.is_empty() {
+                        this.offer_undo(key, forgotten, window, cx);
+                    }
+                    cx.notify();
+                });
+            });
+        })
+        .detach();
+    }
+
+    /// The notification whose Undo puts `forgotten` back as `key`'s misses.
+    fn offer_undo(
+        &mut self,
+        key: String,
+        forgotten: Keyed<f64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let page = cx.entity().downgrade();
         window.push_notification(
             widgets::action_notification(

@@ -38,6 +38,9 @@ pub(crate) const LOST_STREAM: &str = "Lost connection to Lichess. Reconnect to r
 
 pub use kchess_contracts::types::Lane;
 
+/// How many finished games `State::finished` remembers.
+const FINISHED_KEPT: usize = 64;
+
 /// The session's mutable state. Never held across an await.
 pub(crate) struct State {
     pub(crate) controller: Option<Handle>,
@@ -50,6 +53,16 @@ pub(crate) struct State {
     pub(crate) move_in_flight: bool,
     pub(crate) protected_game: String,
     pub(crate) protected_account: String,
+    /// Real-time games of the account that the Board API cannot play (a bullet game on the
+    /// website): they never open here, but lock assistance until they finish as a game on the
+    /// board does. They once left it lent all game long. Each with the change (`elsewhere_changes`)
+    /// that added it, so a check of Lichess's games that began before it keeps it.
+    pub(crate) elsewhere: std::collections::BTreeMap<String, u64>,
+    /// Counts what the game streams told of games played elsewhere (`started_elsewhere`).
+    pub(crate) elsewhere_changes: u64,
+    /// The games the streams last said finished: a check that read them as playing before
+    /// they ended never brings them back.
+    pub(crate) finished: std::collections::VecDeque<String>,
     pub(crate) recovery_unverified: bool,
     pub(crate) current_account: String,
     /// The challenge sent and not yet answered, cancelled with the session.
@@ -133,6 +146,64 @@ impl State {
         }
     }
 
+    /// A real-time game played elsewhere started: true when it is new.
+    pub(crate) fn started_elsewhere(&mut self, id: &str) -> bool {
+        if id.is_empty() || self.finished.iter().any(|done| done == id) {
+            return false;
+        }
+        self.elsewhere_changes += 1;
+        let added = self.elsewhere_changes;
+        self.elsewhere.insert(id.to_string(), added).is_none()
+    }
+
+    /// A game finished, wherever it was played: true when it was one played elsewhere.
+    pub(crate) fn finished_elsewhere(&mut self, id: &str) -> bool {
+        if id.is_empty() {
+            return false;
+        }
+        self.elsewhere_changes += 1;
+        if !self.finished.iter().any(|done| done == id) {
+            if self.finished.len() == FINISHED_KEPT {
+                self.finished.pop_front();
+            }
+            self.finished.push_back(id.to_string());
+        }
+        self.elsewhere.remove(id).is_some()
+    }
+
+    /// The games played elsewhere as a check of every account found them, the check having
+    /// begun at change `began`: what started since stays, and what finished does not come back.
+    /// With `complete` false (an account went unchecked) nothing is dropped.
+    pub(crate) fn found_elsewhere(
+        &mut self,
+        found: std::collections::BTreeSet<String>,
+        began: u64,
+        complete: bool,
+    ) {
+        let mut next: std::collections::BTreeMap<String, u64> = self
+            .elsewhere
+            .iter()
+            .filter(|(_, added)| !complete || **added > began)
+            .map(|(id, added)| (id.clone(), *added))
+            .collect();
+        for id in found {
+            if !self.finished.iter().any(|done| *done == id) && !next.contains_key(&id) {
+                // A game a check adds is a change of its own: a check that began before it and
+                // answers later without it keeps it. Stamped with the check's start, it was
+                // dropped by an older check of another window answering after this one.
+                let added = match self.elsewhere.get(&id) {
+                    Some(added) => *added,
+                    None => {
+                        self.elsewhere_changes += 1;
+                        self.elsewhere_changes
+                    }
+                };
+                next.insert(id, added);
+            }
+        }
+        self.elsewhere = next;
+    }
+
     /// Whether a game's event (`gameFinish`) concerns this session: the board's game, or the
     /// protected one.
     pub(crate) fn concerns(&self, id: &str) -> bool {
@@ -156,6 +227,9 @@ impl State {
             move_in_flight: false,
             protected_game: String::new(),
             protected_account: String::new(),
+            elsewhere: std::collections::BTreeMap::new(),
+            elsewhere_changes: 0,
+            finished: std::collections::VecDeque::new(),
             recovery_unverified: true,
             current_account: String::new(),
             pending_challenge: None,
@@ -196,6 +270,8 @@ pub(crate) struct Inner {
     /// Run before each state is reported: a live game stops the engines and the watch, and the
     /// engines' busy state is refreshed.
     pub(crate) state_hook: Mutex<Option<StateHook>>,
+    /// Held while the state hook runs, so its runs follow one another (`run_state_hook`).
+    pub(crate) state_hook_turn: Mutex<()>,
     /// The assistance last reported on `online:assistance`; held while the next is worked out
     /// and sent, so the reports leave in the order they were true.
     pub(crate) assistance_reported: Mutex<Option<kchess_contracts::types::Assistance>>,
