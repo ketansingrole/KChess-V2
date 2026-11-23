@@ -377,6 +377,74 @@ async fn a_lookup_from_before_a_leave_and_rejoin_keeps_the_membership() {
     core.close().await;
 }
 
+/// A join waiting for the arena's details while the account left it from another window
+/// remembers nothing: it wrote the membership back after the leave forgot it, and the account's
+/// stream stayed open for a tournament it had left.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_join_answered_after_a_leave_remembers_nothing() {
+    let (release, gate) = tokio::sync::watch::channel(false);
+    let held = Arc::new(tokio::sync::Notify::new());
+    let looked_up = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let streams: Arc<Mutex<Vec<tokio::sync::mpsc::UnboundedSender<String>>>> = Arc::default();
+    let fixture = serve({
+        let (held, looked_up) = (Arc::clone(&held), Arc::clone(&looked_up));
+        let streams = Arc::clone(&streams);
+        move |seen| match (seen.method.as_str(), seen.path()) {
+            (_, "/api/stream/event") => {
+                let (sender, events) = tokio::sync::mpsc::unbounded_channel();
+                streams.lock().unwrap().push(sender);
+                Reply::Stream(events)
+            }
+            ("GET", "/api/tournament/Abcd1234") => {
+                let answer = Reply::Json(200, detail(true, false).to_string());
+                if looked_up.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    held.notify_one();
+                    Reply::Gated(gate.clone(), Box::new(answer))
+                } else {
+                    answer
+                }
+            }
+            ("POST", "/api/tournament/Abcd1234/join" | "/api/tournament/Abcd1234/withdraw") => {
+                Reply::Json(200, json!({ "ok": true }).to_string())
+            }
+            _ => Reply::Json(404, "{}".into()),
+        }
+    })
+    .await;
+    let profile = signed_in::open(&fixture.base).await;
+    let core = Arc::new(profile.core.clone());
+    let join = tokio::spawn({
+        let core = Arc::clone(&core);
+        async move {
+            core.call(
+                "joinTournament",
+                vec![
+                    json!("arena"),
+                    json!("Abcd1234"),
+                    json!("Alice"),
+                    Value::Null,
+                ],
+            )
+            .await
+        }
+    });
+    held.notified().await;
+    assert_eq!(
+        core.call(
+            "leaveTournament",
+            vec![json!("arena"), json!("Abcd1234"), json!("Alice")],
+        )
+        .await
+        .unwrap(),
+        json!(true)
+    );
+    let _ = release.send(true);
+    assert_eq!(join.await.unwrap().unwrap(), json!(true));
+    let joined = core.call("joinedTournaments", vec![]).await.unwrap();
+    assert_eq!(joined.as_array().map(Vec::len), Some(0), "{joined}");
+    core.close().await;
+}
+
 /// 2026-11-15: a join waiting for the arena's details while its account logged out still
 /// remembered the tournament afterwards, so the lobby reopened for an account that was gone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

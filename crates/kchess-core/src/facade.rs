@@ -30,7 +30,7 @@ mod social;
 mod spectate;
 mod studies;
 mod system;
-mod tournaments;
+pub(crate) mod tournaments;
 mod voice;
 
 /// The error of a closed core (`The KChess core is closed.`).

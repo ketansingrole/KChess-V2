@@ -16,12 +16,42 @@ use crate::lichess::tournaments;
 use crate::store::library;
 use crate::time::now_ms;
 use kchess_contracts::error::Result;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+/// How many times each tournament's memberships changed in this core. A lookup or a join reads
+/// its tournament's count as it begins, and its write applies only when the count is the same:
+/// an answer from before a join, a leave or both meanwhile is older than what is kept.
+#[derive(Default)]
+pub(crate) struct MembershipChanges(Mutex<HashMap<String, u64>>);
+
+impl MembershipChanges {
+    fn key(system: TournamentSystem, id: &str) -> String {
+        format!("{system:?}/{id}")
+    }
+
+    /// The tournament's count now.
+    fn seen(&self, system: TournamentSystem, id: &str) -> u64 {
+        self.0.lock().map_or(0, |counts| {
+            counts.get(&Self::key(system, id)).copied().unwrap_or(0)
+        })
+    }
+
+    /// Whether the tournament's count is still `seen`.
+    fn unchanged(&self, system: TournamentSystem, id: &str, seen: u64) -> bool {
+        self.seen(system, id) == seen
+    }
+
+    fn changed(&self, system: TournamentSystem, id: &str) {
+        if let Ok(mut counts) = self.0.lock() {
+            *counts.entry(Self::key(system, id)).or_default() += 1;
+        }
+    }
+}
 
 impl Core {
     /// Forgets one account's membership of a tournament, or every account's without one; with
-    /// `unchanged_since`, only when no membership changed after that count was read.
+    /// `unchanged_since`, only when its memberships did not change after that count was read.
     async fn forget_tournament(
         &self,
         system: TournamentSystem,
@@ -34,11 +64,11 @@ impl Core {
         let memberships = Arc::clone(&self.memberships);
         self.database
             .write_async(move |ctx| {
-                if unchanged_since.is_some_and(|seen| seen != memberships.load(Ordering::SeqCst)) {
+                if unchanged_since.is_some_and(|seen| !memberships.unchanged(system, &id, seen)) {
                     return Ok(());
                 }
                 library::forget_tournament(ctx.host, ctx.db, system, &id, account.as_deref())?;
-                memberships.fetch_add(1, Ordering::SeqCst);
+                memberships.changed(system, &id);
                 Ok(())
             })
             .await
@@ -73,7 +103,7 @@ impl TournamentsApi for Core {
         // then: one a join kept meanwhile (another window), or a leave and a join again, is newer
         // than this answer, which an answer from before them erased, and pairings stopped keeping
         // the account's stream open.
-        let changes = self.memberships.load(Ordering::SeqCst);
+        let changes = self.memberships.seen(system, &id.0);
         let was_kept = if system == TournamentSystem::Arena && !account.0.is_empty() {
             let (tournament, name) = (id.0.clone(), account.0.clone());
             let now = now_ms() as f64;
@@ -120,6 +150,10 @@ impl TournamentsApi for Core {
         // remembers no tournament for an account that is gone.
         let epoch = lichess.account_epoch(&name);
         let current = || lichess.account_epoch(&name) == epoch;
+        // A leave (another window) while this join waits for the details is newer: the join
+        // remembers nothing then. It once wrote the membership back after the leave forgot it,
+        // and the account's stream stayed open for a tournament it had left.
+        let changes = self.memberships.seen(system, &id);
         let result =
             done(tournaments::join_tournament(lichess, system, &id, &name, password).await)?;
         if result != Reply::Done(true) || !current() {
@@ -158,8 +192,11 @@ impl TournamentsApi for Core {
         let memberships = Arc::clone(&self.memberships);
         self.database
             .write_async(move |ctx| {
+                if !memberships.unchanged(system, &entry.id, changes) {
+                    return Ok(());
+                }
                 library::remember_tournament(ctx.host, ctx.db, &entry, now as f64)?;
-                memberships.fetch_add(1, Ordering::SeqCst);
+                memberships.changed(system, &entry.id);
                 Ok(())
             })
             .await?;

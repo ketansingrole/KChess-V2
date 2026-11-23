@@ -1,8 +1,8 @@
 //! The library: studies, played games, drills, sessions and repertoire notes.
 
 use kchess_contracts::check::{
-    ArchivedGame, LibraryId, MissCounts, NotificationId, PgnText, Position, RepertoireKey,
-    RepertoireLine, ReviewKey, SessionObject, Side, ViewPreferenceKey,
+    ArchivedGame, LibraryId, MissCounts, NotificationId, Position, RepertoireKey, RepertoireLine,
+    ReviewKey, SessionObject, Side, ViewPreferenceKey,
 };
 use kchess_contracts::core_api::LibraryApi;
 use kchess_contracts::types::{
@@ -31,7 +31,7 @@ impl LibraryApi for Core {
         &self,
         command: StudyCommand,
         incremental: Option<bool>,
-        based_on: Option<PgnText>,
+        based_on: Option<kchess_contracts::check::ChapterPgn>,
     ) -> Result<StudyCommandResult> {
         let (incremental, now) = (incremental == Some(true), now_ms() as f64);
         self.database

@@ -584,6 +584,42 @@ async fn cancelling_keeps_the_finished_quick_pass_and_is_not_complete() {
     rig.reviews.stop_reviews().await;
 }
 
+/// A review asked again just after it was stopped, while its engine still winds down, runs: the
+/// request joined the stopped job, which ended without queueing anything, so a command line
+/// waiting for the review waited for ever.
+#[tokio::test]
+async fn a_review_asked_again_as_it_stops_runs_again() {
+    let rig = rig("stall-late", "ask-again", false, "off", true);
+    rig.reviews
+        .request_review(request(&SCHOLARS))
+        .await
+        .expect("the request");
+    let key = key_of(START, &SCHOLARS);
+    wait_until(WAIT, "the quick pass", || {
+        updates_of(&rig)
+            .into_iter()
+            .find(|review| !review.complete && review.evals.iter().all(Option::is_some))
+    })
+    .await;
+    let searches = |rig: &Rig| {
+        received(&rig.log)
+            .iter()
+            .filter(|line| line.starts_with("go "))
+            .count()
+    };
+    let before = searches(&rig);
+    rig.reviews.cancel_review(&key);
+    rig.reviews
+        .request_review(request(&SCHOLARS))
+        .await
+        .expect("the request again");
+    wait_until(WAIT, "the review to run again", || {
+        (searches(&rig) > before).then_some(())
+    })
+    .await;
+    rig.reviews.stop_reviews().await;
+}
+
 #[tokio::test]
 async fn battery_power_limits_the_threads_a_review_may_use() {
     let rig = rig("review", "battery-threads", true, "off", true);

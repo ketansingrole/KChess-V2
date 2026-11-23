@@ -367,7 +367,14 @@ impl Reviews {
             if state.review_epoch != epoch || job.cancelled.load(Ordering::SeqCst) {
                 return Ok(stored);
             }
-            if let Some(running) = state.running.clone().filter(|running| running.key == key) {
+            // A running job of the same line serves the request, unless it was cancelled and is
+            // only winding down: it ends without queueing itself again, and the request was lost
+            // with it (a command line waiting for the review waited for ever).
+            if let Some(running) = state
+                .running
+                .clone()
+                .filter(|running| running.key == key && !running.cancelled.load(Ordering::SeqCst))
+            {
                 running.background.store(false, Ordering::SeqCst);
                 return Ok(stored);
             }

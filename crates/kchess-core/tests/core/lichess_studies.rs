@@ -103,6 +103,55 @@ async fn blocks_upload_when_the_cloud_changed_without_any_mutations() {
     assert!(posts(&fixture).is_empty());
 }
 
+/// Two uploads of one study from the same baseline (two windows) take turns: the second finds
+/// the first's edit on Lichess and writes nothing. Both found the baseline, and the later one
+/// replaced the first's edit while both said they succeeded.
+#[tokio::test]
+async fn two_uploads_of_one_study_take_turns() {
+    let cloud = Arc::new(Mutex::new(BASELINE.to_string()));
+    let fixture = serve({
+        let cloud = Arc::clone(&cloud);
+        move |seen| {
+            if seen.method == "GET" {
+                Reply::Text(
+                    200,
+                    "application/x-chess-pgn",
+                    cloud.lock().unwrap().clone(),
+                )
+            } else {
+                // The chapter's moves become the cloud's.
+                if seen.path().ends_with("/moves") {
+                    *cloud.lock().unwrap() = form_field(&seen.body, "pgn").unwrap_or_default();
+                }
+                Reply::Json(200, "{\"ok\":true}".into())
+            }
+        }
+    })
+    .await;
+    let lichess = service(&fixture.base);
+    let first = BASELINE.replace("{Keep}", "{First window}");
+    let second = BASELINE.replace("{Keep}", "{Second window}");
+    let (first, second) = (request(&first), request(&second));
+    let (one, two) = tokio::join!(
+        sync_lichess_study(&lichess, &first),
+        sync_lichess_study(&lichess, &second),
+    );
+    let refused = [&one, &two]
+        .iter()
+        .filter(|result| {
+            result
+                .as_ref()
+                .is_err_and(|error| error.message.contains("cloud study changed"))
+        })
+        .count();
+    assert_eq!(refused, 1, "{one:?} {two:?}");
+    let moves = posts(&fixture)
+        .iter()
+        .filter(|seen| seen.path().ends_with("/moves"))
+        .count();
+    assert_eq!(moves, 1);
+}
+
 #[tokio::test]
 async fn rejects_illegal_moves_structure_changes_and_wrong_chapter_identities_before_writing() {
     let cloud = Arc::new(Mutex::new(BASELINE.to_string()));

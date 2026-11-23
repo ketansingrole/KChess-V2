@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global};
-use kchess_contracts::check::PgnText;
 use kchess_contracts::types::{Library, ProfileArea, Study, StudyCommand, StudyCommandResult};
 use kchess_contracts::{CoreError, ErrorKind, Level};
 use serde_json::json;
@@ -183,7 +182,7 @@ impl Saving {
         let call = calls::StudyCommand {
             command: command.clone(),
             incremental: Some(true),
-            based_on: based_on.map(PgnText),
+            based_on: based_on.map(kchess_contracts::check::ChapterPgn),
         };
         let result = (self.send)(call).await.inspect_err(|cause| {
             let op = json!(command)["op"]

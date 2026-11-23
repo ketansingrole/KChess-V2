@@ -523,7 +523,7 @@ impl Updates {
             let _ = this.update(cx, |this, cx| {
                 match done {
                     Ok(staged) => {
-                        log(&format!("staged {}", staged.display()));
+                        log(&format!("staged {}", staged.path.display()));
                         this.stage(Some(staged));
                         this.phase = Phase::Downloaded;
                     }
@@ -582,9 +582,10 @@ impl Updates {
     }
 
     /// The update ready to install, held from other copies' cleanup while it is; none.
-    fn stage(&mut self, staged: Option<PathBuf>) {
-        self.staged_hold = staged.as_deref().and_then(hold_staged);
-        self.staged = staged;
+    fn stage(&mut self, staged: Option<Downloaded>) {
+        let (path, hold) = staged.map(|staged| (staged.path, staged.hold)).unzip();
+        self.staged = path;
+        self.staged_hold = hold.flatten();
     }
 
     /// `install`, once everything is saved.
@@ -614,8 +615,12 @@ impl Updates {
                 Ok(()) => cx.quit(),
                 Err((cause, staged)) => {
                     log(&format!("install failed: {cause}"));
-                    // Still whole where it was: it can be installed again.
-                    this.stage(staged.exists().then_some(staged));
+                    // Still whole where it was, and still held: it can be installed again.
+                    if staged.exists() {
+                        this.staged = Some(staged);
+                    } else {
+                        this.stage(None);
+                    }
                     this.phase = Phase::Error;
                     this.error = Some(cause);
                     cx.notify();

@@ -332,8 +332,15 @@ impl PuzzleService {
         };
         let result = self.download(&url, &download, &mut progress).await;
         let aborted = download.cancel.is_cancelled();
+        // No longer running before its end is reported: a window that read the status on hearing
+        // a failure once found it still running, and nothing told it otherwise afterwards.
+        installing.ended = true;
+        drop(installing);
         let outcome = match result {
-            Ok(()) => Ok(()),
+            Ok(kept) => {
+                progress.report(Phase::Done, kept, true);
+                Ok(())
+            }
             Err(error) => {
                 progress.finished(
                     if aborted {
@@ -346,9 +353,6 @@ impl PuzzleService {
                 if aborted { Ok(()) } else { Err(error) }
             }
         };
-        // Done, Cancelled or Failed is reported.
-        installing.ended = true;
-        drop(installing);
         let result = match outcome {
             Ok(()) => {
                 self.inner
@@ -365,7 +369,7 @@ impl PuzzleService {
         url: &str,
         download: &Arc<Download>,
         progress: &mut Progress,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let cancelled = || CoreError::aborted(crate::download::ABORTED);
         // A server that stops sending ends the download instead of holding the puzzle database's
         // "downloading" state until the user cancels.
@@ -448,8 +452,7 @@ impl PuzzleService {
         self.inner
             .with_db(move |db| queries::store_sample(db, &rows, &|| cancel.is_cancelled()))
             .await?;
-        progress.report(Phase::Done, kept, true);
-        Ok(())
+        Ok(kept)
     }
 }
 
@@ -728,6 +731,54 @@ mod tests {
         assert!(puzzles.install(garbage).await.is_err());
         assert_eq!(puzzles.status().await.unwrap().count, 1);
         assert!(host.logged("[puzzles] Puzzle operation install failed"));
+        puzzles.close().await;
+    }
+
+    /// Whether the service said it was downloading as each download's end left: a window that
+    /// read the status on hearing the end found it running.
+    #[tokio::test]
+    async fn a_download_has_stopped_running_when_its_end_is_reported() {
+        use std::sync::{Mutex as StdMutex, OnceLock};
+        struct Watching {
+            host: Arc<TestHost>,
+            inner: OnceLock<std::sync::Weak<Inner>>,
+            running_at_end: StdMutex<Vec<bool>>,
+        }
+        impl Host for Watching {
+            fn log(&self, level: crate::host::Level, scope: &str, message: &str) {
+                self.host.log(level, scope, message);
+            }
+            fn emit(&self, event: CoreEvent) {
+                if let CoreEvent::PuzzleDbProgress(progress) = &event
+                    && matches!(
+                        progress.phase,
+                        Phase::Done | Phase::Failed | Phase::Cancelled
+                    )
+                    && let Some(inner) = self.inner.get().and_then(std::sync::Weak::upgrade)
+                {
+                    let running = inner.running().is_some();
+                    self.running_at_end.lock().unwrap().push(running);
+                }
+                self.host.emit(event);
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let watching = Arc::new(Watching {
+            host: TestHost::new(),
+            inner: OnceLock::new(),
+            running_at_end: StdMutex::default(),
+        });
+        let puzzles = PuzzleService::new(
+            Config::new(dir.path().to_path_buf()),
+            Arc::clone(&watching) as Arc<dyn Host>,
+            Arc::new(crate::usage::UsageLog::default()) as Arc<dyn Meter>,
+        );
+        let _ = watching.inner.set(Arc::downgrade(&puzzles.inner));
+        let good = serve(200, Some(csv(&[("aaa", 1200, "fork")]))).await;
+        puzzles.install(good).await.unwrap();
+        let refused = serve(404, Some(b"gone".to_vec())).await;
+        assert!(puzzles.install(refused).await.is_err());
+        assert_eq!(*watching.running_at_end.lock().unwrap(), [false, false]);
         puzzles.close().await;
     }
 

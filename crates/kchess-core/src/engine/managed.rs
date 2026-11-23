@@ -153,6 +153,9 @@ pub struct ManagedLocation {
     pub pinned: Option<&'static PinnedRelease>,
     /// Where the download's traffic is counted.
     pub meter: Arc<dyn Meter>,
+    /// Held by the replacement's last step, which outlives a call dropped as it runs: a core
+    /// closing waits for it before it lets the profile go (`Core::tracker`).
+    pub keep_alive: Option<tokio_util::task::task_tracker::TaskTrackerToken>,
 }
 
 impl ManagedLocation {
@@ -167,6 +170,7 @@ impl ManagedLocation {
             exit_deadline: super::uci::EXIT_DEADLINE,
             pinned: None,
             meter: Arc::new(Unmetered),
+            keep_alive: None,
         }
     }
 
@@ -465,7 +469,9 @@ async fn install(
 
     // The engine owners stay suspended, and the folder locked, until both renames are done: the
     // blocking task owns the guards, and finishes even when this call is dropped between them
-    // (its connection closed), so the executable and its VERSION are replaced together.
+    // (its connection closed), so the executable and its VERSION are replaced together. It holds
+    // the core's call tracker too: a core closing meanwhile let its profile go while the
+    // renames still ran, and the next core opened it half replaced.
     let suspended = match &location.handoff {
         Some(handoff) => {
             let suspended = tokio::time::timeout(location.exit_deadline, handoff.suspend())
@@ -485,8 +491,9 @@ async fn install(
     let renamed = {
         let (pending, path) = (pending.clone(), path.clone());
         let (pending_version, version_path) = (pending_version.clone(), dir.join(VERSION_FILE));
+        let keep_alive = location.keep_alive.clone();
         tokio::task::spawn_blocking(move || {
-            let _guards = (held, suspended);
+            let _guards = (held, suspended, keep_alive);
             std::fs::rename(&pending, &path).map_err(|cause| {
                 CoreError::wrap("Could not replace the Stockfish executable", cause)
             })?;

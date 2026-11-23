@@ -166,6 +166,24 @@ fn study_pgn(pgn: &str, path: &str) -> Result<(), Refusal> {
     max_chars(pgn, MAX_DOCUMENT, None, path)
 }
 
+/// A study chapter's PGN, as large as a chapter may be (`MAX_DOCUMENT`): what a save is based
+/// on. It was a game's `PgnText`, capped at 500,000 characters, so every save of a larger chapter
+/// was refused, and the editor tried it again for ever.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(transparent)]
+pub struct ChapterPgn(pub String);
+
+impl Validate for ChapterPgn {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        // A game's PGN checks but its size: some text, not all blank.
+        let text: String = decode(value, plain)?;
+        min_chars(&text, 1, None, "")?;
+        study_pgn(&text, "")?;
+        ensure(!text.trim().is_empty(), None, "", || "some text".into())?;
+        Ok(ChapterPgn(text))
+    }
+}
+
 fn study_account(account: &str) -> Result<(), Refusal> {
     max_chars(account, 40, None, "account")
 }

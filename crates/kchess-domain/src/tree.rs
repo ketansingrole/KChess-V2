@@ -612,9 +612,9 @@ impl TreeNode {
     pub fn delete_at(&mut self, path: &str) -> String {
         let plan = analysis_tree::delete_at_plan(path);
         if let Some(uci) = plan.uci {
-            self.node_at_mut(&plan.parent_path)
-                .children
-                .retain(|child| child.uci != uci);
+            let children = &mut self.node_at_mut(&plan.parent_path).children;
+            children.retain(|child| child.uci != uci);
+            continues_line(children);
         }
         plan.parent_path
     }
@@ -628,9 +628,24 @@ impl TreeNode {
             if from < holder.children.len() {
                 let child = holder.children.remove(from);
                 holder.children.insert(0, child);
+                continues_line(&mut holder.children);
             }
         }
     }
+}
+
+/// The first of `children` continues the line, so a note before it (one that opened its
+/// variation) leads its own comments: written before the move, the note was read back as the
+/// previous move's, so promoting a variation or deleting the move before it gave its note away.
+fn continues_line(children: &mut [TreeNode]) {
+    let Some(first) = children.first_mut() else {
+        return;
+    };
+    let Some(mut notes) = first.starting_comments.take() else {
+        return;
+    };
+    notes.extend(first.comments.take().into_iter().flatten());
+    first.comments = Some(notes);
 }
 
 #[cfg(test)]
@@ -743,6 +758,31 @@ mod tests {
         assert_eq!(nf3.len(), 1);
         assert_eq!(nf3[0].children.len(), 1);
         assert_eq!(nf3[0].children[0].children[0].uci, "f1b5");
+    }
+
+    /// A promoted variation's opening note stays on its move when the chapter is saved and read
+    /// again: written before the move, which now follows the one before it, it was read back as
+    /// that move's note.
+    #[test]
+    fn a_promoted_variations_note_stays_on_its_move_when_saved() {
+        let mut tree = TreeNode::from_pgn("1. e4 e5 ( {Sicilian idea} 1... c5 ) *").unwrap();
+        tree.promote("e2e4 c7c5");
+        assert_eq!(tree.children[0].children[0].uci, "c7c5");
+        let saved = tree_to_pgn(&tree, None).unwrap();
+        let reopened = TreeNode::from_pgn(&saved).unwrap();
+        assert_eq!(reopened.children[0].comments, None, "{saved}");
+        let c5 = &reopened.children[0].children[0];
+        assert_eq!(c5.uci, "c7c5");
+        assert_eq!(
+            c5.comments.as_deref(),
+            Some(&["Sicilian idea".to_string()][..])
+        );
+        // Deleting the main move leaves the variation first: the same.
+        let mut tree = TreeNode::from_pgn("1. e4 e5 ( {Sicilian idea} 1... c5 ) *").unwrap();
+        tree.delete_at("e2e4 e7e5");
+        let saved = tree_to_pgn(&tree, None).unwrap();
+        let reopened = TreeNode::from_pgn(&saved).unwrap();
+        assert_eq!(reopened.children[0].comments, None, "{saved}");
     }
 
     /// A merged variation's opening note stays on its move when the chapter is saved and read

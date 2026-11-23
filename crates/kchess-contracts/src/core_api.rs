@@ -521,7 +521,7 @@ core_api! {
         StudyCommand = "studyCommand" fn study_command(
             command: crate::types::StudyCommand;
             incremental: Option<bool>,
-            based_on: Option<PgnText>
+            based_on: Option<crate::check::ChapterPgn>
         ) -> StudyCommandResult;
         /// Add or replace a played game; it becomes the most recent.
         #[writes(PlayedGames)]

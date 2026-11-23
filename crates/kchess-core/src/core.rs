@@ -87,9 +87,9 @@ pub struct Core {
     pub(crate) puzzle_db_url: String,
     /// Managed engine installs and deletes in progress, by request id.
     installs: Mutex<HashMap<u64, CancellationToken>>,
-    /// Counts the changes to the tournaments joined, each made in the write that makes it: a
-    /// lookup forgets a membership only when none changed since it began (`tournament`).
-    pub(crate) memberships: Arc<AtomicU64>,
+    /// Counts the changes to each tournament's memberships, each made in the write that makes
+    /// it: a lookup forgets, and a join remembers, only when none changed since it began.
+    pub(crate) memberships: Arc<crate::facade::tournaments::MembershipChanges>,
     /// Whether a live online game (or its recovery) blocks the engines, as of the last state.
     busy: Arc<AtomicBool>,
     /// Set when `close` starts: later facade calls fail and events stop.
@@ -518,9 +518,13 @@ impl Core {
             lichess: Arc::clone(self.services.lichess()),
             search: self.search.clone(),
             analysis: self.analysis.clone(),
+            // Help blocked pauses the reviews too, until a check says no game is live: the flag the
+            // state hook keeps starts clear, and a start that never checked (a command line's
+            // first call) ran reviews while the account was playing on Lichess.
             online: {
                 let busy = Arc::clone(&self.busy);
-                Arc::new(move || busy.load(Ordering::SeqCst))
+                let session = self.services.online().clone();
+                Arc::new(move || busy.load(Ordering::SeqCst) || session.assistance_blocked())
             },
         }
     }
@@ -558,6 +562,7 @@ impl Core {
         }));
         location.cancel = cancel;
         location.meter = self.usage.clone();
+        location.keep_alive = Some(self.tracker.token());
         match mutation {
             Mutation::Install => install_managed_engine(self.host.as_ref(), &location)
                 .await

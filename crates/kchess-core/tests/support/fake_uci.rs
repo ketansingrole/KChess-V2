@@ -90,7 +90,8 @@ fn info(mode: &str, position: &str, depth: u32, rank: usize) {
 }
 
 fn run_search(mode: String, position: String, multipv: usize, stop: Arc<AtomicBool>, kind: Kind) {
-    let stalls = mode == "stall";
+    // `stall-late`: a stall that answers `stop` only after a while, as a busy engine does.
+    let stalls = mode == "stall" || mode == "stall-late";
     let best = scripted(&mode, &position)
         .1
         .split_whitespace()
@@ -115,6 +116,9 @@ fn run_search(mode: String, position: String, multipv: usize, stop: Arc<AtomicBo
             if stall_here {
                 while !stop.load(Ordering::SeqCst) {
                     thread::sleep(Duration::from_millis(5));
+                }
+                if mode == "stall-late" {
+                    thread::sleep(Duration::from_millis(300));
                 }
             }
         }
@@ -232,7 +236,7 @@ fn main() {
         let exe = std::env::current_exe().ok()?;
         started_as_copy.then(|| exe.with_extension("log").display().to_string())
     });
-    let searching = matches!(mode.as_str(), "search" | "review" | "stall");
+    let searching = matches!(mode.as_str(), "search" | "review" | "stall" | "stall-late");
     let state = Mutex::new(Search::default());
 
     #[cfg(unix)]

@@ -195,7 +195,7 @@ fn a_call_sends_its_arguments_in_order_without_trailing_ones_left_out() {
     let command = calls::StudyCommand {
         command: kchess_contracts::types::StudyCommand::Duplicate { id: "a".into() },
         incremental: None,
-        based_on: Some(kchess_contracts::check::PgnText("abc".into())),
+        based_on: Some(kchess_contracts::check::ChapterPgn("abc".into())),
     };
     assert_eq!(
         command.args().expect("args"),
@@ -206,6 +206,21 @@ fn a_call_sends_its_arguments_in_order_without_trailing_ones_left_out() {
         ]
     );
     assert_eq!(calls::ReviewGet::METHOD, "reviewGet");
+}
+
+/// A save is based on a chapter as large as a chapter may be: it was checked as a game's PGN,
+/// capped at 500,000 characters, so every save of a larger chapter was refused.
+#[test]
+fn a_save_may_be_based_on_a_large_chapter() {
+    use kchess_contracts::check::{ChapterPgn, check};
+    use kchess_domain::misc::value::J;
+    let large = format!("1. e4 {{{}}} *", "a".repeat(600_000));
+    assert_eq!(
+        check::<ChapterPgn>(J::Str(large.clone())).expect("a large chapter"),
+        ChapterPgn(large)
+    );
+    let too_large = "a".repeat(kchess_domain::misc::MAX_DOCUMENT + 1);
+    assert!(check::<ChapterPgn>(J::Str(too_large)).is_err());
 }
 
 /// An argument that cannot be written as JSON fails the call with its cause; it was sent as

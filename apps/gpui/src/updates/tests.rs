@@ -985,8 +985,7 @@ fn old_kept_downloads_are_removed() {
     std::fs::create_dir_all(kept("2026.10.2")).unwrap();
     let ready = kept("2026.10.2").join("KChess.AppImage");
     std::fs::write(&ready, "package").unwrap();
-    let held = super::hold_staged(&ready).expect("held");
-    assert!(super::hold_staged(&root.join("KChess.AppImage")).is_none());
+    let held = super::hold_kept(&kept("2026.10.2")).expect("held");
     let current = parse_version("2026.11.0");
     super::prune_kept(&root, |version| version.is_none() || version <= current);
     assert!(kept("2026.10.1").exists(), "still being downloaded");
@@ -1024,7 +1023,9 @@ async fn unsigned_download(
     folder: PathBuf,
     progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
 ) -> Result<PathBuf, String> {
-    download_signed(release, asset, folder, progress, None).await
+    download_signed(release, asset, folder, progress, None)
+        .await
+        .map(|downloaded| downloaded.path)
 }
 
 async fn check_and_download(feed: String, folder: PathBuf) -> Result<PathBuf, String> {
@@ -1036,6 +1037,16 @@ async fn check_and_download_signed(
     folder: PathBuf,
     key: Option<Vec<u8>>,
 ) -> Result<PathBuf, String> {
+    check_and_download_held(feed, folder, key)
+        .await
+        .map(|downloaded| downloaded.path)
+}
+
+async fn check_and_download_held(
+    feed: String,
+    folder: PathBuf,
+    key: Option<Vec<u8>>,
+) -> Result<super::Downloaded, String> {
     let release: Release = latest(feed).await?;
     let version =
         offer(&release, "2026.10.12", Some(Package::AppImage)).ok_or("no update offered")?;
@@ -1136,6 +1147,26 @@ fn a_developer_id_update_must_be_signed_through_apple() {
         "=anchor apple generic and identifier \"com.kchess.app\" \
          and certificate leaf[subject.OU] = \"TEAM123\""
     );
+}
+
+/// A finished download comes back already held: its folder was let go between the download's
+/// lock and the hold taken by the app, and another KChess's cleanup could remove it there.
+#[test]
+fn a_finished_download_is_held_until_it_is_let_go() {
+    let _processes = processes();
+    let root = scratch("held");
+    let package = b"the new KChess".to_vec();
+    let url = feed("2026.11.0", &package, |digest, name| {
+        format!("{digest}  {name}\n")
+    });
+    let kept = super::kept_folder(&root, "2026.11.0");
+    let downloaded = block_on(check_and_download_held(url, kept.clone(), None)).unwrap();
+    super::prune_kept(&root, |_| true);
+    assert!(downloaded.path.exists(), "held by this app");
+    drop(downloaded);
+    super::prune_kept(&root, |_| true);
+    assert!(!kept.exists(), "let go");
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
@@ -1408,6 +1439,7 @@ fn an_update_comes_by_its_patch_and_else_whole() {
             progress,
             None,
         ))
+        .map(|staged| staged.path)
     };
 
     let staged = update(Some(install.clone()), "patched").unwrap();
