@@ -46,6 +46,7 @@ const LEGACY_MARKER: &str = LEGACY_FILES[1];
 const CHECKSUM_MESSAGE: &str = "Voice model checksum mismatch. Try downloading it again.";
 const INVALID_MESSAGE: &str = "Invalid voice model archive.";
 const STOPPED_MESSAGE: &str = "Voice model preparation stopped unexpectedly.";
+const CLOSING_MESSAGE: &str = "Voice input is closing.";
 
 /// The model KChess ships a download for: its archive's folder name and the SHA-256 of the zip.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,6 +155,8 @@ struct Inner {
     archive: Archive,
     model: VoiceModel,
     state: Mutex<State>,
+    /// Cancelled when the core closes: a running preparation stops and no new one starts.
+    closing: CancellationToken,
 }
 
 /// One verified, persistent model per profile. Concurrent `ensure` calls share preparation.
@@ -178,6 +181,7 @@ impl VoiceModelCache {
                 archive,
                 model,
                 state: Mutex::new(State::default()),
+                closing: CancellationToken::new(),
             }),
         }
     }
@@ -224,7 +228,7 @@ impl VoiceModelCache {
             if let Some(listener) = &listener {
                 state.listeners.push((id, Arc::clone(listener)));
             }
-            if state.pending.is_none() {
+            if state.pending.is_none() && !self.inner.closing.is_cancelled() {
                 state.pending = Some(self.spawn_preparation());
             }
             (id, state.pending.clone(), replay)
@@ -241,7 +245,7 @@ impl VoiceModelCache {
         }
         let outcome = match pending {
             Some(pending) => pending.await,
-            None => Err(STOPPED_MESSAGE.to_string()),
+            None => Err(CLOSING_MESSAGE.to_string()),
         };
         outcome.map_err(CoreError::new)
     }
@@ -262,6 +266,18 @@ impl VoiceModelCache {
         }
         .boxed()
         .shared()
+    }
+
+    /// Stops a running preparation and waits for it to end, its staging folder removed, and
+    /// starts no other. The core calls it before releasing the profile: a preparation that
+    /// outlived it once went on writing the voice folder while another process opened the
+    /// profile and prepared the model too.
+    pub async fn shutdown(&self) {
+        self.inner.closing.cancel();
+        let pending = self.lock().pending.clone();
+        if let Some(pending) = pending {
+            let _ = pending.await;
+        }
     }
 
     /// Forget the finished preparation so the next `status` or `ensure` starts from scratch.
@@ -415,6 +431,10 @@ impl VoiceModelCache {
                 self.prepare_archive(&zip, staging).await?
             }
         };
+        // Once the core closes, the voice folder is left as it is.
+        if self.inner.closing.is_cancelled() {
+            return Err(CoreError::new(CLOSING_MESSAGE));
+        }
         let prepared = staging.join("unpacked").join(&self.inner.model.name);
         let path = self.path();
         let marker_file = self.marker_path();
@@ -500,24 +520,36 @@ impl VoiceModelCache {
     }
 
     /// Downloads the zip. The preparation has no caller to cancel it (callers share it and may
-    /// leave), so only its deadline ends it.
+    /// leave), so only its deadline and the core closing end it.
     async fn download(&self, url: &str, zip: &Path) -> Result<u64> {
         let client = download::client(None)?;
         let limits = download::Limits {
             max_bytes: MAX_DOWNLOAD_BYTES,
             deadline: Some(std::time::Instant::now() + DOWNLOAD_TIMEOUT),
         };
-        let never = CancellationToken::new();
+        let closing = &self.inner.closing;
         let usage = download::Usage {
             meter: &*self.inner.meter,
             kind: UsageKind::Other,
         };
-        let mut body =
-            download::open(&client, || client.get(url), limits, &never, usage, &WORDING).await?;
+        let mut body = download::open(
+            &client,
+            || client.get(url),
+            limits,
+            closing,
+            usage,
+            &WORDING,
+        )
+        .await?;
         let mut file = tokio::fs::File::create(zip)
             .await
             .map_err(|cause| CoreError::wrap("Could not stage the voice model", cause))?;
-        while let Some(chunk) = body.next().await? {
+        loop {
+            let chunk = tokio::select! {
+                chunk = body.next() => chunk?,
+                () = closing.cancelled() => return Err(CoreError::new(CLOSING_MESSAGE)),
+            };
+            let Some(chunk) = chunk else { break };
             file.write_all(&chunk)
                 .await
                 .map_err(|cause| CoreError::wrap("Could not stage the voice model", cause))?;
@@ -542,12 +574,19 @@ impl VoiceModelCache {
         let flag = cancel.clone();
         let mut work =
             tokio::task::spawn_blocking(move || build(&zip_path, &staging_path, &model, &flag));
-        let outcome = match tokio::time::timeout(PREPARE_TIMEOUT, &mut work).await {
-            Ok(joined) => joined.map_err(|_| CoreError::new(STOPPED_MESSAGE))?,
-            Err(_) => {
+        let outcome = tokio::select! {
+            joined = tokio::time::timeout(PREPARE_TIMEOUT, &mut work) => match joined {
+                Ok(joined) => joined.map_err(|_| CoreError::new(STOPPED_MESSAGE))?,
+                Err(_) => {
+                    cancel.cancel();
+                    let _ = work.await;
+                    Err(CoreError::new("Voice model preparation timed out."))
+                }
+            },
+            () = self.inner.closing.cancelled() => {
                 cancel.cancel();
                 let _ = work.await;
-                Err(CoreError::new("Voice model preparation timed out."))
+                return Err(CoreError::new(CLOSING_MESSAGE));
             }
         };
         if let Err(error) = &outcome {
@@ -781,6 +820,52 @@ mod tests {
         }
         drop(server);
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// Closing stops a preparation and waits for it, its staging folder gone, and starts no
+    /// other: one that outlived the core went on writing the voice folder after the profile was
+    /// released, under a download that only its 30-minute deadline ended.
+    #[tokio::test]
+    async fn closing_stops_the_preparation_before_it_returns() {
+        // A server that accepts the connection and never answers keeps the download waiting.
+        let server = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+        let url = format!("http://{}/model.zip", server.local_addr().expect("address"));
+        let directory = tempfile::tempdir().expect("voice folder");
+        let cache = VoiceModelCache::new(
+            TestHost::quiet(),
+            Arc::new(crate::usage::Unmetered),
+            directory.path().to_path_buf(),
+            Archive::Url(url),
+            VoiceModel::official(),
+        );
+        let install = tokio::spawn({
+            let cache = cache.clone();
+            async move { cache.ensure(None).await }
+        });
+        while !matches!(
+            cache.lock().progress,
+            Some(Progress {
+                phase: Phase::Downloading,
+                ..
+            })
+        ) {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::timeout(Duration::from_secs(10), cache.shutdown())
+            .await
+            .expect("closing ends the preparation");
+        let staging: Vec<_> = fs::read_dir(directory.path())
+            .expect("voice folder")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".prepare-"))
+            .collect();
+        assert!(staging.is_empty(), "the staging folder is removed");
+        assert!(install.await.expect("the call ends").is_err());
+        assert!(!cache.status().await.busy);
+        // Nothing starts once closed.
+        assert!(cache.ensure(None).await.is_err());
+        assert!(!cache.status().await.busy);
+        drop(server);
     }
 
     #[test]

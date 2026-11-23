@@ -279,6 +279,8 @@ impl Core {
         self.search.reset_engine();
         self.reviews.stop_reviews().await;
         self.voice.stop().await;
+        // A model being prepared stops writing the voice folder before the profile is released.
+        self.voice_model.shutdown().await;
         self.usage.flush().await;
         // Cancel what is in flight: installs, pending host requests, lookups, downloads, streams.
         self.capabilities.close();
