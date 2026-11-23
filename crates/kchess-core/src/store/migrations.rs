@@ -264,16 +264,18 @@ pub const MIGRATIONS: &[&str] = &[
     r#"ALTER TABLE settings ADD COLUMN openAtLogin INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE settings ADD COLUMN closeAction TEXT NOT NULL DEFAULT 'default';
   ALTER TABLE settings ADD COLUMN showTrayIcon INTEGER NOT NULL DEFAULT 1;"#,
-    // Logins of an earlier release's database, recorded by its import: each start seals the
-    // waiting ones and reconnects their accounts, a few starts at most, and a login sealed or given
-    // up on (`scrub`) stays until its plaintext is gone from that database
-    // (`import::due_legacy_logins`). `username` is empty for a login of no account.
+    // Logins of an earlier release's database that could not be sealed when it was imported (the
+    // keychain refused or was unavailable): their plaintext stays there, and a later start seals
+    // them and reconnects the account, a few starts at most (`import::due_legacy_logins`).
     r#"CREATE TABLE legacy_logins (
     username TEXT PRIMARY KEY COLLATE NOCASE,
     connect INTEGER NOT NULL,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    scrub INTEGER NOT NULL DEFAULT 0
+    attempts INTEGER NOT NULL DEFAULT 0
   );"#,
+    // Every login of the earlier database is recorded by its import, and one sealed or given up
+    // on (`scrub`) stays until its plaintext is gone from that database. `username` is empty for
+    // a login of no account.
+    r#"ALTER TABLE legacy_logins ADD COLUMN scrub INTEGER NOT NULL DEFAULT 0;"#,
 ];
 
 /// Apply every migration newer than the database's `user_version`, each in its own transaction.
@@ -330,6 +332,28 @@ mod tests {
             refused.message
         );
         assert_eq!(version(&db), newer, "the newer schema is left as it was");
+    }
+
+    /// A profile whose `legacy_logins` was made before it had `scrub` gains the column, its rows
+    /// kept: the column added to the table's own migration was never run on such a profile, and
+    /// every start failed to read the table.
+    #[test]
+    fn waiting_logins_recorded_before_scrub_gain_it() {
+        let db = Connection::open_in_memory().unwrap();
+        migrate_to(&db, MIGRATIONS.len() - 1).unwrap();
+        db.execute_batch(
+            "INSERT INTO legacy_logins (username, connect, attempts) VALUES ('Carol', 1, 2)",
+        )
+        .unwrap();
+        migrate(&db).unwrap();
+        let row: (String, i64, i64) = db
+            .query_row(
+                "SELECT username, attempts, scrub FROM legacy_logins",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("Carol".into(), 2, 0));
     }
 
     #[test]

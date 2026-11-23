@@ -270,6 +270,8 @@ pub(crate) struct Inner {
     /// Run before each state is reported: a live game stops the engines and the watch, and the
     /// engines' busy state is refreshed.
     pub(crate) state_hook: Mutex<Option<StateHook>>,
+    /// Held while the state hook runs, so its runs follow one another (`run_state_hook`).
+    pub(crate) state_hook_turn: Mutex<()>,
     /// The assistance last reported on `online:assistance`; held while the next is worked out
     /// and sent, so the reports leave in the order they were true.
     pub(crate) assistance_reported: Mutex<Option<kchess_contracts::types::Assistance>>,

@@ -730,6 +730,10 @@ struct Lichess {
     paths: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
+/// Appended to a reply's content type: its body is sent and the stream stays open, as a live
+/// game's does.
+const KEPT_OPEN: &str = "; kept-open";
+
 impl Lichess {
     fn serve(reply: impl Fn(&str) -> (&'static str, String) + Send + 'static) -> Lichess {
         use std::io::{BufRead, BufReader};
@@ -738,6 +742,8 @@ impl Lichess {
         let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = std::sync::Arc::clone(&paths);
         std::thread::spawn(move || {
+            // The streams answered `KEPT_OPEN`, held so they never end.
+            let mut kept = Vec::new();
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { return };
                 let mut reader = BufReader::new(stream.try_clone().expect("stream"));
@@ -752,6 +758,16 @@ impl Lichess {
                 }
                 seen.lock().expect("paths").push(path.clone());
                 let (kind, body) = reply(&path);
+                if let Some(kind) = kind.strip_suffix(KEPT_OPEN) {
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\ncontent-type: {kind}\r\n\
+                         transfer-encoding: chunked\r\n\r\n{:x}\r\n{body}\r\n",
+                        body.len()
+                    );
+                    kept.push(stream);
+                    continue;
+                }
                 let _ = write!(
                     stream,
                     "HTTP/1.1 200 OK\r\ncontent-type: {kind}\r\ncontent-length: {}\r\n\
@@ -857,7 +873,7 @@ fn watch_prints_the_game_until_interrupted() {
     .concat();
     let lichess = Lichess::serve(move |path| {
         if path == "/api/stream/game/VuAqDosj" {
-            ("application/x-ndjson", records.clone())
+            ("application/x-ndjson; kept-open", records.clone())
         } else {
             ("application/json", "{}".into())
         }
@@ -892,6 +908,44 @@ fn watch_prints_the_game_until_interrupted() {
     assert!(interrupted.success());
     let status = child.wait().expect("kchess-cli finishes");
     assert!(status.success(), "{status:?}");
+}
+
+/// A watched game that finishes ends `watch`: Lichess sends its description again with its result
+/// and closes the stream. A script reading the lines once waited for an end that never came.
+#[cfg(unix)]
+#[test]
+fn watch_ends_when_the_game_does() {
+    let description = |status: &str| {
+        json!({
+            "id": "VuAqDosj",
+            "variant": { "key": "standard", "name": "Standard" },
+            "speed": "rapid", "rated": true, "source": "arena",
+            "status": { "id": 30, "name": status },
+            "players": {
+                "white": { "user": { "name": "Thot_x_Thor" }, "rating": 2155 },
+                "black": { "user": { "name": "stefanoschor" }, "rating": 1766 }
+            }
+        })
+    };
+    let records = [description("started"), description("mate")]
+        .map(|record| format!("{record}\n"))
+        .concat();
+    let lichess = Lichess::serve(move |path| {
+        if path == "/api/stream/game/VuAqDosj" {
+            ("application/x-ndjson", records.clone())
+        } else {
+            ("application/json", "{}".into())
+        }
+    });
+    let profile = tempfile::tempdir().expect("profile");
+    let output = lichess.cli(profile.path(), &["watch", "VuAqDosj"], "");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frames = String::from_utf8_lossy(&output.stdout);
+    assert!(frames.lines().count() >= 1, "{frames}");
 }
 
 /// `pgn` prints a Lichess game's or a study chapter's PGN, and `review` reviews either.

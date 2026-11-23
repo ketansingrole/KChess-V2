@@ -271,6 +271,15 @@ impl PuzzleRush {
     }
 
     fn tick(&mut self, cx: &mut Context<Self>) {
+        self.charge(cx);
+        cx.notify();
+    }
+
+    /// Takes the time gone since it was last taken off the clock, ending the run when it ran
+    /// out; true once the run is over. A move or solve is charged first: it was scored against
+    /// the last tick's clock, so a move made after time ran out still counted, and its combo
+    /// bonus could put time back and keep the run going.
+    fn charge(&mut self, cx: &mut Context<Self>) -> bool {
         let now = Instant::now();
         let elapsed = self
             .last_tick
@@ -284,8 +293,9 @@ impl PuzzleRush {
         }
         if self.over() {
             self.end_run(cx);
+            return true;
         }
-        cx.notify();
+        false
     }
 
     /// A timed or survival run is going: a restart ends it.
@@ -304,6 +314,10 @@ impl PuzzleRush {
         let Some(config) = self.config() else {
             return;
         };
+        if self.charge(cx) {
+            cx.notify();
+            return;
+        }
         if correct {
             let bonus = self.state.correct_move(config);
             if bonus > 0. {
@@ -331,6 +345,10 @@ impl PuzzleRush {
     /// Score a solve, then the next puzzle after a pause.
     fn on_done(&mut self, cx: &mut Context<Self>) {
         if self.stage != Stage::Running || self.over() {
+            return;
+        }
+        if self.charge(cx) {
+            cx.notify();
             return;
         }
         let solved = self.board.read(cx).status() == PuzzleStatus::Solved;
@@ -1030,6 +1048,37 @@ mod tests {
             })
         });
         assert_eq!((best, unknown, stage), (Some(9.0), None, true));
+    }
+
+    /// A move made after the clock ran out, before the next tick took the time off, scores
+    /// nothing and ends the run: it once counted, and its combo bonus could keep the run going.
+    #[gpui_kit::test]
+    fn a_move_after_the_clock_ran_out_ends_the_run(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = kchess_board::testing::Started::new(cx);
+        let (moves, left, over, stage) = app.with_window(|window, cx| {
+            let stats = cx.new(|cx| super::super::stats::PuzzleStats::new(Vec::new(), window, cx));
+            let rush = cx.new(|cx| super::PuzzleRush::new(stats, window, cx));
+            rush.update(cx, |rush, cx| {
+                rush.choice = "storm".into();
+                rush.state = RushState::new(&rush.configs["storm"]);
+                rush.state.time_left_ms = Some(50.);
+                rush.stage = super::Stage::Running;
+                rush.last_tick =
+                    Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+                rush.on_move(true, cx);
+                (
+                    rush.state.moves,
+                    rush.state.time_left_ms,
+                    rush.state.over.clone(),
+                    rush.stage == super::Stage::Over,
+                )
+            })
+        });
+        assert_eq!(moves, 0.);
+        assert_eq!(left, Some(0.));
+        assert_eq!(over.as_deref(), Some("time"));
+        assert!(stage);
     }
 
     #[test]

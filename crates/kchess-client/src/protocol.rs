@@ -98,22 +98,30 @@ pub fn release() -> String {
     env!("KCHESS_RELEASE").to_string()
 }
 
-/// The protocol fingerprint: the framing, and the methods, events and error kinds this build
-/// speaks. Two builds share a core only when theirs match.
+/// The protocol fingerprint: the framing, and the methods (with their arguments' and answer's
+/// types), events and error kinds this build speaks. Two builds share a core only when theirs
+/// match. Without the types, a build whose answer changed shape (`clearRepertoireMisses`) shared
+/// a core with one that read the old shape: the call went through and its answer was unreadable.
 pub fn protocol() -> String {
+    fingerprint(kchess_contracts::core_api::METHODS)
+}
+
+fn fingerprint(methods: &[kchess_contracts::core_api::Method]) -> String {
     let mut hash = Sha256::new();
     let mut add = |part: &str| {
         hash.update(part.as_bytes());
         hash.update([0]);
     };
     add(FRAMING);
-    for method in kchess_contracts::core_api::METHODS {
+    for method in methods {
         add(method.name);
         for param in method.params {
             add(param.name);
             add(if param.optional { "?" } else { "" });
+            add(param.ty);
         }
         add(")");
+        add(method.answer);
     }
     for name in kchess_contracts::CoreEvent::NAMES {
         add(name);
@@ -338,6 +346,31 @@ mod tests {
     }
 
     /// A hello carries both: the release is named, the protocol a short fingerprint.
+    /// A method whose answer or argument changed type makes another protocol: a build reading the
+    /// old answer once shared a core with one sending the new.
+    #[test]
+    fn the_protocol_covers_answer_and_argument_types() {
+        use kchess_contracts::core_api::{Method, Param};
+        let method = |answer: &'static str, ty: &'static str| Method {
+            name: "clearRepertoireMisses",
+            doc: "",
+            params: Box::leak(Box::new([Param {
+                name: "key",
+                optional: false,
+                ty,
+            }])),
+            assist: None,
+            writes: &[],
+            answer,
+        };
+        let before = fingerprint(&[method("RepertoireMisses", "RepertoireKey")]);
+        assert_ne!(
+            before,
+            fingerprint(&[method("ClearedMisses", "RepertoireKey")])
+        );
+        assert_ne!(before, fingerprint(&[method("RepertoireMisses", "String")]));
+    }
+
     #[test]
     fn the_release_is_named_and_the_protocol_is_a_short_fingerprint() {
         assert!(!release().is_empty());

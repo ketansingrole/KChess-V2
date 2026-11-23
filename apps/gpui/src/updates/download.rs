@@ -342,8 +342,29 @@ pub(super) fn kept_folder(root: &Path, version: &str) -> PathBuf {
     root.join(KEPT).join(version)
 }
 
+/// Held (shared) by each KChess whose staged update is the package in that kept folder.
+const STAGED: &str = ".staged";
+
+/// Holds the kept folder of `package`, a staged update, for as long as the answer lives, so
+/// another KChess's `prune_kept` leaves it: a newer download elsewhere removed it while this app
+/// still offered it, and installing it failed. None for a package outside the kept downloads.
+pub(super) fn hold_staged(package: &Path) -> Option<std::fs::File> {
+    let folder = package.parent()?;
+    if folder.parent()?.file_name()? != KEPT {
+        return None;
+    }
+    let hold = std::fs::File::options()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(folder.join(STAGED))
+        .warn_on_err()?;
+    hold.lock_shared().warn_on_err()?;
+    Some(hold)
+}
+
 /// Remove the kept downloads `stale` names (by version), except one another KChess is still
-/// downloading into (its folder's lock is held).
+/// downloading into (its folder's lock is held) or offers as ready (`hold_staged`).
 pub(super) fn prune_kept(root: &Path, stale: impl Fn(Option<Version>) -> bool) {
     let Ok(entries) = std::fs::read_dir(root.join(KEPT)) else {
         return;
@@ -354,10 +375,12 @@ pub(super) fn prune_kept(root: &Path, stale: impl Fn(Option<Version>) -> bool) {
             continue;
         }
         let path = entry.path();
-        let busy = std::fs::File::options()
-            .write(true)
-            .open(path.join(".lock"))
-            .is_ok_and(|lock| lock.try_lock().is_err());
+        let busy = [".lock", STAGED].iter().any(|name| {
+            std::fs::File::options()
+                .write(true)
+                .open(path.join(name))
+                .is_ok_and(|lock| lock.try_lock().is_err())
+        });
         if !busy {
             std::fs::remove_dir_all(&path).ok_if_missing().warn_on_err();
         }

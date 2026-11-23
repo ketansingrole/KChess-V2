@@ -412,7 +412,7 @@ async fn with_core(
             Command::Watch => {
                 let target = watch_target(rest)?;
                 core.request(calls::ResumeOnline {}).await?;
-                match target {
+                let session = match target {
                     Watched::Feed(target) => core.request(calls::Watch { target }).await?,
                     Watched::Round(round) => {
                         let round_id = LichessId(round);
@@ -427,7 +427,7 @@ async fn with_core(
                         core.request(calls::WatchBroadcast { round_id }).await?
                     }
                 };
-                let watched = watch_frames(&mut events).await;
+                let watched = watch_frames(&mut events, session).await;
                 told_if_failed(
                     "Stopping watching",
                     core.request(calls::StopWatching { session: None }).await,
@@ -565,9 +565,11 @@ fn watch_target(words: &[String]) -> Result<Watched, String> {
 }
 
 /// Print each frame of the watched game, or each update of the broadcast round, as a JSON line
-/// until Ctrl-C; an error, or the round's end, ends it.
+/// until Ctrl-C; an error, the game's end or the round's end ends it. A finished game's feed
+/// reports `Ended` for its `session`: without it a script reading the lines waited for ever.
 async fn watch_frames(
     events: &mut tokio::sync::mpsc::UnboundedReceiver<core::ClientEvent>,
+    session: u64,
 ) -> Result<(), String> {
     let mut wait = Wait::new(events);
     loop {
@@ -586,6 +588,14 @@ async fn watch_frames(
             }
             Next::Event(CoreEvent::WatchState(state)) if state.phase == WatchPhase::Error => {
                 return Err(state.message.unwrap_or_else(|| "Watching failed.".into()));
+            }
+            Next::Event(CoreEvent::WatchState(state))
+                if state.session == session && state.phase == WatchPhase::Ended =>
+            {
+                return match state.message {
+                    Some(message) => Err(message),
+                    None => Ok(()),
+                };
             }
             Next::Event(_) | Next::Line(_) | Next::Tick => {}
         }
@@ -951,7 +961,7 @@ mod tests {
                 sender.send(core::ClientEvent::Event(event)).expect("sent");
             }
             drop(sender);
-            watch_frames(&mut events).await
+            watch_frames(&mut events, 1).await
         };
         assert_eq!(watched(vec![update(Some(true))]).await, Ok(()));
         assert_eq!(
@@ -960,6 +970,24 @@ mod tests {
         );
         assert_eq!(
             watched(vec![update(None), state(WatchPhase::Connected)]).await,
+            Err("The core closed.".into())
+        );
+        // A game that finished ends the watch; an earlier session's end does not.
+        let ended = |session, message: Option<&str>| {
+            CoreEvent::WatchState(WatchState {
+                session,
+                phase: WatchPhase::Ended,
+                message: message.map(Into::into),
+                kind: None,
+            })
+        };
+        assert_eq!(watched(vec![ended(1, None)]).await, Ok(()));
+        assert_eq!(
+            watched(vec![ended(1, Some("The feed ended. Retry to reconnect."))]).await,
+            Err("The feed ended. Retry to reconnect.".into())
+        );
+        assert_eq!(
+            watched(vec![ended(0, None)]).await,
             Err("The core closed.".into())
         );
     }

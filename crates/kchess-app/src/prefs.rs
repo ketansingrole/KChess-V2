@@ -294,7 +294,8 @@ fn store(cx: &mut App, key: &str, value: Value) -> bool {
 /// Move a setting an earlier release kept in its own profile file into the preference `key`,
 /// once: `read` turns the file's text into the value (`None` when it is damaged). A file there
 /// was written by an earlier release after the preference (one opened on the profile again), so
-/// it wins. Read before the window opens.
+/// it wins. Read before the window opens; the file goes once the profile kept the value. It went
+/// at once, while the value was only on its way: a quit before it arrived lost both.
 #[track_caller]
 pub fn take_file(cx: &mut App, key: &str, file: &Path, read: impl FnOnce(&str) -> Option<Value>) {
     crate::slow_calls::call("an earlier release's profile file (prefs::take_file)");
@@ -313,13 +314,35 @@ pub fn take_file(cx: &mut App, key: &str, file: &Path, read: impl FnOnce(&str) -
     if let Some(value) = read(&text) {
         keep(cx, key, value);
     }
-    if let Err(cause) = std::fs::remove_file(file) {
-        crate::log::write(
-            Level::Warn,
-            "view-preferences",
-            &format!("{} not removed: {cause}", file.display()),
-        );
-    }
+    let kept = cx
+        .try_global::<ViewPreferences>()
+        .map(ViewPreferences::flushed);
+    let file = file.to_path_buf();
+    cx.spawn(async move |cx| {
+        if let Some(kept) = kept
+            && let Err(cause) = kept.await
+        {
+            // Taken again at the next start.
+            return crate::log::write(
+                Level::Warn,
+                "view-preferences",
+                &format!("{} kept: its value was not saved: {cause}", file.display()),
+            );
+        }
+        let removed = gpui_kit::AppContext::background_spawn(&*cx, {
+            let file = file.clone();
+            async move { std::fs::remove_file(file) }
+        })
+        .await;
+        if let Err(cause) = removed {
+            crate::log::write(
+                Level::Warn,
+                "view-preferences",
+                &format!("{} not removed: {cause}", file.display()),
+            );
+        }
+    })
+    .detach();
 }
 
 /// Forget a preference: its default applies again.
@@ -600,12 +623,46 @@ mod tests {
             std::fs::write(&file, "2").expect("the file");
             take_file(cx, "kchess:test-old", &file, read);
             assert_eq!(get(cx, "kchess:test-old", 0), 2);
-            assert!(!file.exists());
-
+        });
+        cx.run_until_parked();
+        assert!(!file.exists());
+        cx.update(|cx| {
             std::fs::write(&file, "damaged").expect("the file");
             take_file(cx, "kchess:test-old", &file, read);
             assert_eq!(get(cx, "kchess:test-old", 0), 2);
-            assert!(!file.exists());
         });
+        cx.run_until_parked();
+        assert!(!file.exists());
+    }
+
+    /// An earlier release's file stays until the profile kept its value: it was removed as the
+    /// value set off, and a quit before it arrived lost the setting. Taken again next start.
+    #[gpui_kit::test]
+    fn an_earlier_releases_file_stays_until_its_value_is_saved(cx: &mut gpui_kit::TestAppContext) {
+        let dir = tempfile::tempdir().expect("a folder");
+        let file = dir.path().join("old.json");
+        std::fs::write(&file, "2").expect("the file");
+        let failed = Failed::default();
+        let (writes, queue) = Writer::queued("closed");
+        let saving = Saving {
+            failed: Arc::clone(&failed),
+            sending: Sending::default(),
+            save: |_key, _value| async { Err::<(), _>("disk full".to_string()) },
+        };
+        cx.foreground_executor()
+            .spawn(crate::writer::write_in_order(saving, queue))
+            .detach();
+        cx.update(|cx| {
+            cx.set_global(ViewPreferences {
+                failed,
+                writes: Some(writes),
+                ..ViewPreferences::default()
+            });
+            take_file(cx, "kchess:test-old", &file, |text| {
+                serde_json::from_str::<Value>(text).ok()
+            });
+        });
+        cx.run_until_parked();
+        assert!(file.exists(), "kept for the next start");
     }
 }

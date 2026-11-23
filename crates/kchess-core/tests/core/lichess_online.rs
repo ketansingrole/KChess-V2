@@ -2011,6 +2011,100 @@ async fn a_game_started_while_a_check_runs_stays_locked_after_it() {
     online.close();
 }
 
+/// The engines follow the newest answer to whether help is blocked. A game's finish read "not
+/// blocked" and its hook stalled; a check for games then began, which blocks help, and its hook
+/// said so; the stalled hook finished last and lent the engines to reviews while help was blocked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stalled_assistance_update_never_overrides_a_newer_one() {
+    use kchess_contracts::types::Assistance;
+    let streams: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
+        Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&streams);
+    let (release, gate) = watch::channel(false);
+    let checks = Arc::new(AtomicUsize::new(0));
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/stream/event" => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            *slot.lock().unwrap() = Some(tx);
+            Reply::Stream(rx)
+        }
+        // The first check finds nothing; a later one waits, then finds a game.
+        "/api/account/playing" if checks.fetch_add(1, Ordering::SeqCst) == 0 => {
+            Reply::Json(200, json!({ "nowPlaying": [] }).to_string())
+        }
+        "/api/account/playing" => Reply::Gated(
+            gate.clone(),
+            Box::new(Reply::Json(
+                200,
+                json!({ "nowPlaying": [{ "gameId": "Next1234", "fullId": "Next1234abcd",
+                    "speed": "bullet", "compat": { "board": false } }] })
+                .to_string(),
+            )),
+        ),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    assert_eq!(online.resume().await.unwrap(), None);
+    assert_eq!(online.assistance(), Assistance::Allowed);
+    online.stay_connected("Alice");
+    fixture.requested("/api/stream/event", 1).await;
+    let sender = streams.lock().unwrap().clone().unwrap();
+    let send = |event: Value| sender.send(format!("{event}\n")).unwrap();
+    send(json!({ "type": "gameStart", "game":
+        { "gameId": "Else1234", "speed": "bullet", "compat": { "board": false } } }));
+    until("the bullet game locks help", || {
+        online.assistance() == Assistance::LiveGame
+    })
+    .await;
+    // The hook the finish runs stalls until a later run reaches the hook (at most a while).
+    let busy = Arc::new(AtomicBool::new(true));
+    let stall = Arc::new(AtomicBool::new(true));
+    let stalled = Arc::new(AtomicBool::new(false));
+    let (entered_tx, entered) = std::sync::mpsc::channel::<()>();
+    let (later_tx, later) = std::sync::mpsc::channel::<()>();
+    let later = Mutex::new(later);
+    let (seen, stalls, ended) = (Arc::clone(&busy), Arc::clone(&stall), Arc::clone(&stalled));
+    online.set_state_hook(Arc::new(move |_, blocked| {
+        if !blocked && stalls.swap(false, Ordering::SeqCst) {
+            let _ = entered_tx.send(());
+            let _ = later.lock().unwrap().recv_timeout(Duration::from_secs(2));
+            seen.store(blocked, Ordering::SeqCst);
+            ended.store(true, Ordering::SeqCst);
+        } else {
+            let _ = later_tx.send(());
+            seen.store(blocked, Ordering::SeqCst);
+        }
+    }));
+    send(json!({ "type": "gameFinish", "game": { "gameId": "Else1234" } }));
+    tokio::task::spawn_blocking(move || entered.recv_timeout(Duration::from_secs(10)))
+        .await
+        .unwrap()
+        .expect("the finish runs the hook");
+    let checking = online.clone();
+    let check = tokio::spawn(async move { checking.resume().await });
+    fixture.requested("/api/account/playing", 2).await;
+    until("the stalled hook ends", || stalled.load(Ordering::SeqCst)).await;
+    // The check's own run comes after the stalled one, at once: not at its deadline, seconds on.
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        until("the engines stay blocked while the check runs", || {
+            busy.load(Ordering::SeqCst)
+        }),
+    )
+    .await
+    .expect("the check's run follows the stalled one");
+    let _ = release.send(true);
+    assert_eq!(check.await.unwrap().expect("the check"), None);
+    assert_eq!(online.assistance(), Assistance::LiveGame);
+    assert!(
+        busy.load(Ordering::SeqCst),
+        "the engines stay with the newer game"
+    );
+    online.close();
+}
+
 /// A game played elsewhere whose finish went unheard (its account's stream gave way to another
 /// account's) no longer locks assistance once a check of every account finds it over; a check
 /// that still finds it keeps it locked.

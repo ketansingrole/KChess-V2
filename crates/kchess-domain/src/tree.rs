@@ -118,9 +118,20 @@ fn adopt(siblings: &mut Vec<TreeNode>, node: TreeNode) {
             continue;
         };
         let same = &mut list[at];
+        // A comment before a move is the variation's opening note, and is written before it. The
+        // first of its siblings continues the line: a note written before it becomes the previous
+        // move's when read again, so it joins the move's own comments there.
+        let starting = node.starting_comments.take();
+        let comments = node.comments.take();
+        let (comments, starting) = if at == 0 {
+            let joined: Vec<String> = starting.into_iter().chain(comments).flatten().collect();
+            ((!joined.is_empty()).then_some(joined), None)
+        } else {
+            (comments, starting)
+        };
         for (into, from) in [
-            (&mut same.comments, node.comments.take()),
-            (&mut same.starting_comments, node.starting_comments.take()),
+            (&mut same.comments, comments),
+            (&mut same.starting_comments, starting),
         ] {
             if let Some(from) = from {
                 into.get_or_insert_with(Vec::new).extend(from);
@@ -732,6 +743,31 @@ mod tests {
         assert_eq!(nf3.len(), 1);
         assert_eq!(nf3[0].children.len(), 1);
         assert_eq!(nf3[0].children[0].children[0].uci, "f1b5");
+    }
+
+    /// A merged variation's opening note stays on its move when the chapter is saved and read
+    /// again: it was kept as a note before the main line's move, which is written after the move
+    /// before it, so reopening the study gave it to that move.
+    #[test]
+    fn a_merged_variations_note_stays_on_its_move_when_saved() {
+        let tree = TreeNode::from_pgn("1. e4 e5 ( {Black's idea} 1... e5 2. Nf3 ) *").unwrap();
+        let note = Some(&["Black's idea".to_string()][..]);
+        let e5 = &tree.children[0].children[0];
+        assert_eq!(e5.comments.as_deref(), note);
+        let saved = tree_to_pgn(&tree, None).unwrap();
+        let reopened = TreeNode::from_pgn(&saved).unwrap();
+        assert_eq!(reopened.children[0].comments, None, "{saved}");
+        assert_eq!(reopened.children[0].children[0].comments.as_deref(), note);
+        // A note opening a variation that differs from the main line stays where it was.
+        let tree = TreeNode::from_pgn("1. e4 e5 ( {Sharp} 1... c5 ) ( {Solid} 1... c5 2. Nf3 ) *")
+            .unwrap();
+        let c5 = &tree.children[0].children[1];
+        assert_eq!(
+            c5.starting_comments.as_deref(),
+            Some(&["Sharp".to_string(), "Solid".to_string()][..])
+        );
+        let saved = tree_to_pgn(&tree, None).unwrap();
+        assert_eq!(TreeNode::from_pgn(&saved).unwrap(), tree, "{saved}");
     }
 
     /// The analysis board's edits through paths: adding, following, finding, promoting and

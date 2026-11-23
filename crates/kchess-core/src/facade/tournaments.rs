@@ -16,20 +16,30 @@ use crate::lichess::tournaments;
 use crate::store::library;
 use crate::time::now_ms;
 use kchess_contracts::error::Result;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 impl Core {
-    /// Forgets one account's membership of a tournament, or every account's without one.
+    /// Forgets one account's membership of a tournament, or every account's without one; with
+    /// `unchanged_since`, only when no membership changed after that count was read.
     async fn forget_tournament(
         &self,
         system: TournamentSystem,
         id: &str,
         account: Option<&str>,
+        unchanged_since: Option<u64>,
     ) -> Result<()> {
         let id = id.to_owned();
         let account = account.map(str::to_owned);
+        let memberships = Arc::clone(&self.memberships);
         self.database
             .write_async(move |ctx| {
-                library::forget_tournament(ctx.host, ctx.db, system, &id, account.as_deref())
+                if unchanged_since.is_some_and(|seen| seen != memberships.load(Ordering::SeqCst)) {
+                    return Ok(());
+                }
+                library::forget_tournament(ctx.host, ctx.db, system, &id, account.as_deref())?;
+                memberships.fetch_add(1, Ordering::SeqCst);
+                Ok(())
             })
             .await
     }
@@ -59,9 +69,11 @@ impl TournamentsApi for Core {
     ) -> Result<TournamentDetail> {
         let page = page.map_or(1, |page| page.0 as u32);
         let lichess = self.services.lichess();
-        // Whether the account's membership was kept as the lookup began: one a join kept
-        // meanwhile (another window) is newer than this answer, which an answer from before the
-        // join erased, and pairings stopped keeping the account's stream open.
+        // Whether the account's membership was kept as the lookup began, and the count of changes
+        // then: one a join kept meanwhile (another window), or a leave and a join again, is newer
+        // than this answer, which an answer from before them erased, and pairings stopped keeping
+        // the account's stream open.
+        let changes = self.memberships.load(Ordering::SeqCst);
         let was_kept = if system == TournamentSystem::Arena && !account.0.is_empty() {
             let (tournament, name) = (id.0.clone(), account.0.clone());
             let now = now_ms() as f64;
@@ -80,14 +92,14 @@ impl TournamentsApi for Core {
         if system == TournamentSystem::Arena {
             // An arena that is over is over for every account.
             if detail.summary.status == TournamentStatus::Finished {
-                self.forget_tournament(system, &id.0, None).await?;
+                self.forget_tournament(system, &id.0, None, None).await?;
             } else if was_kept
                 // An anonymous answer (the login unreadable) has no place for anyone.
                 && signed
                 && detail.me.as_ref().is_none_or(|me| me.withdraw)
             {
                 // `me` is the looked-up account's place only: another account's stays.
-                self.forget_tournament(system, &id.0, Some(&account.0))
+                self.forget_tournament(system, &id.0, Some(&account.0), Some(changes))
                     .await?;
             }
         }
@@ -143,9 +155,12 @@ impl TournamentsApi for Core {
         if !current() {
             return Ok(result);
         }
+        let memberships = Arc::clone(&self.memberships);
         self.database
             .write_async(move |ctx| {
-                library::remember_tournament(ctx.host, ctx.db, &entry, now as f64)
+                library::remember_tournament(ctx.host, ctx.db, &entry, now as f64)?;
+                memberships.fetch_add(1, Ordering::SeqCst);
+                Ok(())
             })
             .await?;
         Ok(result)
@@ -161,7 +176,7 @@ impl TournamentsApi for Core {
         let left = tournaments::leave_tournament(lichess, system, &id.0, &account.0).await;
         let result = done(left)?;
         if result == Reply::Done(true) {
-            self.forget_tournament(system, &id.0, Some(&account.0))
+            self.forget_tournament(system, &id.0, Some(&account.0), None)
                 .await?;
         }
         Ok(result)

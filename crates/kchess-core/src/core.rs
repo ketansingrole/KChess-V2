@@ -87,6 +87,9 @@ pub struct Core {
     pub(crate) puzzle_db_url: String,
     /// Managed engine installs and deletes in progress, by request id.
     installs: Mutex<HashMap<u64, CancellationToken>>,
+    /// Counts the changes to the tournaments joined, each made in the write that makes it: a
+    /// lookup forgets a membership only when none changed since it began (`tournament`).
+    pub(crate) memberships: Arc<AtomicU64>,
     /// Whether a live online game (or its recovery) blocks the engines, as of the last state.
     busy: Arc<AtomicBool>,
     /// Set when `close` starts: later facade calls fail and events stop.
@@ -250,6 +253,7 @@ impl Core {
             usage,
             puzzle_db_url,
             installs: Mutex::new(HashMap::new()),
+            memberships: Arc::default(),
             busy,
             closed,
             tracker: TaskTracker::new(),

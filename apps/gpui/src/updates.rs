@@ -138,6 +138,8 @@ pub struct Updates {
     /// The checked update, ready to take this app's place: the new bundle on macOS, else the
     /// downloaded package.
     staged: Option<PathBuf>,
+    /// Keeps the staged package's kept folder from another KChess's cleanup (`hold_staged`).
+    staged_hold: Option<std::fs::File>,
     /// Install the staged update as the app quits and reopen it (`restart`).
     restart: bool,
     /// How this copy was installed; none for a build run from where it was made.
@@ -275,6 +277,7 @@ pub fn init(cx: &mut App) {
             error: failed,
             release: None,
             staged: None,
+            staged_hold: None,
             restart: false,
             install,
             workspace,
@@ -408,7 +411,7 @@ impl Updates {
             self.version = None;
             self.release = None;
             // An update downloaded before (its install failed) is not installed on quit either.
-            self.staged = None;
+            self.stage(None);
             return;
         };
         // An update whose install failed is still whole: the same version is ready again, and a
@@ -421,7 +424,7 @@ impl Updates {
                 self.release = Some(release);
                 return;
             }
-            self.staged = None;
+            self.stage(None);
         }
         self.phase = Phase::Available;
         let auto_download = crate::settings::frontend(cx).update_auto_download;
@@ -521,7 +524,7 @@ impl Updates {
                 match done {
                     Ok(staged) => {
                         log(&format!("staged {}", staged.display()));
-                        this.staged = Some(staged);
+                        this.stage(Some(staged));
                         this.phase = Phase::Downloaded;
                     }
                     Err(cause) => {
@@ -578,6 +581,12 @@ impl Updates {
         );
     }
 
+    /// The update ready to install, held from other copies' cleanup while it is; none.
+    fn stage(&mut self, staged: Option<PathBuf>) {
+        self.staged_hold = staged.as_deref().and_then(hold_staged);
+        self.staged = staged;
+    }
+
     /// `install`, once everything is saved.
     fn install_saved(&mut self, cx: &mut Context<Self>) {
         let (Some(install), Some(staged)) = (self.install.clone(), self.staged.clone()) else {
@@ -588,6 +597,7 @@ impl Updates {
             self.restart = true;
             return crate::quit::quit_saved(cx);
         }
+        // Its folder stays held while it installs.
         self.staged = None;
         // Off the UI thread: the package manager may wait for a password.
         let done = on_runtime(async move {
@@ -605,9 +615,7 @@ impl Updates {
                 Err((cause, staged)) => {
                     log(&format!("install failed: {cause}"));
                     // Still whole where it was: it can be installed again.
-                    if staged.exists() {
-                        this.staged = Some(staged);
-                    }
+                    this.stage(staged.exists().then_some(staged));
                     this.phase = Phase::Error;
                     this.error = Some(cause);
                     cx.notify();

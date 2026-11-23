@@ -50,6 +50,8 @@ pub fn arg(method: &str, value: impl Serialize) -> Result<Value, CoreError> {
 pub struct Param {
     pub name: &'static str,
     pub optional: bool,
+    /// Its type as declared, for the protocol fingerprint.
+    pub ty: &'static str,
 }
 
 pub struct Method {
@@ -61,6 +63,9 @@ pub struct Method {
     pub assist: Option<Assist>,
     /// The parts of the profile a successful call changes.
     pub writes: &'static [ProfileArea],
+    /// Its answer's type as declared, for the protocol fingerprint: a build whose answer changed
+    /// shape does not share a core with one that reads the old shape.
+    pub answer: &'static str,
 }
 
 /// The assistance a method gives, refused while a live human game is played or Lichess has not
@@ -294,11 +299,12 @@ macro_rules! core_api {
                 name: $method,
                 doc: concat!($($doc, "\n",)*),
                 params: &[
-                    $(Param { name: stringify!($arg), optional: false },)*
-                    $($(Param { name: stringify!($opt), optional: true },)+)?
+                    $(Param { name: stringify!($arg), optional: false, ty: stringify!($ty) },)*
+                    $($(Param { name: stringify!($opt), optional: true, ty: stringify!($opt_ty) },)+)?
                 ],
                 assist: core_api!(@assist $($gate)?),
                 writes: &[$($(ProfileArea::$written),*)?],
+                answer: stringify!($answer),
             },
         )*)*];
 

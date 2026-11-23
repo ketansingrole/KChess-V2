@@ -159,12 +159,14 @@ impl OnlineSession {
     }
 
     pub(super) fn refresh_assistance(&self) {
-        self.run_state_hook(false, self.assistance_blocked());
+        self.run_state_hook(false);
     }
 
     /// Runs the state hook, if any, and reports the assistance when it changed; called without
-    /// the state lock held.
-    pub(super) fn run_state_hook(&self, live_game: bool, blocked: bool) {
+    /// the state lock held. One run at a time, each reading whether help is blocked once it is
+    /// its turn: a run that read it and then stalled once overwrote a newer run's answer, and
+    /// lent the engines to reviews in the middle of another account's game.
+    pub(super) fn run_state_hook(&self, live_game: bool) {
         let hook = self
             .inner
             .state_hook
@@ -172,7 +174,8 @@ impl OnlineSession {
             .ok()
             .and_then(|slot| slot.clone());
         if let Some(hook) = hook {
-            hook(live_game, blocked);
+            let _turn = self.inner.state_hook_turn.lock();
+            hook(live_game, self.assistance_blocked());
         }
         self.report_assistance();
     }

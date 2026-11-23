@@ -980,12 +980,23 @@ fn old_kept_downloads_are_removed() {
     }
     let busy = std::fs::File::create(kept("2026.10.1").join(".lock")).unwrap();
     busy.lock().unwrap();
+    // Another KChess offers 2026.10.2 as ready: a newer download here once removed it, and
+    // installing it there failed.
+    std::fs::create_dir_all(kept("2026.10.2")).unwrap();
+    let ready = kept("2026.10.2").join("KChess.AppImage");
+    std::fs::write(&ready, "package").unwrap();
+    let held = super::hold_staged(&ready).expect("held");
+    assert!(super::hold_staged(&root.join("KChess.AppImage")).is_none());
     let current = parse_version("2026.11.0");
     super::prune_kept(&root, |version| version.is_none() || version <= current);
     assert!(kept("2026.10.1").exists(), "still being downloaded");
+    assert!(ready.exists(), "offered elsewhere");
     assert!(!kept("2026.11.0").exists() && !kept("junk").exists());
     assert!(kept("2026.12.0").exists());
     drop(busy);
+    drop(held);
+    super::prune_kept(&root, |version| version.is_none() || version <= current);
+    assert!(!kept("2026.10.2").exists(), "no longer offered");
 
     // A running app's start never clears the kept downloads.
     super::clear_stopped(&root);
