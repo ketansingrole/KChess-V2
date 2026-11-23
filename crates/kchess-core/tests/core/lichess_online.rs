@@ -327,6 +327,39 @@ async fn aborts_an_outstanding_challenge_and_sends_no_more_once_cancelled() {
     online.close();
 }
 
+/// A start dropped by its caller while Lichess creates the challenge (a window that closed, a
+/// call the service cancelled) still withdraws the challenge once Lichess names it, and stops the
+/// event stream it opened. Dropped at its await, it once left both running: the opponent could
+/// still accept.
+#[tokio::test]
+async fn a_challenge_whose_start_is_dropped_is_withdrawn() {
+    let (gate_tx, gate) = watch::channel(false);
+    let fixture = serve(move |seen| match (seen.method.as_str(), seen.path()) {
+        ("POST", "/api/challenge/Bob") => Reply::Gated(
+            gate.clone(),
+            Box::new(Reply::Json(
+                200,
+                json!({ "id": "AbCd1234", "url": "https://lichess.org/AbCd1234" }).to_string(),
+            )),
+        ),
+        ("POST", _) => Reply::Json(200, json!({ "ok": true }).to_string()),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let starting = online.clone();
+    let result = tokio::spawn(async move { starting.start(&seek_options(Some("Bob"))).await });
+    fixture.requested("/api/challenge/Bob", 1).await;
+    result.abort();
+    assert!(result.await.is_err_and(|joined| joined.is_cancelled()));
+    let _ = gate_tx.send(true);
+    fixture.requested("/api/challenge/AbCd1234/cancel", 1).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(fixture.to("/api/challenge/AbCd1234/cancel").len(), 1);
+    online.close();
+}
+
 /// A challenge whose creation fails after the player cancelled it ends as cancelled, with nothing
 /// to show.
 #[tokio::test]
@@ -994,6 +1027,37 @@ async fn blocks_startup_assistance_through_pending_and_failed_verification_then_
     assert_eq!(states(&host).last().unwrap()["phase"], "disconnected");
     assert_eq!(online.resume().await.unwrap(), None);
     assert!(!online.assistance_blocked());
+    online.close();
+}
+
+/// The check for a game in progress finds a bullet game the Board API cannot play: nothing opens,
+/// but assistance stays locked, and a later check that finds it over lends it again. It once
+/// skipped such games and unlocked assistance in the middle of one.
+#[tokio::test]
+async fn a_check_that_finds_a_live_game_played_elsewhere_keeps_assistance_locked() {
+    use kchess_contracts::types::Assistance;
+    let checks = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&checks);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/account/playing" => {
+            let now_playing = if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                json!([{ "gameId": "Else1234", "fullId": "Else1234abcd", "speed": "bullet",
+                    "compat": { "board": false } }])
+            } else {
+                json!([])
+            };
+            Reply::Json(200, json!({ "nowPlaying": now_playing }).to_string())
+        }
+        _ => Reply::Hang,
+    })
+    .await;
+    let (_host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &_host, &store, &tokens);
+    assert_eq!(online.resume().await.unwrap(), None);
+    assert_eq!(online.assistance(), Assistance::LiveGame);
+    assert!(!online.playing(), "it does not open here");
+    assert_eq!(online.resume().await.unwrap(), None);
+    assert_eq!(online.assistance(), Assistance::Allowed);
     online.close();
 }
 
@@ -1821,6 +1885,49 @@ async fn the_idle_stream_opens_only_live_games_the_board_can_play() {
         .filter(|path| path.starts_with("/api/board/game/stream/"))
         .collect();
     assert!(opened.is_empty(), "{opened:?}");
+    online.close();
+}
+
+/// A real-time game the Board API cannot play (bullet on the website) never opens here, but
+/// locks assistance until it finishes, as a game on the board does: it once left the engine
+/// lent all game long. A correspondence game locks nothing.
+#[tokio::test]
+async fn a_live_game_played_elsewhere_locks_assistance_until_it_finishes() {
+    use kchess_contracts::types::Assistance;
+    let streams: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
+        Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&streams);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/stream/event" => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            *slot.lock().unwrap() = Some(tx);
+            Reply::Stream(rx)
+        }
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    fixture.requested("/api/stream/event", 1).await;
+    let sender = streams.lock().unwrap().clone().unwrap();
+    let changes = |host: &Recording| emitted(host, "online:ongoing-changed").len();
+    let send = |event: Value| sender.send(format!("{event}\n")).unwrap();
+
+    send(json!({ "type": "gameStart", "game":
+        { "gameId": "Corr1234", "speed": "correspondence", "compat": { "board": false } } }));
+    until("the correspondence game is listed", || changes(&host) > 0).await;
+    assert_ne!(online.assistance(), Assistance::LiveGame);
+
+    send(json!({ "type": "gameStart", "game":
+        { "gameId": "Else1234", "speed": "bullet", "compat": { "board": false } } }));
+    until("the bullet game is listed", || changes(&host) > 1).await;
+    assert_eq!(online.assistance(), Assistance::LiveGame);
+    assert!(!online.playing(), "it does not open here");
+
+    send(json!({ "type": "gameFinish", "game": { "gameId": "Else1234" } }));
+    until("the finish is seen", || changes(&host) > 2).await;
+    assert_ne!(online.assistance(), Assistance::LiveGame);
     online.close();
 }
 

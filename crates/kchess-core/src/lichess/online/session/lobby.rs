@@ -121,6 +121,9 @@ impl OnlineSession {
                     let game_id = game.game_id.clone().unwrap_or_default();
                     this.challenge_became_game(&game_id);
                     if game.correspondence() || !game.board_compatible() {
+                        if !game.board_compatible() {
+                            this.started_elsewhere(&game_id, game.correspondence());
+                        }
                         this.ongoing_changed();
                         return;
                     }
@@ -144,7 +147,11 @@ impl OnlineSession {
                         }
                     });
                 }
-                ServerEvent::GameFinish { .. } => this.ongoing_changed(),
+                ServerEvent::GameFinish { game } => {
+                    let game_id = game.and_then(|game| game.game_id).unwrap_or_default();
+                    this.finished_elsewhere(&game_id);
+                    this.ongoing_changed();
+                }
                 _ => {}
             }
         });

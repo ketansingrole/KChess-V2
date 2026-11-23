@@ -140,6 +140,24 @@ impl OnlineSession {
     /// A game just stopped being live or protected: the engines' busy state follows now. It
     /// was taken only from the next state report, so reviews stayed paused after a game ended.
     /// Called without the state lock held.
+    /// A game Lichess says started that the Board API cannot play: a real-time one locks
+    /// assistance until it finishes (`State::elsewhere`).
+    pub(super) fn started_elsewhere(&self, id: &str, correspondence: bool) {
+        if correspondence || id.is_empty() {
+            return;
+        }
+        if self.st().elsewhere.insert(id.to_string()) {
+            self.refresh_assistance();
+        }
+    }
+
+    /// A game Lichess says finished: one played elsewhere no longer locks assistance.
+    pub(super) fn finished_elsewhere(&self, id: &str) {
+        if self.st().elsewhere.remove(id) {
+            self.refresh_assistance();
+        }
+    }
+
     pub(super) fn refresh_assistance(&self) {
         self.run_state_hook(false, self.assistance_blocked());
     }
@@ -187,7 +205,7 @@ impl OnlineSession {
     /// comes first; otherwise a check for a game that has not answered (or failed).
     pub fn assistance(&self) -> Assistance {
         let st = self.st();
-        if st.live.is_some() || !st.protected_game.is_empty() {
+        if st.live.is_some() || !st.protected_game.is_empty() || !st.elsewhere.is_empty() {
             Assistance::LiveGame
         } else if st.recovery_unverified {
             Assistance::Unverified

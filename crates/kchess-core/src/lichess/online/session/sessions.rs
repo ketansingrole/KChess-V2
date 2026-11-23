@@ -294,6 +294,9 @@ impl OnlineSession {
         let (session, account) = {
             let mut st = self.st();
             st.protected_game.clear();
+            // Every account was checked: this is what is played elsewhere now, and a finish
+            // missed while the stream was down no longer keeps assistance locked.
+            st.elsewhere = std::mem::take(&mut checking.elsewhere);
             (st.epoch, st.current_account.clone())
         };
         self.emit_state(session, &account, "", Lane::Game, OnlinePhase::Idle, None);
@@ -354,12 +357,29 @@ impl OnlineSession {
                 })
                 .and_then(|game| game["gameId"].as_str())
                 .map(str::to_string);
+            // The real-time games it cannot play lock assistance until they end, whatever this
+            // check finds for the board.
+            checking.elsewhere.extend(
+                now_playing
+                    .iter()
+                    .filter(|game| {
+                        let game = GameRef::read(game);
+                        !game.correspondence() && !game.board_compatible()
+                    })
+                    .filter_map(|game| game["gameId"].as_str())
+                    .map(str::to_string),
+            );
             if attempt != self.st().resume_attempt {
                 return Err(CoreError::aborted("Recovery cancelled."));
             }
             let Some(id) = id else {
                 return Ok(None);
             };
+            {
+                // The accounts not checked yet keep the games they were known to play.
+                let found = checking.elsewhere.clone();
+                self.st().elsewhere.extend(found);
+            }
             self.st().recovery_unverified = false;
             self.cancel_inner();
             {

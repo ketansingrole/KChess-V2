@@ -65,28 +65,43 @@ impl OnlineSession {
             st.controller = Some(handle.clone());
             handle
         };
-        match self
+        // A start whose caller goes away (a window that closed, a call cancelled through the
+        // service) is dropped at its await: it ends as a failed one does, and a challenge being
+        // created is withdrawn once Lichess names it (`start_inner`).
+        let mut abandoned = Abandoned {
+            session: self.clone(),
+            handle: Some(handle.clone()),
+        };
+        let started = self
             .start_inner(options, &target, correspondence, perf, &label, &handle)
-            .await
-        {
+            .await;
+        let handle = abandoned.handle.take();
+        match started {
             Ok(result) => Ok(result),
             Err(cause) => {
-                // Don't leave the event stream running for a game the UI never started.
-                handle.token.cancel();
-                let released = {
-                    let mut st = self.st();
-                    if st.controller.as_ref().is_some_and(|c| c.id == handle.id) {
-                        st.controller = None;
-                        true
-                    } else {
-                        false
-                    }
-                };
-                if released {
-                    self.start_lobby();
+                if let Some(handle) = handle {
+                    self.end_start(&handle);
                 }
                 Err(cause)
             }
+        }
+    }
+
+    /// A start that failed or was abandoned: its event stream stops, as the window never started
+    /// its game, and the lobby listens again.
+    fn end_start(&self, handle: &Handle) {
+        handle.token.cancel();
+        let released = {
+            let mut st = self.st();
+            if st.controller.as_ref().is_some_and(|c| c.id == handle.id) {
+                st.controller = None;
+                true
+            } else {
+                false
+            }
+        };
+        if released {
+            self.start_lobby();
         }
     }
 
@@ -160,9 +175,30 @@ impl OnlineSession {
             form.extend(game_body(options));
             let path = format!("/api/challenge/{}", path_segment(target));
             // Cancellation does not cut the creation short: Lichess may already have created the
-            // challenge, and its id is cancelled below once the answer arrives.
-            let creation = CancellationToken::new();
-            let reply = self.post_form(&path, &form, &auth, &creation).await;
+            // challenge, and its id is cancelled once the answer arrives. The creation runs on its
+            // own task, so a start dropped by its caller still withdraws it.
+            let creation = {
+                let this = self.clone();
+                let auth = auth.clone();
+                let cancelled = handle.token.clone();
+                tokio::spawn(async move {
+                    let reply = this
+                        .post_form(&path, &form, &auth, &CancellationToken::new())
+                        .await;
+                    let withdrawn = match &reply {
+                        Ok(challenge) if cancelled.is_cancelled() => {
+                            let id = challenge["id"].as_str().unwrap_or("");
+                            this.cancel_challenge(id, &auth).await;
+                            true
+                        }
+                        _ => false,
+                    };
+                    (reply, withdrawn)
+                })
+            };
+            let (reply, withdrawn) = creation
+                .await
+                .map_err(|_| CoreError::new("The challenge could not be sent."))?;
             let challenge = match reply {
                 Ok(challenge) => challenge,
                 Err(_) if handle.token.is_cancelled() => {
@@ -181,7 +217,9 @@ impl OnlineSession {
             let id = challenge["id"].as_str().unwrap_or("").to_string();
             // A server may finish creating the challenge just as cancellation arrives.
             if handle.token.is_cancelled() {
-                self.cancel_challenge(&id, &auth).await;
+                if !withdrawn {
+                    self.cancel_challenge(&id, &auth).await;
+                }
                 return Err(crate::lichess::aborted());
             }
             if self.st().live.is_none() {
@@ -359,5 +397,20 @@ impl OnlineSession {
         }
         let path = format!("/api/challenge/{}/cancel", path_segment(&challenge.id));
         self.challenge_post(&auth, &path, &[]).await
+    }
+}
+
+/// Ends a start dropped before it answered (`OnlineSession::end_start`): the event stream it
+/// opened for a challenge once ran on with nobody to tell, and the challenge stayed open on Lichess.
+struct Abandoned {
+    session: OnlineSession,
+    handle: Option<Handle>,
+}
+
+impl Drop for Abandoned {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            self.session.end_start(&handle);
+        }
     }
 }

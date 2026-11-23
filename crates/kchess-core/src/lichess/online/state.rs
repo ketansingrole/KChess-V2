@@ -50,6 +50,10 @@ pub(crate) struct State {
     pub(crate) move_in_flight: bool,
     pub(crate) protected_game: String,
     pub(crate) protected_account: String,
+    /// Real-time games of the account that the Board API cannot play (a bullet game on the
+    /// website): they never open here, but lock assistance until they finish as a game on the
+    /// board does. They once left it lent all game long.
+    pub(crate) elsewhere: std::collections::BTreeSet<String>,
     pub(crate) recovery_unverified: bool,
     pub(crate) current_account: String,
     /// The challenge sent and not yet answered, cancelled with the session.
@@ -156,6 +160,7 @@ impl State {
             move_in_flight: false,
             protected_game: String::new(),
             protected_account: String::new(),
+            elsewhere: std::collections::BTreeSet::new(),
             recovery_unverified: true,
             current_account: String::new(),
             pending_challenge: None,
