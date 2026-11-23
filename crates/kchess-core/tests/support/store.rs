@@ -148,9 +148,8 @@ impl Store {
                 .write(|c| games::import_token_ciphertext(c.db, entry.account.as_deref(), &sealed));
         }
         // The earlier database's plaintext copies go once sealed.
-        if !tokens.is_empty() {
-            let _ = self.db.write(import::scrub_legacy_tokens);
-        }
+        let sealed: Vec<Option<String>> = tokens.into_iter().map(|entry| entry.account).collect();
+        let _ = self.db.write(|c| import::scrub_legacy_tokens(c, &sealed));
     }
 
     /// Stores a login with its token and connected account, unless a logout ran since.

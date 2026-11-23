@@ -2,6 +2,7 @@
 //! plaintext logins are sealed with the host's secret store and then removed from the earlier
 //! file.
 
+use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{Arc, OnceLock, Weak};
 
 use kchess_contracts::{CoreEvent, HostReply, HostRequest};
@@ -16,6 +17,8 @@ struct Sealer {
     core: OnceLock<Weak<Core>>,
     hold: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
     asked: std::sync::atomic::AtomicBool,
+    /// How many seals the keychain refuses before it seals.
+    refuse: std::sync::atomic::AtomicUsize,
 }
 
 impl Host for Sealer {
@@ -34,7 +37,15 @@ impl Host for Sealer {
             HostRequest::SecretsEncrypt(login) => {
                 self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
                 held = self.hold.lock().unwrap().take();
-                HostReply::Value(json!(format!("sealed:{login}")))
+                let refused = self
+                    .refuse
+                    .try_update(SeqCst, SeqCst, |left| left.checked_sub(1))
+                    .is_ok();
+                if refused {
+                    HostReply::Error("The keychain refused.".into())
+                } else {
+                    HostReply::Value(json!(format!("sealed:{login}")))
+                }
             }
             _ => HostReply::Error("Not in this test.".into()),
         };
@@ -145,4 +156,79 @@ async fn an_import_whose_first_call_is_cancelled_still_seals_the_logins() {
         .expect("the token");
     assert_eq!(sealed.as_deref(), Some("sealed:lip_carol"));
     core.close().await;
+}
+
+/// One start of the core over `dir`, importing from `legacy`, with the keychain refusing `refuse`
+/// seals: Carol's account and stored login after its first call.
+async fn start(
+    dir: &std::path::Path,
+    legacy: &std::path::Path,
+    refuse: usize,
+) -> (serde_json::Value, Option<String>) {
+    let host = Arc::new(Sealer::default());
+    host.refuse.store(refuse, SeqCst);
+    let config = Config {
+        legacy_database_path: Some(legacy.to_path_buf()),
+        ..Config::new(dir.to_path_buf())
+    };
+    let core = Arc::new(Core::open(config, Arc::clone(&host) as Arc<dyn Host>).unwrap());
+    host.core.set(Arc::downgrade(&core)).unwrap();
+    let data = core.call("loadData", vec![]).await.expect("loadData");
+    let sealed = core
+        .database_for_tests()
+        .read(|c| games::token_ciphertext(c.db, "Carol"))
+        .expect("the token");
+    core.close().await;
+    (data["accounts"][0].clone(), sealed)
+}
+
+/// The earlier database's logins still in plaintext.
+fn plaintext(legacy: &std::path::Path) -> i64 {
+    Connection::open(legacy)
+        .and_then(|earlier| {
+            earlier.query_row("SELECT COUNT(*) FROM lichess_tokens", [], |row| row.get(0))
+        })
+        .expect("the earlier database")
+}
+
+/// 2026-11-23: a keychain that refused to seal Carol's login disconnected her, and the import
+/// removed her plaintext login with the sealed ones: she had to sign in again, as the import
+/// never runs twice. Her login now waits in the earlier database, and the next start seals it and
+/// connects her.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_login_the_keychain_refused_is_sealed_on_a_later_start() {
+    let earlier = tempfile::tempdir().unwrap();
+    let legacy = earlier_database(&earlier);
+    let dir = tempfile::tempdir().unwrap();
+
+    let (carol, sealed) = start(dir.path(), &legacy, 1).await;
+    assert_eq!(carol["connected"], json!(false));
+    assert_eq!(sealed, None);
+    assert_eq!(plaintext(&legacy), 1, "kept until sealed");
+
+    let (carol, sealed) = start(dir.path(), &legacy, 0).await;
+    assert_eq!(carol["connected"], json!(true));
+    assert_eq!(sealed.as_deref(), Some("sealed:lip_carol"));
+    assert_eq!(plaintext(&legacy), 0, "gone once sealed");
+}
+
+/// A keychain refused at every start is asked a few times only: then the plaintext login goes
+/// unsealed, and Carol stays disconnected until she signs in.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_login_refused_at_every_start_is_given_up() {
+    let earlier = tempfile::tempdir().unwrap();
+    let legacy = earlier_database(&earlier);
+    let dir = tempfile::tempdir().unwrap();
+    // The import, then each start that tries again.
+    for _ in 0..=kchess_core::store::import::LEGACY_LOGIN_ATTEMPTS {
+        let (carol, sealed) = start(dir.path(), &legacy, usize::MAX).await;
+        assert_eq!((carol["connected"].clone(), sealed), (json!(false), None));
+        assert_eq!(plaintext(&legacy), 1);
+    }
+    let (carol, sealed) = start(dir.path(), &legacy, usize::MAX).await;
+    assert_eq!((carol["connected"].clone(), sealed), (json!(false), None));
+    assert_eq!(plaintext(&legacy), 0, "given up");
+    // Not asked again: a start that could seal finds nothing waiting.
+    let (carol, sealed) = start(dir.path(), &legacy, 0).await;
+    assert_eq!((carol["connected"].clone(), sealed), (json!(false), None));
 }

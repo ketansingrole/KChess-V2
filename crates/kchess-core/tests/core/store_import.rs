@@ -225,6 +225,60 @@ fn an_earlier_database_leaves_its_tokens_out_when_os_encryption_is_unavailable()
     assert_eq!(store.token("Erin"), None);
 }
 
+/// A login waiting to be sealed (`legacy_logins`) is no longer waited for once its player signed
+/// in again or removed the account: it never comes back over what they chose. One still waiting
+/// is due, and counted.
+#[test]
+fn a_waiting_login_gives_way_to_what_the_player_did_since() {
+    let (_earlier, legacy) = earlier_database(
+        "CREATE TABLE lichess_accounts (username TEXT, auth_kind TEXT, last_synced_at INTEGER);
+         INSERT INTO lichess_accounts VALUES ('Carol', 'oauth', NULL);
+         INSERT INTO lichess_accounts VALUES ('Dave', 'oauth', NULL);
+         INSERT INTO lichess_accounts VALUES ('Erin', 'oauth', NULL);
+         CREATE TABLE lichess_tokens (username TEXT, token TEXT);
+         INSERT INTO lichess_tokens VALUES ('Carol', 'lip_carol');
+         INSERT INTO lichess_tokens VALUES ('Dave', 'lip_dave');
+         INSERT INTO lichess_tokens VALUES ('Erin', 'lip_erin');",
+    );
+    let store = Store::new(Some(legacy), Secrets::OFF);
+    store
+        .read(|c| games::load_app_data(c.db))
+        .expect("imported");
+    for name in ["Carol", "Dave", "Erin"] {
+        store
+            .write_direct(|c| {
+                import::defer_legacy_login(c.db, name)?;
+                games::disconnect_account(c.db, name)
+            })
+            .expect("waiting");
+    }
+    store
+        .write_direct(|c| games::save_login(c.db, "Carol", &encrypt("lip_new")))
+        .expect("Carol signs in");
+    store
+        .write_direct(|c| games::remove_account(c.db, "Dave"))
+        .expect("Dave is removed");
+    let due = |store: &Store| {
+        store
+            .write_direct(|c| {
+                import::due_legacy_logins(c).map(|logins| {
+                    let due: Vec<_> = logins.due.into_iter().map(|e| e.account).collect();
+                    (due, logins.done)
+                })
+            })
+            .expect("due")
+    };
+    assert_eq!(due(&store), json!([["Erin"], ["Carol", "Dave"]]));
+    // Each is decided once: Carol and Dave are no longer waited for.
+    assert_eq!(due(&store), json!([["Erin"], []]));
+    assert_eq!(
+        store
+            .read_direct(|c| games::token_ciphertext(c.db, "Carol"))
+            .expect("Carol's login"),
+        json!(encrypt("lip_new"))
+    );
+}
+
 #[test]
 fn damaged_backups_are_read_as_no_backup_and_nothing_is_imported_from_them() {
     let store = Store::new(None, Secrets::ON);

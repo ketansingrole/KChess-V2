@@ -264,6 +264,14 @@ pub const MIGRATIONS: &[&str] = &[
     r#"ALTER TABLE settings ADD COLUMN openAtLogin INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE settings ADD COLUMN closeAction TEXT NOT NULL DEFAULT 'default';
   ALTER TABLE settings ADD COLUMN showTrayIcon INTEGER NOT NULL DEFAULT 1;"#,
+    // Logins of an earlier release's database that could not be sealed when it was imported (the
+    // keychain refused or was unavailable): their plaintext stays there, and a later start seals
+    // them and reconnects the account, a few starts at most (`import::due_legacy_logins`).
+    r#"CREATE TABLE legacy_logins (
+    username TEXT PRIMARY KEY COLLATE NOCASE,
+    connect INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0
+  );"#,
 ];
 
 /// Apply every migration newer than the database's `user_version`, each in its own transaction.

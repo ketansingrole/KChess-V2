@@ -208,15 +208,16 @@ fn from_json(ctx: &StoreContext) -> Result<bool> {
     Ok(true)
 }
 
-/// Once the earlier database's tokens are sealed in this profile, delete its plaintext copies,
-/// overwriting the freed pages (`secure_delete`), so a backup, a sync tool or another program
-/// cannot read a live Lichess login from it. Its games and settings stay. Failure (the earlier app
-/// still holds it open) is logged, and the next start tries again.
-pub fn scrub_legacy_tokens(ctx: &StoreContext) -> Result<()> {
+/// Once these of the earlier database's tokens are sealed in this profile (or given up on), delete
+/// their plaintext copies, overwriting the freed pages (`secure_delete`), so a backup, a sync tool
+/// or another program cannot read a live Lichess login from it. Its games and settings stay, and so
+/// do the logins still waiting to be sealed (`legacy_logins`). Failure (the earlier app still holds
+/// it open) is logged.
+pub fn scrub_legacy_tokens(ctx: &StoreContext, accounts: &[Option<String>]) -> Result<()> {
     let Some(legacy_path) = ctx.config.legacy_database_path.as_deref() else {
         return Ok(());
     };
-    if !legacy_path.exists() {
+    if accounts.is_empty() || !legacy_path.exists() {
         return Ok(());
     }
     let scrubbed = Connection::open_with_flags(
@@ -225,11 +226,14 @@ pub fn scrub_legacy_tokens(ctx: &StoreContext) -> Result<()> {
     )
     .and_then(|legacy| {
         legacy.pragma_update(None, "secure_delete", true)?;
-        match legacy.execute("DELETE FROM lichess_tokens", []) {
-            Ok(_) => Ok(()),
-            Err(cause) if cause.to_string().contains("no such table") => Ok(()),
-            Err(cause) => Err(cause),
+        for account in accounts {
+            match legacy.execute("DELETE FROM lichess_tokens WHERE username IS ?", [account]) {
+                Ok(_) => {}
+                Err(cause) if cause.to_string().contains("no such table") => return Ok(()),
+                Err(cause) => return Err(cause),
+            }
         }
+        Ok(())
     });
     if let Err(cause) = scrubbed {
         log(
@@ -239,6 +243,132 @@ pub fn scrub_legacy_tokens(ctx: &StoreContext) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// How many starts try to seal a waiting login (`legacy_logins`) before its plaintext is removed
+/// unsealed: each may ask the keychain, which someone who refuses it is not asked forever.
+pub const LEGACY_LOGIN_ATTEMPTS: i64 = 3;
+
+/// Records that `username`'s login from the earlier database is not sealed yet, with whether its
+/// account was imported connected; called before a failed seal disconnects it.
+pub fn defer_legacy_login(db: &Connection, username: &str) -> Result<()> {
+    db.execute(
+        "INSERT OR REPLACE INTO legacy_logins (username, connect, attempts)
+         SELECT username, connected, 0 FROM accounts WHERE username = ? COLLATE NOCASE",
+        [username],
+    )
+    .sql()?;
+    Ok(())
+}
+
+/// The waiting logins (`legacy_logins`) to seal on this start, and those no longer waited for,
+/// whose plaintext the caller removes (`scrub_legacy_tokens`).
+#[derive(Default)]
+pub struct LegacyLogins {
+    pub due: Vec<PlainToken>,
+    pub done: Vec<Option<String>>,
+}
+
+/// The waiting logins due now, read from the earlier database, each counted as one attempt. One
+/// whose account was removed or connected again since, that the earlier database no longer holds,
+/// or that was tried `LEGACY_LOGIN_ATTEMPTS` times, is no longer waited for.
+pub fn due_legacy_logins(ctx: &StoreContext) -> Result<LegacyLogins> {
+    let db = ctx.db;
+    let waiting: Vec<(String, i64)> = {
+        let mut statement = db
+            .prepare("SELECT username, attempts FROM legacy_logins")
+            .sql()?;
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .sql()?
+            .collect::<rusqlite::Result<_>>()
+            .sql()?
+    };
+    if waiting.is_empty() {
+        return Ok(LegacyLogins::default());
+    }
+    let legacy = ctx
+        .config
+        .legacy_database_path
+        .as_deref()
+        .filter(|path| path.exists())
+        .and_then(|path| {
+            Connection::open_with_flags(
+                path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .ok()
+        });
+    let legacy_token = |username: &str| -> Option<(String, String)> {
+        legacy
+            .as_ref()?
+            .query_row(
+                "SELECT username, token FROM lichess_tokens
+             WHERE username = ? COLLATE NOCASE AND token IS NOT NULL LIMIT 1",
+                [username],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok()
+    };
+    let mut logins = LegacyLogins::default();
+    transaction(db, || {
+        for (username, attempts) in &waiting {
+            let unsealed: bool = db
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM accounts WHERE username = ?1 COLLATE NOCASE)
+                     AND NOT EXISTS(SELECT 1 FROM tokens WHERE username = ?1 COLLATE NOCASE)",
+                    [username],
+                    |row| row.get(0),
+                )
+                .sql()?;
+            let token = legacy_token(username);
+            if unsealed
+                && *attempts < LEGACY_LOGIN_ATTEMPTS
+                && let Some((account, token)) = token
+            {
+                db.execute(
+                    "UPDATE legacy_logins SET attempts = attempts + 1 WHERE username = ?",
+                    [username],
+                )
+                .sql()?;
+                logins.due.push(PlainToken {
+                    account: Some(account),
+                    token,
+                });
+                continue;
+            }
+            db.execute("DELETE FROM legacy_logins WHERE username = ?", [username])
+                .sql()?;
+            if let Some((account, _)) = token {
+                logins.done.push(Some(account));
+            }
+        }
+        Ok(())
+    })?;
+    Ok(logins)
+}
+
+/// A waiting login sealed at last: stored, its account connected as it was imported, and no longer
+/// waited for, in one transaction.
+pub fn restore_legacy_login(db: &Connection, username: &str, encrypted: &str) -> Result<()> {
+    transaction(db, || {
+        db.execute(
+            "INSERT OR REPLACE INTO tokens (username, encrypted) VALUES (?, ?)",
+            rusqlite::params![username, encrypted],
+        )
+        .sql()?;
+        db.execute(
+            "UPDATE accounts SET connected = (SELECT connect FROM legacy_logins
+               WHERE username = ?1 COLLATE NOCASE)
+             WHERE username = ?1 COLLATE NOCASE
+               AND EXISTS(SELECT 1 FROM legacy_logins WHERE username = ?1 COLLATE NOCASE)",
+            [username],
+        )
+        .sql()?;
+        db.execute("DELETE FROM legacy_logins WHERE username = ?", [username])
+            .sql()?;
+        Ok(())
+    })
 }
 
 fn with_bak(path: &Path) -> std::path::PathBuf {
@@ -432,8 +562,8 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
         Ok(())
     });
     match imported {
-        Ok(()) if encryption_available => tokens,
-        Ok(()) => Vec::new(),
+        // Without encryption the caller records them for a later start to seal.
+        Ok(()) => tokens,
         Err(cause) => {
             log(
                 ctx,
