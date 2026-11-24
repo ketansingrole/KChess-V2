@@ -1,6 +1,8 @@
 //! A game gone through move by move: the board as large as the page allows,
-//! the players above and below it, and the move panel. It opens at the last move; the arrow keys
-//! step through the moves.
+//! the players above and below it, and the move panel. It opens at the last move; the arrow keys,
+//! the mouse wheel over the board and the move list step through the moves. A page shows it under
+//! its own toolbar (History's games, a database's) and keeps what goes around it: closing, the
+//! previous and next game.
 
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
@@ -8,15 +10,17 @@ use gpui_kit::*;
 use kchess_domain::variant::Setup;
 use shakmaty::{Color, Position as _};
 
-use crate::board::ChessBoard;
-use crate::game::surface::{self, Steps};
-use crate::game::view;
-use crate::theme::Palette;
+use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::widgets::{self, Side};
-use kchess_board::FlipBoard;
-use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
+use kchess_app::settings;
+use kchess_board::board::{self, ChessBoard};
+use kchess_board::game::surface::{self, Steps};
+use kchess_board::game::view;
+use kchess_board::{FlipBoard, notation};
 use kchess_ui::icon;
+use kchess_ui::theme::Palette;
 
+/// A game stepped through, as a view (`GameReplay::new`).
 pub struct GameReplay {
     setup: Setup,
     moves: Vec<String>,
@@ -32,7 +36,7 @@ pub struct GameReplay {
     layout: PlayLayout,
     focus: FocusHandle,
     /// The mouse wheel over the board, which steps through the moves.
-    wheel: crate::game::view::Wheel,
+    wheel: view::Wheel,
 }
 
 impl Focusable for GameReplay {
@@ -42,6 +46,8 @@ impl Focusable for GameReplay {
 }
 
 impl GameReplay {
+    /// `moves` from `setup`, `orientation`'s side at the bottom, named `player`, against
+    /// `opponent`.
     pub fn new(
         setup: Setup,
         moves: Vec<String>,
@@ -124,7 +130,7 @@ impl Steps for GameReplay {
 impl Render for GameReplay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let set = crate::settings::frontend(cx).piece_set.clone();
+        let set = settings::frontend(cx).piece_set.clone();
         let position = view::position_at(&self.setup, &self.moves, self.ply);
         let fen = position
             .as_ref()
@@ -145,8 +151,8 @@ impl Render for GameReplay {
         };
         // A Crazyhouse game shows each side's pocket where the material difference would be.
         let mut pockets = [
-            crate::board::pocket(&self.board, Color::White, cx),
-            crate::board::pocket(&self.board, Color::Black, cx),
+            board::pocket(&self.board, Color::White, cx),
+            board::pocket(&self.board, Color::Black, cx),
         ];
         let mut line =
             |color: Color| {
@@ -177,7 +183,7 @@ impl Render for GameReplay {
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(line(!orientation))
-            .child(crate::board::cached(&self.board))
+            .child(board::cached(&self.board))
             .child(line(orientation));
         let board_column = surface::wheel(board_column, cx);
 
@@ -210,7 +216,7 @@ impl Render for GameReplay {
                 },
                 "No moves to review".into(),
                 select.clone(),
-                crate::notation::figurine(cx),
+                notation::figurine(cx),
                 &palette,
             )))
             .child(widgets::move_controls(

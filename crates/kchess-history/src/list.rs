@@ -431,7 +431,17 @@ impl HistoryPage {
                         ),
                 )
             })
-            .when(pages > 1, |card| card.child(self.pager(current, pages, cx)));
+            .when(pages > 1, |card| {
+                card.child(div().pt(px(16.)).child(widgets::pager(
+                    "history",
+                    current,
+                    pages,
+                    cx.listener(|this, page: &usize, _, cx| {
+                        this.page = *page;
+                        cx.notify();
+                    }),
+                )))
+            });
         v_flex()
             .gap(px(16.))
             .child(
@@ -461,60 +471,5 @@ impl HistoryPage {
             )
             .child(list)
             .into_any_element()
-    }
-
-    /// The previous page, every page by number, and the next.
-    pub(super) fn pager(
-        &self,
-        current: usize,
-        pages: usize,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let go = |label: SharedString,
-                  target: usize,
-                  disabled: bool,
-                  chosen: bool,
-                  cx: &mut Context<Self>| {
-            Button::new(SharedString::from(format!("history-page-{label}")))
-                .small()
-                .when(chosen, |button| button.primary())
-                .when(!chosen, |button| button.outline())
-                .label(label)
-                .disabled(disabled)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.page = target;
-                    cx.notify();
-                }))
-        };
-        h_flex()
-            .pt(px(16.))
-            .gap(px(4.))
-            .child(go(
-                "‹".into(),
-                current.saturating_sub(1),
-                current == 0,
-                false,
-                cx,
-            ))
-            .children(
-                (0..pages)
-                    .map(|page| {
-                        go(
-                            (page + 1).to_string().into(),
-                            page,
-                            false,
-                            page == current,
-                            cx,
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            )
-            .child(go(
-                "›".into(),
-                (current + 1).min(pages - 1),
-                current + 1 == pages,
-                false,
-                cx,
-            ))
     }
 }

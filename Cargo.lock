@@ -4713,9 +4713,11 @@ dependencies = [
  "gpui-kit",
  "kchess-app",
  "kchess-board",
+ "kchess-domain",
  "kchess-hack",
  "kchess-host",
  "kchess-ui",
+ "shakmaty",
 ]
 
 [[package]]

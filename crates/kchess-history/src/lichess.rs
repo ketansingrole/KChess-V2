@@ -21,7 +21,6 @@ use serde_json::Number;
 use shakmaty::Color;
 
 use super::HistoryPage;
-use super::replay::GameReplay;
 use crate::core::AppCore;
 use crate::game::played::GameOrigin;
 use crate::game::tree::TreeNode;
@@ -30,6 +29,7 @@ use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
 use kchess_board::analysis::Opening;
 use kchess_nav::page::Page;
+use kchess_nav::replay::GameReplay;
 use kchess_ui::icon;
 
 const RESULTS: [(&str, &str); 4] = [
@@ -762,35 +762,20 @@ impl HistoryPage {
                 .collect();
             v_flex().child(head).children(rows).into_any_element()
         };
-        let total = tab.total;
-        let from = tab.page * tab.page_size + 1;
-        let range = if total == 0 {
-            "0 games".to_string()
-        } else {
-            format!(
-                "{from}–{} of {total} games",
-                (from + tab.page_size - 1).min(total)
+        let pages = tab.total.div_ceil(tab.page_size).max(1);
+        let pager = div().pt(px(12.)).child(
+            widgets::pager(
+                "lichess",
+                tab.page,
+                pages,
+                cx.listener(|this, page: &usize, _, cx| {
+                    this.lichess.page = *page;
+                    this.load_lichess(cx);
+                }),
             )
-        };
-        let pages = total.div_ceil(tab.page_size).max(1);
-        let pager = h_flex()
-            .pt(px(12.))
-            .gap(px(8.))
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(palette.text_muted)
-                    .child(range),
-            )
-            .child(div().flex_1())
-            .child(
-                div().w(px(130.)).child(
-                    Select::new(&tab.size_select)
-                        .small()
-                        .accessibility_label("Games per page"),
-                ),
-            )
-            .child(self.lichess_pager(tab.page, pages, cx));
+            .range(tab.page_size, tab.total)
+            .page_size(&tab.size_select),
+        );
         v_flex()
             .gap(px(16.))
             .child(toolbar)
@@ -801,54 +786,6 @@ impl HistoryPage {
                     .when(paged, |card| card.child(pager)),
             )
             .into_any_element()
-    }
-
-    /// The page buttons: previous, the pages, next.
-    fn lichess_pager(
-        &self,
-        current: usize,
-        pages: usize,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let go =
-            |label: String, target: usize, disabled: bool, chosen: bool, cx: &mut Context<Self>| {
-                Button::new(SharedString::from(format!("lichess-page-{label}")))
-                    .small()
-                    .when(chosen, |button| button.primary())
-                    .when(!chosen, |button| button.outline())
-                    .label(label)
-                    .disabled(disabled)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.lichess.page = target;
-                        this.load_lichess(cx);
-                    }))
-            };
-        // The first, the last, and the pages around the current one.
-        let shown: Vec<usize> = (0..pages)
-            .filter(|page| *page == 0 || *page + 1 == pages || page.abs_diff(current) <= 1)
-            .collect();
-        let mut row = h_flex().gap(px(4.)).child(go(
-            "‹".into(),
-            current.saturating_sub(1),
-            current == 0,
-            false,
-            cx,
-        ));
-        let mut last = None;
-        for page in shown {
-            if last.is_some_and(|last: usize| page > last + 1) {
-                row = row.child(div().px(px(4.)).child("…"));
-            }
-            row = row.child(go((page + 1).to_string(), page, false, page == current, cx));
-            last = Some(page);
-        }
-        row.child(go(
-            "›".into(),
-            (current + 1).min(pages - 1),
-            current + 1 >= pages,
-            false,
-            cx,
-        ))
     }
 }
 
