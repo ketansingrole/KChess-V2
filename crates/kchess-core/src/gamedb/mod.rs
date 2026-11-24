@@ -1,0 +1,544 @@
+//! The local game databases (`databases/*.kdb` in the profile), which this service alone owns.
+//!
+//! Each database is one SQLite file: removing a database removes its file, and an import that
+//! fails or is cancelled leaves every database as it was (`import`). Searches read each file
+//! through its own read-only lane, so they go on while an import writes. One import runs at a
+//! time; its progress reaches every window as `gamedb:progress`.
+
+pub mod import;
+pub mod schema;
+pub mod search;
+pub mod tree;
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use tokio_util::sync::CancellationToken;
+
+use crate::host::{Config, Host, Level};
+use crate::store::sql::{Lane, LaneMessages, Sql as _};
+use crate::tasks::lock;
+use kchess_contracts::CoreEvent;
+use kchess_contracts::error::{CoreError, Result};
+use kchess_contracts::types::{
+    DatabaseInfo, DatabaseSource, GameDbImported, GameDbPage, GameDbPhase as Phase, GameDbProgress,
+    GameDbQuery, GameDbStatus,
+};
+use kchess_domain::gamedb;
+
+/// Tree rows an import holds in memory before it writes a run file: 7/8 of a 2^21-slot table,
+/// the most it holds without growing, at 64 bytes a slot some 130 MB.
+const TREE_ROWS: usize = 1_835_008;
+/// How often an import reports its progress.
+const REPORT_EVERY: Duration = Duration::from_millis(250);
+
+/// The running import: cancelled through the token.
+struct Running {
+    cancel: CancellationToken,
+    database: String,
+}
+
+struct Inner {
+    host: Arc<dyn Host>,
+    profile: PathBuf,
+    dir: PathBuf,
+    readers: Mutex<HashMap<String, Arc<Lane>>>,
+    running: Mutex<Option<Arc<Running>>>,
+}
+
+pub struct GameDbService {
+    inner: Arc<Inner>,
+}
+
+/// The running import, released when dropped: cancelled, and its end reported to every window
+/// (cancelled, when it ended without saying how, as when its caller went away).
+struct Importing<'a> {
+    inner: &'a Inner,
+    running: Arc<Running>,
+    end: Option<GameDbProgress>,
+}
+
+impl Drop for Importing<'_> {
+    fn drop(&mut self) {
+        self.running.cancel.cancel();
+        {
+            let mut running = lock(&self.inner.running);
+            if running
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &self.running))
+            {
+                running.take();
+            }
+        }
+        let end = self.end.take().unwrap_or_else(|| GameDbProgress {
+            phase: Phase::Cancelled,
+            database: self.running.database.clone(),
+            games: 0,
+            skipped: 0,
+            bytes: 0,
+            total_bytes: None,
+            message: None,
+        });
+        self.inner.host.emit(CoreEvent::GameDbProgress(end));
+    }
+}
+
+/// Reports an import's progress to every window, at most every `REPORT_EVERY`.
+struct Reporter {
+    host: Arc<dyn Host>,
+    database: String,
+    cancel: CancellationToken,
+    last: Option<Instant>,
+}
+
+impl Reporter {
+    fn send(&mut self, phase: Phase, count: import::Count, force: bool) {
+        if !force && self.last.is_some_and(|last| last.elapsed() < REPORT_EVERY) {
+            return;
+        }
+        self.last = Some(Instant::now());
+        self.host.emit(CoreEvent::GameDbProgress(progress(
+            phase,
+            &self.database,
+            count,
+            None,
+        )));
+    }
+}
+
+impl import::Watch for Reporter {
+    fn reading(&mut self, count: import::Count) {
+        self.send(Phase::Reading, count, false);
+    }
+
+    fn indexing(&mut self, count: import::Count) {
+        self.send(Phase::Indexing, count, true);
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel.is_cancelled()
+    }
+}
+
+fn progress(
+    phase: Phase,
+    database: &str,
+    count: import::Count,
+    message: Option<String>,
+) -> GameDbProgress {
+    GameDbProgress {
+        phase,
+        database: database.to_string(),
+        games: count.games,
+        skipped: count.skipped,
+        bytes: count.bytes,
+        total_bytes: (count.total_bytes > 0).then_some(count.total_bytes),
+        message,
+    }
+}
+
+/// A new database's id: its name's letters, then a random suffix so names may repeat.
+fn new_id(name: &str) -> String {
+    let mut stem: String = gamedb::fold_name(name)
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .filter(|c| c.is_ascii())
+        .take(28)
+        .collect();
+    stem = stem.trim_matches('-').to_string();
+    if stem.is_empty() {
+        stem = "games".to_string();
+    }
+    let mut suffix = [0u8; 3];
+    if getrandom::fill(&mut suffix).is_err() {
+        // No random bytes: the clock still tells two imports a second apart.
+        suffix.copy_from_slice(&crate::time::now_ms().to_le_bytes()[..3]);
+    }
+    format!("{stem}-{:02x}{:02x}{:02x}", suffix[0], suffix[1], suffix[2])
+}
+
+/// The name a file gives a database: its name without `.pgn` or `.pgn.zst`.
+fn file_stem(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let lower = name.to_ascii_lowercase();
+    let stem = [".pgn.zst", ".pgn"]
+        .iter()
+        .find_map(|ext| {
+            lower
+                .ends_with(ext)
+                .then(|| &name[..name.len() - ext.len()])
+        })
+        .unwrap_or(&name);
+    let stem: String = stem.trim().chars().take(80).collect();
+    if stem.is_empty() {
+        "Games".to_string()
+    } else {
+        stem
+    }
+}
+
+impl Inner {
+    fn file(&self, id: &str) -> PathBuf {
+        self.dir.join(format!("{id}.{}", schema::EXTENSION))
+    }
+
+    /// The read lane of database `id`, made on first use.
+    fn reader(&self, id: &str) -> Result<Arc<Lane>> {
+        if !kchess_contracts::check::is_database_id(id) || !self.file(id).is_file() {
+            return Err(CoreError::new("That database is not on this computer."));
+        }
+        let mut readers = lock(&self.readers);
+        if let Some(lane) = readers.get(id) {
+            return Ok(Arc::clone(lane));
+        }
+        let path = self.file(id);
+        let lane = Arc::new(Lane::new(
+            "gamedb",
+            LaneMessages {
+                closed: "Game database closed.",
+                stopped: "Game database stopped. Retry the operation.",
+            },
+            Arc::clone(&self.host),
+            move |_| schema::open_read(&path),
+        ));
+        readers.insert(id.to_string(), Arc::clone(&lane));
+        Ok(lane)
+    }
+
+    /// Stops reading database `id`: its file is released before it is replaced or removed.
+    async fn release(&self, id: &str) {
+        let lane = lock(&self.readers).remove(id);
+        if let Some(lane) = lane {
+            lane.close().await;
+        }
+    }
+
+    fn running(&self) -> Option<Arc<Running>> {
+        lock(&self.running).clone()
+    }
+
+    fn logged<T>(&self, method: &str, result: Result<T>) -> Result<T> {
+        if let Err(error) = &result {
+            self.host.log(
+                Level::Warn,
+                "gamedb",
+                &format!("Game database {method} failed {}", error.message),
+            );
+        }
+        result
+    }
+
+    /// What an earlier run left when it was stopped mid-import: partial files and tree runs.
+    fn sweep(&self) {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = entry.path();
+            if name.starts_with(".tree-") {
+                std::fs::remove_dir_all(&path).ok();
+            } else if name.ends_with(".partial") {
+                import::remove_files(&path);
+            }
+        }
+    }
+
+    fn ids(&self) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return Vec::new();
+        };
+        let mut ids: Vec<String> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                (path.extension()? == schema::EXTENSION)
+                    .then(|| path.file_stem()?.to_str().map(str::to_string))?
+            })
+            .filter(|id| kchess_contracts::check::is_database_id(id))
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    async fn info(&self, id: &str) -> Result<Option<DatabaseInfo>> {
+        let bytes = std::fs::metadata(self.file(id)).map_or(0, |m| m.len())
+            + std::fs::metadata(self.dir.join(format!("{id}.{}-wal", schema::EXTENSION)))
+                .map_or(0, |m| m.len());
+        let lane = self.reader(id)?;
+        let id = id.to_string();
+        lane.run(move |db| schema::info(db, &id, bytes)).await
+    }
+}
+
+impl GameDbService {
+    pub fn new(config: &Config, host: Arc<dyn Host>) -> GameDbService {
+        GameDbService {
+            inner: Arc::new(Inner {
+                host,
+                profile: config.data_dir.clone(),
+                dir: config.data_dir.join("databases"),
+                readers: Mutex::new(HashMap::new()),
+                running: Mutex::new(None),
+            }),
+        }
+    }
+
+    pub async fn status(&self) -> Result<GameDbStatus> {
+        let busy = self.inner.running().is_some();
+        if !busy {
+            self.inner.sweep();
+        }
+        let mut databases = Vec::new();
+        for id in self.inner.ids() {
+            match self.inner.info(&id).await {
+                Ok(Some(info)) => databases.push(info),
+                Ok(None) => {}
+                // One unreadable file must not hide the others: it is logged and left out.
+                Err(error) => {
+                    self.inner.logged("status", Err::<(), _>(error)).ok();
+                }
+            }
+        }
+        databases.sort_by_key(|database| database.name.to_lowercase());
+        Ok(GameDbStatus { databases, busy })
+    }
+
+    /// Reads the PGN file at `path` into the database `into`, or a new one named `name`.
+    pub async fn import(
+        &self,
+        path: String,
+        compressed: bool,
+        into: Option<String>,
+        name: Option<String>,
+        source: DatabaseSource,
+    ) -> Result<GameDbImported> {
+        let result = self
+            .import_inner(path, compressed, into, name, source)
+            .await;
+        self.inner.logged("import", result)
+    }
+
+    async fn import_inner(
+        &self,
+        path: String,
+        compressed: bool,
+        into: Option<String>,
+        name: Option<String>,
+        source: DatabaseSource,
+    ) -> Result<GameDbImported> {
+        let path = PathBuf::from(path);
+        let id = match &into {
+            Some(id) => {
+                if !self.inner.file(id).is_file() {
+                    return Err(CoreError::new("That database is not on this computer."));
+                }
+                id.clone()
+            }
+            None => new_id(name.as_deref().unwrap_or(&file_stem(&path))),
+        };
+        let running = Arc::new(Running {
+            cancel: CancellationToken::new(),
+            database: id.clone(),
+        });
+        {
+            let mut slot = lock(&self.inner.running);
+            if slot.is_some() {
+                return Err(CoreError::new(
+                    "Another import is running. Wait for it or cancel it first.",
+                ));
+            }
+            *slot = Some(Arc::clone(&running));
+        }
+        let mut guard = Importing {
+            inner: &self.inner,
+            running: Arc::clone(&running),
+            end: None,
+        };
+        std::fs::create_dir_all(&self.inner.dir)
+            .map_err(|e| CoreError::wrap("Could not create the databases folder", e))?;
+        let file = self.inner.file(&id);
+        let target = match into {
+            Some(_) => import::Target::Existing { file },
+            None => import::Target::New {
+                partial: self
+                    .inner
+                    .dir
+                    .join(format!("{id}.{}.partial", schema::EXTENSION)),
+                file,
+                name: name.unwrap_or_else(|| file_stem(&path)),
+                source,
+            },
+        };
+        let mut reporter = Reporter {
+            host: Arc::clone(&self.inner.host),
+            database: id.clone(),
+            cancel: running.cancel.clone(),
+            last: None,
+        };
+        reporter.send(Phase::Reading, import::Count::default(), true);
+        let profile = self.inner.profile.clone();
+        let dir = self.inner.dir.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            let result = import::run(
+                &path,
+                compressed,
+                &profile,
+                &target,
+                &dir,
+                TREE_ROWS,
+                &mut reporter,
+            );
+            if let import::Target::New { file, .. } = &target
+                && result.is_ok()
+            {
+                crate::store::restrict_database(file, reporter.host.as_ref(), "gamedb");
+            }
+            result
+        })
+        .await
+        .map_err(|_| CoreError::new("The import stopped. Try again."))?;
+        let count = match outcome {
+            Ok(count) => count,
+            Err(error) => {
+                let phase = if running.cancel.is_cancelled() {
+                    Phase::Cancelled
+                } else {
+                    Phase::Failed
+                };
+                guard.end = Some(progress(
+                    phase,
+                    &id,
+                    import::Count::default(),
+                    (phase == Phase::Failed).then(|| error.message.clone()),
+                ));
+                return Err(error);
+            }
+        };
+        let database =
+            self.inner.info(&id).await?.ok_or_else(|| {
+                CoreError::new("The database could not be read after the import.")
+            })?;
+        guard.end = Some(progress(Phase::Done, &id, count, None));
+        drop(guard);
+        Ok(GameDbImported {
+            database,
+            added: count.games,
+            skipped: count.skipped,
+        })
+    }
+
+    pub fn cancel(&self) {
+        if let Some(running) = self.inner.running() {
+            running.cancel.cancel();
+        }
+    }
+
+    fn refuse_while_importing(&self, id: &str) -> Result<()> {
+        match self.inner.running() {
+            Some(running) if running.database == id => Err(CoreError::new(
+                "Cancel the import into this database first.",
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    pub async fn delete(&self, id: &str) -> Result<GameDbStatus> {
+        self.refuse_while_importing(id)?;
+        if !self.inner.file(id).is_file() {
+            return Err(CoreError::new("That database is not on this computer."));
+        }
+        self.inner.release(id).await;
+        import::remove_files(&self.inner.file(id));
+        self.status().await
+    }
+
+    pub async fn rename(&self, id: &str, name: String) -> Result<GameDbStatus> {
+        self.refuse_while_importing(id)?;
+        let file = self.inner.file(id);
+        if !file.is_file() {
+            return Err(CoreError::new("That database is not on this computer."));
+        }
+        let result = tokio::task::spawn_blocking(move || {
+            let db = schema::open_write(&file)?;
+            db.execute("UPDATE meta SET name = ?1 WHERE id = 1", [name])
+                .sql()?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| CoreError::new("Game database stopped. Retry the operation."))
+        .and_then(|result| result);
+        self.inner.logged("rename", result)?;
+        self.status().await
+    }
+
+    pub async fn games(&self, query: GameDbQuery) -> Result<GameDbPage> {
+        let result = match self.inner.reader(&query.database) {
+            Ok(lane) => lane.run(move |db| search::games(db, &query)).await,
+            Err(error) => Err(error),
+        };
+        self.inner.logged("games", result)
+    }
+
+    pub async fn game(&self, id: &str, game: u64) -> Result<String> {
+        let result = match self.inner.reader(id) {
+            Ok(lane) => lane.run(move |db| search::pgn(db, game)).await,
+            Err(error) => Err(error),
+        };
+        self.inner.logged("game", result)
+    }
+
+    /// The opening tree's moves from the position `key` in database `id`.
+    pub async fn tree(&self, id: &str, key: u64) -> Result<Vec<tree::TreeMove>> {
+        let result = match self.inner.reader(id) {
+            Ok(lane) => lane.run(move |db| tree::moves(db, key)).await,
+            Err(error) => Err(error),
+        };
+        self.inner.logged("tree", result)
+    }
+
+    /// Stops the import and releases every file.
+    pub async fn close(&self) {
+        self.cancel();
+        let lanes: Vec<Arc<Lane>> = lock(&self.inner.readers).drain().map(|(_, l)| l).collect();
+        for lane in lanes {
+            lane.close().await;
+        }
+    }
+}
+
+/// A database made from `pgn` in the profile `data_dir`, as an import leaves it: for test
+/// profiles and fixtures. Answers the new database's id.
+pub fn write_database(data_dir: &Path, name: &str, pgn: &str) -> Result<String> {
+    struct Quiet;
+    impl import::Watch for Quiet {
+        fn reading(&mut self, _: import::Count) {}
+        fn indexing(&mut self, _: import::Count) {}
+        fn cancelled(&self) -> bool {
+            false
+        }
+    }
+    let source = tempfile::tempdir().map_err(|e| CoreError::wrap("No temporary folder", e))?;
+    let path = source.path().join("games.pgn");
+    std::fs::write(&path, pgn).map_err(|e| CoreError::wrap("Could not write the games", e))?;
+    let dir = data_dir.join("databases");
+    std::fs::create_dir_all(&dir).map_err(|e| CoreError::wrap("No databases folder", e))?;
+    let id = new_id(name);
+    let file = dir.join(format!("{id}.{}", schema::EXTENSION));
+    let target = import::Target::New {
+        partial: dir.join(format!("{id}.{}.partial", schema::EXTENSION)),
+        file,
+        name: name.to_string(),
+        source: DatabaseSource::Imported,
+    };
+    import::run(&path, false, data_dir, &target, &dir, TREE_ROWS, &mut Quiet)?;
+    Ok(id)
+}
+
+#[cfg(test)]
+mod tests;

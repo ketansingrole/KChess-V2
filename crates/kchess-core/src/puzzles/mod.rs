@@ -5,7 +5,6 @@
 
 pub mod attempts;
 pub mod queries;
-mod zst;
 
 use kchess_contracts::CoreEvent;
 use kchess_contracts::types::{PuzzleDbPhase as Phase, PuzzleDbProgress};
@@ -414,7 +413,7 @@ impl PuzzleService {
             tokio::task::spawn_blocking(move || -> Result<(Vec<queries::DbPuzzle>, usize)> {
                 // The decompressed CSV goes straight into the sampler.
                 let mut sampler = Sampler::new(Random::new(seed()));
-                zst::decode(zst::ChannelReader::new(receive), |chunk| {
+                crate::zst::decode(crate::zst::ChannelReader::new(receive), |chunk| {
                     sampler
                         .push(chunk)
                         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;

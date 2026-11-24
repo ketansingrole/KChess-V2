@@ -10,6 +10,16 @@ use signed_in::ALICE_LOGIN;
 
 const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
+/// The requests a call sent: without the account's event stream, which the core opens for every
+/// signed-in account on its own schedule, so its opening lands in whichever call is running
+/// (`cloudEval` and the timeline on macOS CI).
+fn own_requests(seen: &[fixtures::Request]) -> Vec<fixtures::Request> {
+    seen.iter()
+        .filter(|seen| seen.path() != "/api/stream/event")
+        .cloned()
+        .collect()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn lichess_methods_reach_their_endpoints_as_the_account() {
     let fixture = serve(|seen| match seen.path() {
@@ -194,7 +204,7 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
     for (method, args, expected, signed) in calls {
         let before = fixture.requests().len();
         answers.insert(method, core.call(method, args).await);
-        let sent = &fixture.requests()[before..];
+        let sent = own_requests(&fixture.requests()[before..]);
         let targets: Vec<String> = sent
             .iter()
             .map(|seen| {
@@ -248,12 +258,9 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
         .unwrap();
     let before = fixture.requests().len();
     let timeline = core.call("timeline", vec![]).await.unwrap();
-    // One at a time, in the list's order: a burst gets a minute's lockout from Lichess. The
-    // account's event stream, which the core keeps open for every signed-in account, can
-    // (re)open meanwhile; it is no part of the timeline.
-    let asked: Vec<String> = fixture.requests()[before..]
+    // One at a time, in the list's order: a burst gets a minute's lockout from Lichess.
+    let asked: Vec<String> = own_requests(&fixture.requests()[before..])
         .iter()
-        .filter(|seen| seen.path() != "/api/stream/event")
         .map(|seen| format!("{} {}", seen.method, seen.target))
         .collect();
     assert_eq!(

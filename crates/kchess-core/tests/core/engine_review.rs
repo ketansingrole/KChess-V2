@@ -1092,15 +1092,15 @@ async fn each_failed_review_is_said_failed() {
         }
         keys
     };
-    wait_until(WAIT, "the second failure", || {
-        failed().contains(&key_of(START, &second)).then_some(())
+    // The latest request runs first, so the second fails before the first: waiting for one and
+    // then looking for the other raced the other's failure (Windows CI). Each must be said; one
+    // replaced unsaid never is, and the wait runs out.
+    wait_until(WAIT, "both failures", || {
+        let failed = failed();
+        (failed.contains(&key_of(START, &second)) && failed.contains(&key_of(START, &SCHOLARS)))
+            .then_some(())
     })
     .await;
-    assert!(
-        failed().contains(&key_of(START, &SCHOLARS)),
-        "{:?}",
-        failed()
-    );
     rig.reviews.stop_reviews().await;
 }
 

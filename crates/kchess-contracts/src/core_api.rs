@@ -619,6 +619,42 @@ core_api! {
         ) -> Vec<NotificationEntry>;
     }
 
+    /// The local game database: PGN files imported into databases of any size, searched by
+    /// player, event, year and rating. Every read that shows games or moves is help a live game
+    /// withholds, as the opening explorer is.
+    trait GameDbApi {
+        GameDbStatus = "gameDbStatus" fn game_db_status() -> crate::types::GameDbStatus;
+        /// Reads the PGN file at `path` into the database `into`, or into a new one named `name`
+        /// (the file's name when absent). Progress arrives as `gamedb:progress`; a failed or
+        /// cancelled import leaves every database as it was.
+        #[writes(GameDb)]
+        GameDbImport = "gameDbImport" fn game_db_import(
+            path: PgnFilePath;
+            into: Option<DatabaseId>,
+            name: Option<DatabaseName>
+        ) -> GameDbImported;
+        /// Stops the import that runs; it ends as `cancelled`.
+        GameDbCancel = "gameDbCancel" fn game_db_cancel() -> ();
+        #[writes(GameDb)]
+        GameDbDelete = "gameDbDelete" fn game_db_delete(
+            database: DatabaseId
+        ) -> crate::types::GameDbStatus;
+        #[writes(GameDb)]
+        GameDbRename = "gameDbRename" fn game_db_rename(
+            database: DatabaseId,
+            name: DatabaseName
+        ) -> crate::types::GameDbStatus;
+        /// One page of the games a search matches.
+        #[assist(Lookups)]
+        GameDbGames = "gameDbGames" fn game_db_games(query: GameDbQuery) -> GameDbPage;
+        /// A game's PGN, for the analysis board.
+        #[assist(Lookups)]
+        GameDbGame = "gameDbGame" fn game_db_game(
+            database: DatabaseId,
+            game: GameDbGameId
+        ) -> String;
+    }
+
     /// Network usage and the user's themes.
     trait SystemApi {
         /// Data downloaded from Lichess per account, and what is stored locally.

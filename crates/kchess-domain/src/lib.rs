@@ -14,6 +14,7 @@ pub mod coach;
 pub mod color;
 pub mod editor;
 pub mod embedded;
+pub mod gamedb;
 pub mod games;
 pub mod js;
 pub mod keyed;
