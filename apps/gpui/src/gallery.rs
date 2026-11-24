@@ -6,7 +6,7 @@ use kchess_contracts::Level;
 
 pub fn open(_: &mut Window, cx: &mut App) {
     let options = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(760.), px(820.)), cx)),
+        window_bounds: Some(WindowBounds::centered(None, size(px(760.), px(820.)), cx)),
         titlebar: Some(TitlebarOptions {
             title: Some(SharedString::new_static("Component gallery")),
             ..TitlebarOptions::default()

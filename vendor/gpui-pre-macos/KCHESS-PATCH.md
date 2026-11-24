@@ -1,6 +1,6 @@
-# gpui-pre-macos 0.3.12, patched for KChess
+# gpui-pre-macos 0.3.14, patched for KChess
 
-This is the published `gpui-pre-macos` 0.3.12 crate (Zed's `gpui_macos`, Apache-2.0, see `LICENSE-APACHE`), used
+This is the published `gpui-pre-macos` 0.3.14 crate (Zed's `gpui_macos`, Apache-2.0, see `LICENSE-APACHE`), used
 through `[patch.crates-io]` in the workspace `Cargo.toml`. Everything is unchanged except for the
 lines marked `KChess patch`.
 

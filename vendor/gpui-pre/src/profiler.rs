@@ -741,7 +741,6 @@ pub(crate) struct TraceGuard;
 
 #[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
 pub(crate) fn trace_scope() -> TraceGuard {
-    // KChess patch: `try_update`, Rust 1.100's name for `fetch_update`.
     let incremented = TRACE_STATE.try_update(Ordering::AcqRel, Ordering::Acquire, |state| {
         (state & TRACE_SCOPE_COUNT_MASK < TRACE_SCOPE_COUNT_MASK).then_some(state + 1)
     });
@@ -752,11 +751,9 @@ pub(crate) fn trace_scope() -> TraceGuard {
 #[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
 impl Drop for TraceGuard {
     fn drop(&mut self) {
-        // KChess patch: `try_update`, Rust 1.100's name for `fetch_update`.
-        let previous_state =
-            TRACE_STATE.try_update(Ordering::AcqRel, Ordering::Acquire, |state| {
-                (state & TRACE_SCOPE_COUNT_MASK > 0).then_some(state - 1)
-            });
+        let previous_state = TRACE_STATE.try_update(Ordering::AcqRel, Ordering::Acquire, |state| {
+            (state & TRACE_SCOPE_COUNT_MASK > 0).then_some(state - 1)
+        });
         match previous_state {
             Ok(1) => clear_trace_buffers(),
             Ok(_) => {}

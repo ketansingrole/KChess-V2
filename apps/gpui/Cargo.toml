@@ -50,7 +50,7 @@ kchess-watch.workspace = true
 kchess-background.workspace = true
 # Pinned: a newer gpui-kit requires a newer gpui-pre than the patched copy in vendor/gpui-pre
 # (Cargo.toml [patch.crates-io]); rebase that patch before moving it.
-gpui-kit = "=0.10.0"
+gpui-kit = "=0.11.0"
 serde.workspace = true
 serde_json.workspace = true
 shakmaty.workspace = true
@@ -131,7 +131,7 @@ kchess-studies = { workspace = true, features = ["test-support"] }
 # The Watch page's channels and broadcasts, which the end-to-end tests read.
 kchess-watch = { workspace = true, features = ["test-support"] }
 # Headless windows for the rendering regressions (`#[gpui_kit::test]`).
-gpui-kit = { version = "=0.10.0", features = ["test-support"] }
+gpui-kit = { version = "=0.11.0", features = ["test-support"] }
 # A fresh profile per end-to-end test (`src/e2e`).
 tempfile = "3"
 # The stand-in Lichess and Chess.com the end-to-end tests talk to (`src/e2e/fake_*.rs`).
@@ -145,4 +145,4 @@ rusqlite = { version = "0.42", features = ["bundled"] }
 # Real text shaping for the offscreen screenshots (`src/e2e/screens.rs`), without the Mac platform
 # that only the main thread may create; already in Cargo.lock under gpui-kit.
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-gpui-pre-apple = "0.3.11"
+gpui-pre-apple = "0.3.14"

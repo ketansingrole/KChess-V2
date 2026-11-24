@@ -176,7 +176,7 @@ impl Render for Blank {
 /// update; `docs/shared-core.md`): say so in a dialog, then quit.
 fn explain_and_quit(message: String, cx: &mut App) {
     let options = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(420.), px(160.)), cx)),
+        window_bounds: Some(WindowBounds::centered(None, size(px(420.), px(160.)), cx)),
         ..WindowOptions::default()
     };
     let opened = gpui_kit::open_window(options, cx, |window, cx| {

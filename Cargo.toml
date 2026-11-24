@@ -111,7 +111,7 @@ panic = "unwind"
 strip = "none"
 
 # GPUI with a window zoom (Settings → Interface size, like a browser's page zoom): see
-# vendor/gpui-pre/KCHESS-PATCH.md for what differs from the published 0.3.11 (and the
+# vendor/gpui-pre/KCHESS-PATCH.md for what differs from the published 0.3.14 (and the
 # KCHESS-PATCH.md beside gpui-pre-apple for its own). The macOS and Windows backends answer
 # notifications with typed text: their own KCHESS-PATCH.md.
 [patch.crates-io]
