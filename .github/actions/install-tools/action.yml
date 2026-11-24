@@ -51,7 +51,7 @@ runs:
         done <<< "$PATHS"
         echo "install=$install" >> "$GITHUB_OUTPUT"
     - if: steps.check.outputs.install == 'true'
-      uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
+      uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
       with:
         tool: ${{ inputs.tools }}
     # Saved from main alone, whose caches every branch reads: one entry per tool set and runner,
