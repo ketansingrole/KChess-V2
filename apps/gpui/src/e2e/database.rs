@@ -169,10 +169,16 @@ fn the_master_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext)
         ],
     );
     app.wait_for_app("the archive's attribution", |cx| {
-        let db = cx.global::<kchess_board::game_db::GameDbHandle>().0.read(cx);
+        let db = cx
+            .global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx);
         db.databases().iter().any(|info| {
             info.source == kchess_contracts::types::DatabaseSource::Master
-                && info.attribution.as_deref().is_some_and(|text| text.contains("CC BY-SA"))
+                && info
+                    .attribution
+                    .as_deref()
+                    .is_some_and(|text| text.contains("CC BY-SA"))
         })
     });
     app.wait_for("the button to update them", |window, _| {

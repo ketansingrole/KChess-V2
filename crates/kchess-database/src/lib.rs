@@ -64,7 +64,8 @@ const SORTS: [(&str, &str); 3] = [
 const RESULTS: [&str; 4] = ["All", "White won", "Draws", "Black won"];
 /// The master games: Lichess's broadcast archive, some 770 MB to download in all (2026-11).
 const MASTERS_LABEL: &str = "Master games · 770 MB";
-const MASTERS_TIP: &str = "Games from top over-the-board events since 2020, from Lichess's broadcasts";
+const MASTERS_TIP: &str =
+    "Games from top over-the-board events since 2020, from Lichess's broadcasts";
 /// Below this width the table keeps the players and the result.
 const NARROW: Pixels = px(720.);
 
