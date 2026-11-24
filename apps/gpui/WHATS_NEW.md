@@ -8,6 +8,7 @@ refuses to release with nothing there.
 
 ## Unreleased
 
+- **Fair play on every account**: a game you start on any connected Lichess account, on the website or your phone, now turns engine help off until it ends, as a game on the account you play from does.
 - **Fixes**: closing the window on Windows and Linux keeps KChess in the tray if you chose Keep running. Updates download on their own again after an offline start. Settings → Updates shows “Update available” again. Voice input no longer freezes KChess. Plus many smaller fixes.
 
 ## 2026.11.9 (2026-11-22)
