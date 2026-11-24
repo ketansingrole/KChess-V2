@@ -432,6 +432,7 @@ mod tests {
                     &dir.path().join(name),
                     "D",
                     DatabaseSource::Imported,
+                    None,
                     0,
                 )
                 .unwrap();

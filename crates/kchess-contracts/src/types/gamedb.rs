@@ -9,7 +9,9 @@ union!(#[doc = "Where a database's games came from."] DatabaseSource {
     Master = "master",
 });
 
-union!(#[doc = "Progress stage of a game database import."] GameDbPhase {
+union!(#[doc = "Progress stage of a game database import; `downloading` while a month of the \
+    master games arrives, before it is read."] GameDbPhase {
+    Downloading = "downloading",
     Reading = "reading",
     Indexing = "indexing",
     Done = "done",
@@ -22,7 +24,7 @@ impl GameDbPhase {
     pub fn is_terminal(self) -> bool {
         match self {
             GameDbPhase::Done | GameDbPhase::Cancelled | GameDbPhase::Failed => true,
-            GameDbPhase::Reading | GameDbPhase::Indexing => false,
+            GameDbPhase::Downloading | GameDbPhase::Reading | GameDbPhase::Indexing => false,
         }
     }
 }
@@ -64,12 +66,12 @@ pub struct GameDbProgress {
     pub games: u64,
     /// Games that could not be kept (another variant, an illegal move, too long).
     pub skipped: u64,
-    /// Bytes of the file read so far.
+    /// Bytes of the file read (while downloading, received) so far.
     pub bytes: u64,
     /// The file's size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_bytes: Option<u64>,
-    /// Why it failed.
+    /// Why it failed; while the master games arrive, the month being brought in (`2026-10`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
