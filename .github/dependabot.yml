@@ -10,9 +10,11 @@ updates:
     # is usually yanked before it reaches a pull request. Security updates are not delayed.
     cooldown:
       default-days: 7
-    # gpui-kit is pinned to the gpui-pre patched in vendor/ (apps/gpui/Cargo.toml); it moves by hand.
+    # gpui-kit is pinned to the gpui-pre patched in vendor/ (apps/gpui/Cargo.toml); it moves by hand,
+    # rebasing that patch. Dependabot still proposes it, in a pull request of its own (`gpui-kit`
+    # below), so a release is noticed; that pull request starts the move and is not merged as it is.
+    # gpui-pre and gpui-fast come with gpui-kit, never alone.
     ignore:
-      - dependency-name: gpui-kit
       - dependency-name: gpui-pre*
       - dependency-name: gpui-fast*
       # The packages only the workspace hack names: `cargo hakari generate` writes their
@@ -77,7 +79,11 @@ updates:
       - { dependency-name: zvariant, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: zvariant_derive, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: zvariant_utils, update-types: [version-update:semver-major, version-update:semver-minor] }
+    # A dependency goes to the first group it matches: gpui-kit's own, so its pull request, which
+    # waits on the vendor/ rebase, never holds back the week's other updates.
     groups:
+      gpui-kit:
+        patterns: [gpui-kit]
       crates:
         patterns: ['*']
   # The local actions' too: install-tools pins install-action, whose commit sets the tools' versions.
