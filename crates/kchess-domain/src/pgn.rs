@@ -896,6 +896,164 @@ pub fn parse_pgn(pgn: &str) -> Vec<Game> {
     parser.games
 }
 
+/// The most text one game may take; a longer one is skipped whole (`PgnItem::TooLarge`), so a
+/// damaged or hostile file cannot make the reader hold more than this.
+pub const MAX_GAME_BYTES: usize = 4 * 1024 * 1024;
+
+/// What `PgnReader` reads next.
+#[derive(Debug)]
+pub enum PgnItem {
+    Game(Game),
+    /// A game longer than `MAX_GAME_BYTES`, skipped up to the next game's headers.
+    TooLarge,
+}
+
+/// The games of a PGN stream of any size, one at a time, as `parse_pgn` reads them. Only the
+/// game being read is held; text that is not UTF-8 is read as Latin-1, as older PGN files are.
+pub struct PgnReader<R> {
+    input: R,
+    parser: Parser,
+    line: Vec<u8>,
+    /// Bytes read so far, for progress.
+    read: u64,
+    /// Bytes of the game being read.
+    game_bytes: usize,
+    /// Skipping a game too large to keep, up to the next one's headers.
+    skipping: bool,
+    /// The last line read was blank, so a `[` starts the next game.
+    after_blank: bool,
+    ended: bool,
+}
+
+impl<R: std::io::BufRead> PgnReader<R> {
+    pub fn new(input: R) -> PgnReader<R> {
+        PgnReader {
+            input,
+            parser: Parser::new(),
+            line: Vec::new(),
+            read: 0,
+            game_bytes: 0,
+            skipping: false,
+            after_blank: false,
+            ended: false,
+        }
+    }
+
+    /// The bytes read from the input so far.
+    pub fn bytes_read(&self) -> u64 {
+        self.read
+    }
+
+    /// The next line into `self.line` without its line ending, at most `MAX_GAME_BYTES` of it
+    /// (the rest is dropped and the game skipped). False at the end of the input.
+    fn read_line(&mut self) -> std::io::Result<bool> {
+        self.line.clear();
+        let mut any = false;
+        loop {
+            let buffer = match self.input.fill_buf() {
+                Ok(buffer) => buffer,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            };
+            if buffer.is_empty() {
+                return Ok(any);
+            }
+            any = true;
+            let (taken, ended) = match memchr::memchr(b'\n', buffer) {
+                Some(at) => (at + 1, true),
+                None => (buffer.len(), false),
+            };
+            let room = MAX_GAME_BYTES.saturating_sub(self.line.len());
+            let kept = taken.min(room);
+            self.line
+                .extend_from_slice(buffer.get(..kept).unwrap_or_default());
+            if kept < taken {
+                self.skipping = true;
+            }
+            self.input.consume(taken);
+            self.read += taken as u64;
+            if ended {
+                if self.line.last() == Some(&b'\n') {
+                    self.line.pop();
+                    if self.line.last() == Some(&b'\r') {
+                        self.line.pop();
+                    }
+                }
+                return Ok(true);
+            }
+        }
+    }
+
+    /// The line just read as text: UTF-8, or else Latin-1.
+    fn text(line: &[u8]) -> std::borrow::Cow<'_, str> {
+        match std::str::from_utf8(line) {
+            Ok(text) => std::borrow::Cow::Borrowed(text),
+            Err(_) => std::borrow::Cow::Owned(line.iter().map(|&b| char::from(b)).collect()),
+        }
+    }
+}
+
+impl<R: std::io::BufRead> Iterator for PgnReader<R> {
+    type Item = std::io::Result<PgnItem>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if !self.parser.games.is_empty() {
+                self.game_bytes = 0;
+                return Some(Ok(PgnItem::Game(self.parser.games.remove(0))));
+            }
+            if self.ended {
+                return None;
+            }
+            match self.read_line() {
+                Err(error) => {
+                    self.ended = true;
+                    return Some(Err(error));
+                }
+                Ok(false) => {
+                    self.ended = true;
+                    if self.skipping {
+                        self.skipping = false;
+                        return Some(Ok(PgnItem::TooLarge));
+                    }
+                    self.parser.emit();
+                }
+                Ok(true) => {
+                    let blank = self.line.iter().all(u8::is_ascii_whitespace);
+                    if self.skipping {
+                        let next_game = self.after_blank && self.line.first() == Some(&b'[');
+                        self.after_blank = blank;
+                        if !next_game {
+                            continue;
+                        }
+                        self.skipping = false;
+                        self.parser.reset_game();
+                        self.game_bytes = self.line.len();
+                        let line = std::mem::take(&mut self.line);
+                        self.parser.handle_line(&Self::text(&line));
+                        self.line = line;
+                        return Some(Ok(PgnItem::TooLarge));
+                    }
+                    self.after_blank = blank;
+                    if self.parser.found {
+                        self.game_bytes += self.line.len() + 1;
+                        if self.game_bytes > MAX_GAME_BYTES {
+                            self.skipping = true;
+                            continue;
+                        }
+                    }
+                    let line = std::mem::take(&mut self.line);
+                    self.parser.handle_line(&Self::text(&line));
+                    self.line = line;
+                    if !self.parser.found {
+                        self.game_bytes = 0;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// SAN of UCI moves from the standard start, as far as they are legal.
 pub fn san_history<S: AsRef<str>>(moves: &[S]) -> Vec<String> {
     let start = shakmaty::variant::VariantPosition::Chess(shakmaty::Chess::default());
@@ -1168,5 +1326,75 @@ mod tests {
     #[test]
     fn blank_line_after_moves_ends_the_game() {
         assert_eq!(parse_pgn("1. e4 e5\n\n1. d4 d5").len(), 2);
+    }
+
+    use super::{MAX_GAME_BYTES, PgnItem, PgnReader};
+    use kchess_testkit::random::{self, Rng};
+    use std::io::{BufReader, Read};
+
+    /// Reads a few bytes a call, so lines and games split anywhere.
+    struct Trickle<'a> {
+        text: &'a [u8],
+        rng: Rng,
+    }
+
+    impl Read for Trickle<'_> {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            let n = (1 + self.rng.below(7)).min(out.len()).min(self.text.len());
+            out[..n].copy_from_slice(&self.text[..n]);
+            self.text = &self.text[n..];
+            Ok(n)
+        }
+    }
+
+    fn label(item: std::io::Result<PgnItem>) -> String {
+        match item.unwrap() {
+            PgnItem::Game(game) => make_pgn(&game),
+            PgnItem::TooLarge => "too large".to_string(),
+        }
+    }
+
+    const GAMES: &str = "\u{FEFF}[Event \"A\"]\r\n[White \"X\"]\r\n\r\n1. e4 {a comment\r\nover lines} e5 \
+        (1... c5 2. Nf3) 2. Nf3 $1 ; rest\r\n1-0\r\n\r\n\r\n[Event \"B\"]\n\n1. d4 d5 *\n\n\
+        % escaped\n1. c4 *";
+
+    #[test]
+    fn the_reader_reads_what_parse_pgn_reads_however_the_input_splits() {
+        let expected: Vec<String> = parse_pgn(GAMES).iter().map(make_pgn).collect();
+        assert_eq!(expected.len(), 3);
+        random::check(300, |rng| {
+            let capacity = 1 + rng.below(16);
+            let input = Trickle {
+                text: GAMES.as_bytes(),
+                rng: rng.clone(),
+            };
+            let read: Vec<String> = PgnReader::new(BufReader::with_capacity(capacity, input))
+                .map(label)
+                .collect();
+            assert_eq!(read, expected);
+        });
+    }
+
+    #[test]
+    fn latin1_names_are_read_as_latin1() {
+        let text: &[u8] = b"[White \"H\xf6bel\"]\n\n1. e4 *\n";
+        let games: Vec<String> = PgnReader::new(text).map(label).collect();
+        assert!(games[0].contains("H\u{f6}bel"), "{games:?}");
+    }
+
+    #[test]
+    fn a_game_too_large_is_skipped_and_the_next_one_read() {
+        let mut text = String::from("[Event \"Big\"]\n\n1. e4 {");
+        text.push_str(&"x".repeat(MAX_GAME_BYTES + 10));
+        text.push_str("} e5 *\n\n[Event \"Next\"]\n\n1. d4 *\n\n[Event \"Long line\"]\n\n");
+        text.push_str(&"1. e4 e5 ".repeat(MAX_GAME_BYTES / 8));
+        text.push_str("*\n");
+        let events: Vec<String> = PgnReader::new(text.as_bytes())
+            .map(|item| match item.unwrap() {
+                PgnItem::Game(game) => game.header("Event").unwrap_or("").to_string(),
+                PgnItem::TooLarge => "too large".to_string(),
+            })
+            .collect();
+        assert_eq!(events, ["too large", "Next", "too large"]);
     }
 }
