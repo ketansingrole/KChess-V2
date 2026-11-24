@@ -70,8 +70,9 @@ can add them as a friend, challenge them or watch their current game.
   and Player databases list notable games, which open on the analysis board. A _Follow moves_
   switch refreshes the explorer as you move. A variant game is looked up in Lichess's games of
   that variant (the Lichess and Player databases). Beyond Lichess, a **Database** tab looks the
-  position up in a game database on this computer (an imported PGN file), filtered by player,
-  colour, both players' rating and a year, and lists its best-rated games.
+  position up in a game database on this computer (an imported PGN file, or **Your games**: the
+  synced Lichess and Chess.com games and the finished games of Game history, kept up to date),
+  filtered by player, colour, both players' rating and a year, and lists its best-rated games.
 - **Lichess cloud evaluation**: Lichess's stored deep evaluation of the position, shown beside
   the local engine, or in its place when Stockfish is off. It is off by default because every
   position is sent to Lichess. Settings → Analysis, or the cloud button in the engine panel.

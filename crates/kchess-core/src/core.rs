@@ -483,6 +483,13 @@ impl Core {
         }
     }
 
+    /// Tests only: once the "Your games" database follows the games as they are now, what its
+    /// keeper has done (`GameDbService::settle_own`).
+    #[doc(hidden)]
+    pub async fn own_games_settled_for_tests(&self) -> crate::gamedb::own::Report {
+        self.gamedb.settle_own().await
+    }
+
     /// Tests only: the profile's database, to seed and read it with the store's typed calls.
     #[doc(hidden)]
     pub fn database_for_tests(&self) -> &Arc<Database> {
@@ -498,12 +505,15 @@ impl Core {
     }
 
     /// Starts the background work once, on the first call (which is always in a runtime): the
-    /// battery refresh, and the review queue, which looks for work as soon as it starts.
+    /// battery refresh, the review queue, which looks for work as soon as it starts, and the
+    /// "Your games" database, which follows the player's games.
     fn start(&self) {
         if !self.battery_started.swap(true, Ordering::SeqCst) {
             self.battery.refresh();
             self.battery.start_refreshing();
             self.reviews.setup_reviews(Arc::new(self.review_bridge()));
+            // The game database service owns it: closing the core stops it and waits for it.
+            self.gamedb.keep_own(Arc::clone(&self.database));
             // On the tracker, so closing the core waits for it to stop.
             self.broadcast_alerts.start(
                 &self.tracker,

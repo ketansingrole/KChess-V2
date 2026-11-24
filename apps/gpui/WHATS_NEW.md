@@ -9,6 +9,7 @@ refuses to release with nothing there.
 ## Unreleased
 
 - **Your own game database**: import a PGN file with as many games as you like, then pick Database in the explorer to see the moves played from any position, offline. Narrow it to one player, their colour, a rating or a year to prepare for an opponent, and open any game listed.
+- **Your games in the database**: your Lichess and Chess.com games and the games you finish here make a Your games database that keeps itself up to date. Pick it in the explorer's Database tab to see how your own games went from any position.
 - **Fair play on every account**: a game you start on any connected Lichess account, on the website or your phone, now turns engine help off until it ends, as a game on the account you play from does.
 - **Fixes**: closing the window on Windows and Linux keeps KChess in the tray if you chose Keep running. Updates download on their own again after an offline start. Settings → Updates shows “Update available” again. Voice input no longer freezes KChess. Plus many smaller fixes.
 

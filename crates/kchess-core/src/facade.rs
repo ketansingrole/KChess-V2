@@ -309,7 +309,7 @@ impl Core {
         self.battery.close();
         self.cancel_installs();
         self.puzzles.cancel();
-        self.gamedb.cancel();
+        self.gamedb.stop();
         self.services.abort();
         self.chesscom.abort();
         self.tracker.close();

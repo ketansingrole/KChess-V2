@@ -14,6 +14,7 @@ pub mod library_import;
 pub mod lookups;
 pub mod migrations;
 pub mod notifications;
+pub mod own_games;
 pub mod reviews;
 pub mod runs;
 pub mod sql;
@@ -106,12 +107,14 @@ impl StoreCache {
 
 /// `kchess.db` as the core shares it: one connection on one [`Lane`], so there is never a second
 /// copy of the database. A read leaves the caches alone; a write clears them, so no write can
-/// leave a stale total behind.
+/// leave a stale total behind. A write that changed the player's own games says so to whoever
+/// follows them (`own_games_changes`).
 pub struct Database {
     lane: Arc<Lane>,
     host: Arc<dyn Host>,
     config: Config,
     cache: Arc<StoreCache>,
+    own_games: tokio::sync::watch::Sender<u64>,
 }
 
 /// Whether a call may change what the caches were computed from.
@@ -144,7 +147,14 @@ impl Database {
             host,
             config,
             cache,
+            own_games: tokio::sync::watch::channel(0).0,
         }
+    }
+
+    /// Counts the writes that changed the player's own games (`own_games`): synced games, or a
+    /// finished game of Game history.
+    pub fn own_games_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.own_games.subscribe()
     }
 
     /// Runs a read on this thread. Blocking: never on an async executor thread.
@@ -236,6 +246,15 @@ impl Database {
         let result = work(&ctx);
         if matches!(access, Access::Write) {
             self.cache.clear();
+            match own_games::take_changes(db) {
+                Ok(true) => self.own_games.send_modify(|count| *count += 1),
+                Ok(false) => {}
+                Err(cause) => self.host.log(
+                    crate::host::Level::Warn,
+                    "db",
+                    &format!("Changes to your games not counted: {}", cause.message),
+                ),
+            }
         }
         result
     }
@@ -298,6 +317,7 @@ pub fn open(path: &Path, host: &dyn Host) -> Result<Connection> {
     )
     .sql()?;
     migrations::migrate(&db)?;
+    own_games::watch(&db)?;
     restrict_database(path, host, "db");
     Ok(db)
 }

@@ -4,7 +4,9 @@
 //! is complete, so a failure or a cancellation leaves no database behind. Games added to an
 //! existing database are written in batches under their import's id, invisible to searches until
 //! the import finishes (`search::visible`), and the tree rows are added in the final transaction;
-//! a failure removes the import's games and leaves the tree as it was.
+//! a failure removes the import's games and leaves the tree as it was. A database rebuilt in
+//! place (`Target::Replace`) loses its earlier games in that same final transaction, so a search
+//! sees the old games or the new ones, never a mix.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -37,6 +39,17 @@ pub enum Target {
     },
     /// An existing database's file, added to.
     Existing { file: PathBuf },
+    /// An existing database's file whose games and tree become the import's.
+    Replace { file: PathBuf },
+}
+
+/// What an import reads: a PGN text (zstd-compressed when `compressed`) of `total_bytes`
+/// bytes, recorded in the database as `label` (a file's name).
+pub struct Input<R> {
+    pub reader: R,
+    pub total_bytes: u64,
+    pub compressed: bool,
+    pub label: Option<String>,
 }
 
 /// How far an import has come.
@@ -246,16 +259,38 @@ pub fn run(
 ) -> Result<Count> {
     let file = open_source(path, profile)?;
     let total_bytes = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let input = Input {
+        reader: file,
+        total_bytes,
+        compressed,
+        label: path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned()),
+    };
+    read_into(input, target, dir, capacity, watch)
+}
+
+/// The games `input` reads into `target`, as `run` reads a file's.
+pub fn read_into<R: Read + Send + 'static>(
+    input: Input<R>,
+    target: &Target,
+    dir: &Path,
+    capacity: usize,
+    watch: &mut dyn Watch,
+) -> Result<Count> {
+    let Input {
+        reader,
+        total_bytes,
+        compressed,
+        label,
+    } = input;
     let read = Arc::new(AtomicU64::new(0));
     let counted = Counted {
-        inner: file,
+        inner: reader,
         read: Arc::clone(&read),
     };
-    let file_name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned());
     let now = crate::time::now_ms();
-    let (db, adding) = match target {
+    let (db, adding, replacing) = match target {
         Target::New {
             partial,
             name,
@@ -263,9 +298,10 @@ pub fn run(
             ..
         } => {
             remove_files(partial);
-            (schema::create(partial, name, *source, now)?, false)
+            (schema::create(partial, name, *source, now)?, false, false)
         }
-        Target::Existing { file } => (schema::open_write(file)?, true),
+        Target::Existing { file } => (schema::open_write(file)?, true, false),
+        Target::Replace { file } => (schema::open_write(file)?, true, true),
     };
     let result = (|| {
         let depth: u32 = db
@@ -285,7 +321,7 @@ pub fn run(
         })?;
         db.execute(
             "INSERT INTO imports (started_at, file) VALUES (?1, ?2)",
-            params![now, file_name],
+            params![now, label],
         )
         .sql()?;
         let import = db.last_insert_rowid();
@@ -356,7 +392,23 @@ pub fn run(
             }
             let finish =
                 || {
-                    tree.write(&db, adding, &|| watch.cancelled())?;
+                    if replacing {
+                        // The earlier games go with their tree rows, and the names only they had.
+                        db.execute("DELETE FROM games WHERE import_id != ?1", [import])
+                            .sql()?;
+                        db.execute("DELETE FROM imports WHERE id != ?1", [import])
+                            .sql()?;
+                        db.execute_batch(
+                            "DELETE FROM tree;
+                             DELETE FROM lone;
+                             DELETE FROM players WHERE id NOT IN
+                               (SELECT white FROM games UNION SELECT black FROM games);
+                             DELETE FROM events WHERE id NOT IN
+                               (SELECT event FROM games WHERE event IS NOT NULL);",
+                        )
+                        .sql()?;
+                    }
+                    tree.write(&db, adding && !replacing, &|| watch.cancelled())?;
                     db.execute(
                 "UPDATE imports SET finished_at = ?2, games = ?3, skipped = ?4 WHERE id = ?1",
                 params![import, crate::time::now_ms(), count.games as i64, count.skipped as i64],
@@ -478,7 +530,7 @@ fn undo(db: Connection, target: &Target) {
             drop(db);
             remove_files(partial);
         }
-        Target::Existing { .. } => {
+        Target::Existing { .. } | Target::Replace { .. } => {
             let unfinished: Option<i64> = db
                 .query_row(
                     "SELECT id FROM imports WHERE finished_at IS NULL ORDER BY id DESC LIMIT 1",
