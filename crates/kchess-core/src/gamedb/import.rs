@@ -93,16 +93,19 @@ fn open_source(path: &Path, profile: &Path) -> Result<File> {
     Ok(file)
 }
 
-/// Names (players, events) by id, added to their table the first time a game names them.
+/// Names (players, events) by id, added to their table the first time a game names them, with
+/// each of their words (`words`).
 struct Names {
     table: &'static str,
+    words: &'static str,
     ids: HashMap<String, i64>,
 }
 
 impl Names {
-    fn new(table: &'static str) -> Names {
+    fn new(table: &'static str, words: &'static str) -> Names {
         Names {
             table,
+            words,
             ids: HashMap::new(),
         }
     }
@@ -111,18 +114,30 @@ impl Names {
         if let Some(&id) = self.ids.get(name) {
             return Ok(id);
         }
-        let table = self.table;
-        db.prepare_cached(&format!(
-            "INSERT INTO {table} (name, norm) VALUES (?1, ?2) ON CONFLICT (name) DO NOTHING"
-        ))
-        .sql()?
-        .execute(params![name, gamedb::fold_name(name)])
-        .sql()?;
+        let (table, words) = (self.table, self.words);
+        let folded = gamedb::fold_name(name);
+        let added = db
+            .prepare_cached(&format!(
+                "INSERT INTO {table} (name, norm) VALUES (?1, ?2) ON CONFLICT (name) DO NOTHING"
+            ))
+            .sql()?
+            .execute(params![name, folded])
+            .sql()?;
         let id: i64 = db
             .prepare_cached(&format!("SELECT id FROM {table} WHERE name = ?1"))
             .sql()?
             .query_row([name], |row| row.get(0))
             .sql()?;
+        if added > 0 {
+            let mut add = db
+                .prepare_cached(&format!(
+                    "INSERT OR IGNORE INTO {words} (word, id) VALUES (?1, ?2)"
+                ))
+                .sql()?;
+            for word in folded.split(' ').filter(|word| !word.is_empty()) {
+                add.execute(params![word, id]).sql()?;
+            }
+        }
         // Bounded: a file with millions of distinct names reads them from the table instead.
         if self.ids.len() < 1_000_000 {
             self.ids.insert(name.to_string(), id);
@@ -407,8 +422,8 @@ fn read_games(
     watch: &mut dyn Watch,
 ) -> Result<(Count, TreeBuilder)> {
     let mut tree = TreeBuilder::new(dir, capacity)?;
-    let mut players = Names::new("players");
-    let mut events = Names::new("events");
+    let mut players = Names::new("players", "player_words");
+    let mut events = Names::new("events", "event_words");
     let mut count = Count {
         total_bytes,
         ..Count::default()

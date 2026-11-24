@@ -21,7 +21,8 @@ pub const EXTENSION: &str = "kdb";
 /// The plies from the start the opening tree covers by default.
 pub const INDEX_DEPTH: u32 = 40;
 
-const MIGRATIONS: &[&str] = &[r#"CREATE TABLE meta (
+const MIGRATIONS: &[&str] = &[
+    r#"CREATE TABLE meta (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     name TEXT NOT NULL,
     source TEXT NOT NULL,
@@ -90,7 +91,39 @@ const MIGRATIONS: &[&str] = &[r#"CREATE TABLE meta (
     mv INTEGER NOT NULL,
     game INTEGER NOT NULL,
     PRIMARY KEY (key, mv)
-  ) WITHOUT ROWID;"#];
+  ) WITHOUT ROWID;"#,
+    // What the explorer replays of each game, in id order, a tenth of the games' rows: reading
+    // every game's moves through it takes a third of the time (`explore`).
+    "CREATE INDEX IF NOT EXISTS games_replay
+       ON games (id, import_id, year, low_elo, result, rating, date_key, fen, moves);",
+    // Each word of each name, so that a search for a player or an event reads the names whose
+    // words start with it from an index instead of every name (`search::names`). The names a
+    // file already has are split here: folded names are words joined by one space.
+    r#"CREATE TABLE player_words (
+    word TEXT NOT NULL,
+    id INTEGER NOT NULL,
+    PRIMARY KEY (word, id)
+  ) WITHOUT ROWID;
+  CREATE TABLE event_words (
+    word TEXT NOT NULL,
+    id INTEGER NOT NULL,
+    PRIMARY KEY (word, id)
+  ) WITHOUT ROWID;
+  WITH RECURSIVE split (id, word, rest) AS (
+    SELECT id, '', norm || ' ' FROM players
+    UNION ALL
+    SELECT id, substr(rest, 1, instr(rest, ' ') - 1), substr(rest, instr(rest, ' ') + 1)
+    FROM split WHERE rest <> ''
+  )
+  INSERT OR IGNORE INTO player_words (word, id) SELECT word, id FROM split WHERE word <> '';
+  WITH RECURSIVE split (id, word, rest) AS (
+    SELECT id, '', norm || ' ' FROM events
+    UNION ALL
+    SELECT id, substr(rest, 1, instr(rest, ' ') - 1), substr(rest, instr(rest, ' ') + 1)
+    FROM split WHERE rest <> ''
+  )
+  INSERT OR IGNORE INTO event_words (word, id) SELECT word, id FROM split WHERE word <> '';"#,
+];
 
 /// The games' indexes, built after a new database's games are in: building them once is much
 /// faster than keeping them up to date row by row.
@@ -148,6 +181,21 @@ pub fn open_read(path: &Path) -> Result<Connection> {
         ));
     }
     Ok(db)
+}
+
+/// Brings a file an older release wrote up to this one's schema, so that what its readers
+/// expect is there; a file already current is only read.
+pub fn upgrade(path: &Path) -> Result<()> {
+    let version: i64 = opened(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?
+    .query_row("PRAGMA user_version", [], |row| row.get(0))
+    .sql()?;
+    if usize::try_from(version).is_ok_and(|version| version < MIGRATIONS.len()) {
+        open_write(path)?;
+    }
+    Ok(())
 }
 
 /// An existing file to add games to, migrated first; WAL, so searches go on meanwhile.

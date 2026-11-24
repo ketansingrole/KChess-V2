@@ -63,6 +63,18 @@ fn ordered_moves(pos: &VariantPosition) -> MoveList {
     moves
 }
 
+/// The move an encoded line's `byte` names in `pos`: the one at that place in `ordered_moves`,
+/// found without sorting them all (no two moves share a place). None when there is no such move.
+pub fn coded_move(pos: &VariantPosition, byte: u8) -> Option<Move> {
+    let mut moves = pos.legal_moves();
+    let index = usize::from(byte);
+    if index >= moves.len() {
+        return None;
+    }
+    moves.select_nth_unstable_by_key(index, order_key);
+    Some(moves[index])
+}
+
 fn order_key(m: &Move) -> (u8, u8, u8) {
     let from = m.from().map_or(64, u8::from);
     let promotion = m.promotion().map_or(0, |role| role as u8);
@@ -91,14 +103,13 @@ pub fn walk_line(
 ) -> bool {
     let mut pos = start.clone();
     for &byte in code {
-        let moves = ordered_moves(&pos);
-        let Some(m) = moves.get(usize::from(byte)) else {
+        let Some(m) = coded_move(&pos, byte) else {
             return false;
         };
-        if !visit(&pos, m) {
+        if !visit(&pos, &m) {
             return true;
         }
-        pos.play_unchecked(*m);
+        pos.play_unchecked(m);
     }
     true
 }
