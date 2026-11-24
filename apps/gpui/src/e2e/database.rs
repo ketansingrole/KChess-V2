@@ -189,3 +189,45 @@ fn the_master_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext)
             .any(|element| element.label() == Some("Update master games"))
     });
 }
+
+/// A new search never draws the last search's games: kept until its answer came, they and the
+/// pager under them jumped to the new search's size a frame later (seen on CI's slower machines,
+/// where the answer took longer than a frame).
+#[gpui_kit::test]
+fn a_new_search_does_not_draw_the_last_ones_games(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    let _folder = app.drop_file("club.pgn", GAMES.as_bytes());
+    wait_for_listed(
+        &mut app,
+        "every game",
+        &[GUKESH_CARLSEN, CARLSEN_GUKESH, SMITH_JONES],
+    );
+    use gpui_kit::AppContext as _;
+    let first: Vec<String> = app
+        .cx
+        .update_window(app.window, |_, window, cx| {
+            use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
+            let pill = window
+                .elements()
+                .into_iter()
+                .find(|element| element.label() == Some("White won"))
+                .and_then(|element| element.path().last().cloned())
+                .expect("the White won filter");
+            window.click(pill, cx);
+            super::draw(window, cx);
+            window
+                .elements()
+                .iter()
+                .filter_map(|element| element.label())
+                .filter(|label| label.contains(" against "))
+                .map(str::to_string)
+                .collect()
+        })
+        .expect("the main window is open");
+    assert!(
+        first.is_empty() || first == [CARLSEN_GUKESH],
+        "the first frame drew {first:?}"
+    );
+    wait_for_listed(&mut app, "White's win", &[CARLSEN_GUKESH]);
+}

@@ -242,8 +242,11 @@ impl DatabasePage {
         ];
         for input in [&player_input, &event_input, &from_input, &to_input] {
             subscriptions.push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
+                // Typing keeps the last answer's games until the next one comes, where a choice
+                // clears them (`reload`): cleared, they flashed the loading line at each key.
                 if let InputEvent::Change = event {
-                    this.reload(cx);
+                    this.page = 0;
+                    this.load(cx);
                 }
             }));
         }
@@ -370,9 +373,12 @@ impl DatabasePage {
             || self.position.is_some()
     }
 
-    /// The first page of what the filters now match.
+    /// The first page of what the filters now match. The last search's games go at once: kept
+    /// until the answer came, they and the pager under them jumped to the new search's size.
     fn reload(&mut self, cx: &mut Context<Self>) {
         self.page = 0;
+        self.games.clear();
+        self.total = 0;
         self.load(cx);
     }
 
