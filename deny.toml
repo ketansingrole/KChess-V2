@@ -54,6 +54,11 @@ exceptions = [
   # The Linux system tray icon (`crates/kchess-background`): the Unlicense is a public-domain
   # dedication, compatible with GPL-3.0-or-later.
   { crate = "ksni", allow = ["Unlicense"] },
+  # The AVIF encoder that `image`'s default formats bring, through gpui-base's `test-support`,
+  # which only the app's tests turn on; never shipped.
+  { crate = "av1-grain", allow = ["BSD-2-Clause"] },
+  { crate = "rav1e", allow = ["BSD-2-Clause"] },
+  { crate = "v_frame", allow = ["BSD-2-Clause"] },
   # LLVM's libFuzzer, in the fuzz workspace only (`fuzz/`); never shipped.
   { crate = "libfuzzer-sys", allow = ["NCSA"] },
 ]
