@@ -179,8 +179,16 @@ async fn handle(
     let Some(request) = read_request(&mut socket).await? else {
         return Ok(());
     };
-    seen.send_modify(|requests| requests.push(request.clone()));
-    let mut reply = (handler.lock().unwrap())(&request);
+    // Recorded once the handler has run, still under its lock: a test that waited for a request
+    // sees what its handler did (a stream's sender stored) and the requests in handled order.
+    // Recorded before, a test on a multi-thread runtime read the sender before it was stored
+    // (`a_stalled_assistance_update_never_overrides_a_newer_one`, CI 2026-11-24).
+    let mut reply = {
+        let mut handler = handler.lock().unwrap();
+        let reply = (handler)(&request);
+        seen.send_modify(|requests| requests.push(request.clone()));
+        reply
+    };
     loop {
         match reply {
             Reply::Gated(mut gate, inner) => {

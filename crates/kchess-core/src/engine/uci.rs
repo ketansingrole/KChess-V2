@@ -301,7 +301,11 @@ struct Inner {
     ready_tx: watch::Sender<Option<Result<()>>>,
 }
 
-/// Removes a command's waiter when its future completes or is dropped.
+/// Abandons a command's waiter when its future is dropped before the answer came. The waiter
+/// stays in line with no one to tell: the command was sent, so its answer is still on the way,
+/// and it must absorb that answer rather than let it answer the next command waiting for the
+/// same line (a dropped `isready` once let its `readyok` confirm the next options change before
+/// the engine had read it).
 struct ListenerGuard<'a> {
     inner: &'a Inner,
     id: u64,
@@ -309,9 +313,11 @@ struct ListenerGuard<'a> {
 
 impl Drop for ListenerGuard<'_> {
     fn drop(&mut self) {
-        lock(&self.inner.state)
-            .listeners
-            .retain(|waiter| waiter.id != self.id);
+        let mut state = lock(&self.inner.state);
+        if let Some(waiter) = state.listeners.iter_mut().find(|w| w.id == self.id) {
+            waiter.reply = None;
+            waiter.on_line = None;
+        }
     }
 }
 
@@ -606,28 +612,29 @@ impl Inner {
         if listeners.is_empty() {
             return;
         }
-        let mut matched = Vec::new();
+        // The engine answers commands in the order they were sent, so a line answers only the
+        // oldest waiter it matches: two `isready`s get one `readyok` each.
+        let mut matched = None;
         for (id, matches, sink) in &listeners {
             if let Some(sink) = sink {
                 let mut callback = lock(sink);
                 let callback: &mut OnLine = &mut callback;
                 callback(line);
             }
-            if matches(line) {
-                matched.push(*id);
+            if matched.is_none() && matches(line) {
+                matched = Some(*id);
             }
         }
-        if matched.is_empty() {
+        let Some(id) = matched else {
             return;
-        }
+        };
         let mut state = lock(&self.state);
-        for id in matched {
-            // A listener that failed or was dropped meanwhile has already been answered.
-            if let Some(at) = state.listeners.iter().position(|waiter| waiter.id == id) {
-                let mut waiter = state.listeners.remove(at);
-                if let Some(reply) = waiter.reply.take() {
-                    let _ = reply.send(Ok(line.to_string()));
-                }
+        // A listener the engine's failure answered meanwhile is gone; an abandoned one is
+        // removed with no one to tell.
+        if let Some(at) = state.listeners.iter().position(|waiter| waiter.id == id) {
+            let mut waiter = state.listeners.remove(at);
+            if let Some(reply) = waiter.reply.take() {
+                let _ = reply.send(Ok(line.to_string()));
             }
         }
     }
