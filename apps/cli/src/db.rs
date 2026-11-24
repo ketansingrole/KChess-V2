@@ -1,10 +1,10 @@
-//! `db`: the game databases on this computer — list them, import a PGN file, search one's games,
-//! print a game, rename and delete.
+//! `db`: the game databases on this computer — list them, import a PGN file, download the master
+//! games, search one's games, print a game, rename and delete.
 
 use kchess_contracts::calls;
-use kchess_contracts::check::{DatabaseId, DatabaseName, GameDbGameId, PgnFilePath};
+use kchess_contracts::check::{DatabaseId, DatabaseName, GameDbGameId, MasterMonths, PgnFilePath};
 use kchess_contracts::types::{
-    GameDbPhase, GameDbProgress, GameDbQuery, GameDbResult, GameDbSide, GameDbSort,
+    GameDbImported, GameDbPhase, GameDbProgress, GameDbQuery, GameDbResult, GameDbSide, GameDbSort,
 };
 use serde_json::json;
 
@@ -22,6 +22,10 @@ pub enum Db {
         path: String,
         into: Option<String>,
         name: Option<String>,
+    },
+    /// Download the master games' missing months (the newest `months` of them, if given).
+    Masters {
+        months: Option<u32>,
     },
     Games(GameDbQuery),
     Game {
@@ -79,6 +83,19 @@ pub fn parse(words: &[String]) -> Result<Db, String> {
                 .to_string_lossy()
                 .into_owned();
             Ok(Db::Import { path, into, name })
+        }
+        "masters" => {
+            let mut words = rest.iter();
+            let mut months = None;
+            while let Some(word) = words.next() {
+                match word.as_str() {
+                    "--months" => {
+                        months = Some(number(&value(&mut words, "--months")?, "--months")?)
+                    }
+                    other => return Err(format!("db masters does not take {other}.")),
+                }
+            }
+            Ok(Db::Masters { months })
         }
         "games" => {
             let mut query = GameDbQuery {
@@ -159,17 +176,23 @@ pub fn parse(words: &[String]) -> Result<Db, String> {
             database: database(rest)?,
         }),
         other => Err(format!(
-            "Unknown db command {other}: list, import, games, game, rename or delete."
+            "Unknown db command {other}: list, import, masters, games, game, rename or delete."
         )),
     }
 }
 
 /// An import's progress, as one line.
 fn progress_line(progress: &GameDbProgress) -> String {
-    let mut line = format!(
-        "{:?}: {} games, {} skipped",
-        progress.phase, progress.games, progress.skipped
-    );
+    let mut line = format!("{:?}", progress.phase);
+    if progress.phase == GameDbPhase::Downloading
+        && let Some(month) = &progress.message
+    {
+        line.push_str(&format!(" {month}"));
+    }
+    line.push_str(&format!(
+        ": {} games, {} skipped",
+        progress.games, progress.skipped
+    ));
     if let Some(total) = progress.total_bytes.filter(|&total| total > 0) {
         line.push_str(&format!(
             ", {:.0}% read",
@@ -177,6 +200,38 @@ fn progress_line(progress: &GameDbProgress) -> String {
         ));
     }
     line
+}
+
+/// Waits for an import (or the master games' download) to end, printing its progress on stderr;
+/// Ctrl-C cancels it.
+async fn follow(
+    core: &CoreClient,
+    events: &mut ClientEvents,
+    work: impl Future<Output = Result<GameDbImported, String>>,
+) -> Result<GameDbImported, String> {
+    tokio::pin!(work);
+    let mut wait = Wait::new(events);
+    let mut cancelled = false;
+    let imported = loop {
+        tokio::select! {
+            imported = &mut work => break imported,
+            next = wait.next() => match next {
+                Next::Event(CoreEvent::GameDbProgress(progress)) => {
+                    if !progress.phase.is_terminal() || progress.phase == GameDbPhase::Done {
+                        eprintln!("{}", progress_line(&progress));
+                    }
+                }
+                Next::Interrupted if !cancelled => {
+                    cancelled = true;
+                    eprintln!("Cancelling…");
+                    core.request(calls::GameDbCancel {}).await?;
+                }
+                Next::Closed => return Err("The core closed.".into()),
+                _ => {}
+            },
+        }
+    };
+    imported
 }
 
 /// Runs `db`, printing what it answers: JSON, or a game's PGN.
@@ -189,29 +244,13 @@ pub async fn run(core: &CoreClient, events: &mut ClientEvents, db: Db) -> Result
                 into: into.map(DatabaseId),
                 name: name.map(DatabaseName),
             });
-            tokio::pin!(import);
-            let mut wait = Wait::new(events);
-            let mut cancelled = false;
-            let imported = loop {
-                tokio::select! {
-                    imported = &mut import => break imported,
-                    next = wait.next() => match next {
-                        Next::Event(CoreEvent::GameDbProgress(progress)) => {
-                            if !progress.phase.is_terminal() || progress.phase == GameDbPhase::Done {
-                                eprintln!("{}", progress_line(&progress));
-                            }
-                        }
-                        Next::Interrupted if !cancelled => {
-                            cancelled = true;
-                            eprintln!("Cancelling the import…");
-                            core.request(calls::GameDbCancel {}).await?;
-                        }
-                        Next::Closed => return Err("The core closed.".into()),
-                        _ => {}
-                    },
-                }
-            };
-            print(json!(imported?));
+            print(json!(follow(core, events, import).await?));
+        }
+        Db::Masters { months } => {
+            let install = core.request(calls::GameDbMasterInstall {
+                months: months.map(MasterMonths),
+            });
+            print(json!(follow(core, events, install).await?));
         }
         Db::Games(query) => {
             // Games are withheld during a live game: the core checks there is none first.
@@ -299,6 +338,14 @@ mod tests {
             }
         );
         assert_eq!(
+            parse(&words("masters")).unwrap(),
+            Db::Masters { months: None }
+        );
+        assert_eq!(
+            parse(&words("masters --months 12")).unwrap(),
+            Db::Masters { months: Some(12) }
+        );
+        assert_eq!(
             parse(&words("delete abc")).unwrap(),
             Db::Delete {
                 database: "abc".into()
@@ -316,6 +363,8 @@ mod tests {
             ("games abc --player", "needs a value"),
             ("game abc", "needs the game"),
             ("rename abc", "needs the new name"),
+            ("masters --months lots", "takes a number"),
+            ("masters abc", "does not take abc"),
             ("frobnicate", "Unknown db command"),
         ] {
             let error = parse(&words(text)).unwrap_err();

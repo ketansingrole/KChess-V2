@@ -139,6 +139,9 @@ gpui-kit = { version = "=0.11.0", features = ["test-support"] }
 tempfile = "3"
 # The stand-in Lichess and Chess.com the end-to-end tests talk to (`src/e2e/fake_*.rs`).
 kchess-testkit.workspace = true
+# The master games archive the stand-in Lichess serves, packed as Lichess packs it; the core's
+# version, already in Cargo.lock.
+ruzstd = "0.9"
 # Release keys that sign the updater tests' checksums (`src/updates/tests.rs`).
 ring = "0.17"
 # A profile document the core cannot read, written beside the running core (`src/e2e`); the

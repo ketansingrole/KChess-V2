@@ -77,6 +77,11 @@ impl GameDb {
     /// Read the list again: a read that works clears the failure an earlier one showed. A read
     /// that an import or a failure overtook changes nothing.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.read_status(true, cx);
+    }
+
+    /// Read the list again; `clear`: a read that works clears the failure shown.
+    fn read_status(&mut self, clear: bool, cx: &mut Context<Self>) {
         let status = cx.global::<AppCore>().request(calls::GameDbStatus {});
         let asked = self.changes;
         cx.spawn(async move |this, cx| {
@@ -88,7 +93,9 @@ impl GameDb {
                 match status {
                     Ok(status) => {
                         this.status = status;
-                        this.error = None;
+                        if clear {
+                            this.error = None;
+                        }
                     }
                     Err(cause) => this.failed(&cause),
                 }
@@ -107,11 +114,35 @@ impl GameDb {
 
     /// Imports the PGN file at `path` (`.pgn` or `.pgn.zst`) into a new database named after it.
     pub fn import(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let import = cx.global::<AppCore>().request(calls::GameDbImport {
+            path: PgnFilePath(path.to_string_lossy().into_owned()),
+            into: None,
+            name: None,
+        });
+        self.run(GameDbPhase::Reading, import, cx);
+    }
+
+    /// Downloads the master games the master database lacks: every month at first, then the
+    /// months published since.
+    pub fn install_masters(&mut self, cx: &mut Context<Self>) {
+        let install = cx
+            .global::<AppCore>()
+            .request(calls::GameDbMasterInstall { months: None });
+        self.run(GameDbPhase::Downloading, install, cx);
+    }
+
+    /// Runs an import or download, its progress shown from `phase` until it ends.
+    fn run<T: 'static>(
+        &mut self,
+        phase: GameDbPhase,
+        work: impl std::future::Future<Output = Result<T, kchess_contracts::CoreError>> + 'static,
+        cx: &mut Context<Self>,
+    ) {
         self.changes += 1;
         self.error = None;
         self.cancelling = false;
         self.progress = Some(GameDbProgress {
-            phase: GameDbPhase::Reading,
+            phase,
             database: String::new(),
             games: 0,
             skipped: 0,
@@ -120,21 +151,20 @@ impl GameDb {
             message: None,
         });
         cx.notify();
-        let import = cx.global::<AppCore>().request(calls::GameDbImport {
-            path: PgnFilePath(path.to_string_lossy().into_owned()),
-            into: None,
-            name: None,
-        });
         cx.spawn(async move |this, cx| {
-            let result = import.await;
+            let result = work.await;
             this.update(cx, |this, cx| {
                 this.progress = None;
                 match result {
-                    // The new database joins the list.
+                    // The new or grown database is listed.
                     Ok(_) => this.refresh(cx),
-                    // A failed or cancelled import leaves every database as it was.
-                    Err(_) if this.cancelling => {}
-                    Err(cause) => this.failed(&cause),
+                    // A failed or cancelled run leaves every database as it was, but for the
+                    // months a download already added, which the list then shows.
+                    Err(_) if this.cancelling => this.refresh(cx),
+                    Err(cause) => {
+                        this.failed(&cause);
+                        this.read_status(false, cx);
+                    }
                 }
                 cx.notify();
             })
@@ -222,6 +252,16 @@ pub fn import_card(cx: &App, palette: &Palette) -> impl IntoElement + use<> {
     let body: AnyElement = if this.busy() {
         let progress = this.progress.clone();
         let (share, text) = match &progress {
+            Some(progress) if progress.phase == GameDbPhase::Downloading => (
+                progress
+                    .total_bytes
+                    .filter(|total| *total > 0)
+                    .map(|total| (progress.bytes as f64 / total as f64).min(1.) as f32),
+                match &progress.message {
+                    Some(month) => format!("Downloading master games · {month}"),
+                    None => "Downloading master games…".to_string(),
+                },
+            ),
             Some(progress) if progress.phase == GameDbPhase::Indexing => (
                 None,
                 format!(

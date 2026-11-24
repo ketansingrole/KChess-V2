@@ -27,7 +27,7 @@ use kchess_board::game::played::GameOrigin;
 use kchess_contracts::calls;
 use kchess_contracts::check::{DatabaseId, GameDbGameId};
 use kchess_contracts::types::{
-    DatabaseInfo, GameDbQuery, GameDbResult, GameDbRow, GameDbSide, GameDbSort,
+    DatabaseInfo, DatabaseSource, GameDbQuery, GameDbResult, GameDbRow, GameDbSide, GameDbSort,
 };
 use kchess_nav::page::{ActionInfo, Page, PageAction, PageView};
 use kchess_nav::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
@@ -62,6 +62,9 @@ const SORTS: [(&str, &str); 3] = [
     ("rating", "Best rated first"),
 ];
 const RESULTS: [&str; 4] = ["All", "White won", "Draws", "Black won"];
+/// The master games: Lichess's broadcast archive, some 770 MB to download in all (2026-11).
+const MASTERS_LABEL: &str = "Master games · 770 MB";
+const MASTERS_TIP: &str = "Games from top over-the-board events since 2020, from Lichess's broadcasts";
 /// Below this width the table keeps the players and the result.
 const NARROW: Pixels = px(720.);
 
@@ -689,6 +692,10 @@ impl Render for DatabasePage {
         let narrow = window.viewport_size().width < NARROW;
         let databases = self.databases(cx).len();
         let busy = cx.global::<GameDbHandle>().0.read(cx).busy();
+        let masters = self
+            .databases(cx)
+            .iter()
+            .any(|info| info.source == DatabaseSource::Master);
         let header = h_flex()
             .gap(px(12.))
             .flex_wrap()
@@ -716,6 +723,24 @@ impl Render for DatabasePage {
                         .icon(icon("trash-2"))
                         .label("Delete database")
                         .on_click(cx.listener(|this, _, window, cx| this.delete(window, cx))),
+                )
+            })
+            .when(!busy, |row| {
+                row.child(
+                    Button::new("database-masters")
+                        .outline()
+                        .small()
+                        .icon(icon("download"))
+                        .label(if masters {
+                            SharedString::new_static("Update master games")
+                        } else {
+                            SharedString::new_static(MASTERS_LABEL)
+                        })
+                        .tooltip(MASTERS_TIP)
+                        .on_click(|_, _, cx| {
+                            let db = cx.global::<GameDbHandle>().0.clone();
+                            db.update(cx, |db, cx| db.install_masters(cx));
+                        }),
                 )
             })
             .child(game_db::import_card(cx, &palette));
@@ -834,6 +859,7 @@ impl Render for DatabasePage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Import,
+    Masters,
     ClearFilters,
 }
 
@@ -845,6 +871,12 @@ impl PageAction for Action {
                 "Import PGN",
                 "import",
                 "pgn file games database",
+            ),
+            Action::Masters => ActionInfo::new(
+                "database:masters",
+                "Download master games",
+                "download",
+                "masters broadcasts otb grandmaster update",
             ),
             Action::ClearFilters => {
                 ActionInfo::new("database:clear", "Clear filters", "x", "reset all")
@@ -877,6 +909,7 @@ impl PageView for DatabasePage {
         let mut actions = Vec::new();
         if !cx.global::<GameDbHandle>().0.read(cx).busy() {
             actions.push(Action::Import);
+            actions.push(Action::Masters);
         }
         if self.filtered(cx) {
             actions.push(Action::ClearFilters);
@@ -887,6 +920,10 @@ impl PageView for DatabasePage {
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
         match action {
             Action::Import => game_db::choose_and_import(window, cx),
+            Action::Masters => {
+                let db = cx.global::<GameDbHandle>().0.clone();
+                db.update(cx, |db, cx| db.install_masters(cx));
+            }
             Action::ClearFilters => {
                 this.update(cx, |page, cx| page.clear_filters(window, cx));
             }

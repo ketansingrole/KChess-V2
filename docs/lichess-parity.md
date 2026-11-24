@@ -75,7 +75,10 @@ can add them as a friend, challenge them or watch their current game.
   page lists a game database's games, searched by player, side, event, years, rating and
   result, a page at a time, and opens any on the analysis board; the analysis board's
   _Games with this position_ lists the games that reached its position, at any depth. A PGN
-  file dropped on the page is imported. `kchess-cli db` lists, imports, searches
+  file dropped on the page is imported. _Master games_ downloads Lichess's broadcast archive
+  (over-the-board games since 2020, CC BY-SA 4.0, shown under its games) month by month, checking
+  each month's digest; _Update master games_ brings in the months published since.
+  `kchess-cli db` lists, imports, downloads the master games (`masters [--months n]`), searches
   (`--position <fen>` among the rest), prints, renames and deletes them.
 - **Lichess cloud evaluation**: Lichess's stored deep evaluation of the position, shown beside
   the local engine, or in its place when Stockfish is off. It is off by default because every

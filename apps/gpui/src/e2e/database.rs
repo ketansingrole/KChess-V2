@@ -147,3 +147,39 @@ fn a_pgn_file_dropped_on_the_page_is_imported(cx: &mut gpui_kit::TestAppContext)
     );
     app.find("database-delete");
 }
+
+/// The master games button downloads Lichess's broadcast archive (here the stand-in's one month)
+/// into a database of their own, whose games are listed with the archive's attribution; the
+/// button then offers to bring in newer months.
+#[gpui_kit::test]
+fn the_master_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    assert_eq!(
+        app.find("database-masters").label(),
+        Some("Master games · 770 MB")
+    );
+    app.click("database-masters");
+    wait_for_listed(
+        &mut app,
+        "the master games, newest first",
+        &[
+            "Caruana, Fabiano against Firouzja, Alireza, 1/2-1/2",
+            "Firouzja, Alireza against Caruana, Fabiano, 1-0",
+        ],
+    );
+    app.wait_for_app("the archive's attribution", |cx| {
+        let db = cx.global::<kchess_board::game_db::GameDbHandle>().0.read(cx);
+        db.databases().iter().any(|info| {
+            info.source == kchess_contracts::types::DatabaseSource::Master
+                && info.attribution.as_deref().is_some_and(|text| text.contains("CC BY-SA"))
+        })
+    });
+    app.wait_for("the button to update them", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .elements()
+            .iter()
+            .any(|element| element.label() == Some("Update master games"))
+    });
+}
