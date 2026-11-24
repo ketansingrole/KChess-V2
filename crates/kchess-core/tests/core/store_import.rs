@@ -446,6 +446,93 @@ fn an_earlier_database_that_fails_to_read_is_not_half_imported() {
     );
 }
 
+/// 2026-11-24: an earlier database that could not be read on the first start was imported only
+/// while the profile stayed empty, so one setting changed meanwhile left its games out for good.
+/// A later start that reads it adds what the profile lacks and keeps what was done in it.
+#[test]
+fn an_earlier_database_unreadable_at_first_is_merged_once_it_reads() {
+    let (_earlier, legacy) = earlier_database(
+        "CREATE TABLE app_settings (key TEXT, value TEXT);
+         INSERT INTO app_settings VALUES ('app.appearance_mode', 'dark');
+         CREATE TABLE lichess_accounts (username TEXT, auth_kind TEXT, last_synced_at INTEGER);
+         INSERT INTO lichess_accounts VALUES ('Grace', 'oauth', NULL);
+         INSERT INTO lichess_accounts VALUES ('Heidi', 'oauth', NULL);
+         CREATE TABLE lichess_games (game_id TEXT, account_username TEXT, played_at INTEGER, rated INTEGER,
+           speed TEXT, perf TEXT, status TEXT, winner TEXT, color TEXT, opponent_name TEXT,
+           opponent_rating INTEGER, player_rating INTEGER, rating_diff INTEGER, opening_name TEXT, moves TEXT);
+         INSERT INTO lichess_games VALUES ('Legacy01', 'Grace', 7, 1, 'bullet', 'bullet', 'resign', 'black',
+           'white', 'Dan', 1500, 1510, -4, NULL, 'e4 e5');
+         INSERT INTO lichess_games VALUES ('Legacy02', 'Heidi', 8, 1, 'blitz', 'blitz', 'mate', 'white',
+           'white', 'Erin', 1500, 1510, 6, NULL, 'd4 d5');
+         CREATE VIEW lichess_tokens AS SELECT json('not json') AS username, 'lip_grace' AS token;",
+    );
+    let store = Store::new(Some(legacy.clone()), Secrets::ON);
+    assert_eq!(
+        store.rows("SELECT username FROM accounts"),
+        Vec::<Value>::new()
+    );
+    // Used meanwhile: a setting chosen and an account of its own signed in.
+    store
+        .write(|c| {
+            let mut settings = games::get_settings(c.db)?;
+            settings.frontend.appearance = kchess_contracts::types::Appearance::Light;
+            games::save_settings(c.db, &settings)
+        })
+        .expect("saveSettings");
+    store
+        .save_login("heidi", "lip_heidi_new", true)
+        .expect("saveLogin");
+
+    Connection::open(&legacy)
+        .and_then(|connection| {
+            connection.execute_batch(
+                "DROP VIEW lichess_tokens;
+                 CREATE TABLE lichess_tokens (username TEXT, token TEXT);
+                 INSERT INTO lichess_tokens VALUES ('Grace', 'lip_grace');
+                 INSERT INTO lichess_tokens VALUES ('Heidi', 'lip_heidi_old');",
+            )
+        })
+        .expect("the earlier database reads again");
+    let store = store.reopen_with(Secrets::ON);
+    let data = store
+        .read(|c| games::load_app_data(c.db))
+        .expect("loadData");
+    let mut names = usernames(&data);
+    names.sort();
+    assert_eq!(names, ["Grace", "heidi"], "no second Heidi");
+    assert_eq!(data["gameCount"], json!(2));
+    assert_eq!(
+        store
+            .read(|c| games::get_settings(c.db))
+            .expect("getSettings")["appearance"],
+        json!("light"),
+        "the setting chosen since stays"
+    );
+    assert_eq!(store.token("Grace").as_deref(), Some("lip_grace"));
+    assert_eq!(
+        store.token("heidi").as_deref(),
+        Some("lip_heidi_new"),
+        "the login made since stays"
+    );
+    assert_eq!(
+        store.rows("SELECT username FROM accounts WHERE connected = 1 ORDER BY username"),
+        vec![
+            json!({ "username": "Grace" }),
+            json!({ "username": "heidi" })
+        ]
+    );
+    assert_eq!(
+        store
+            .read(import::legacy_import_pending)
+            .expect("legacyImportPending"),
+        json!(false)
+    );
+    let plaintext: i64 = Connection::open(&legacy)
+        .and_then(|c| c.query_row("SELECT COUNT(*) FROM lichess_tokens", [], |row| row.get(0)))
+        .expect("plaintext counted");
+    assert_eq!(plaintext, 0, "both plaintext logins are removed");
+}
+
 /// 2026-11-11: each method that read the store migrated an earlier release's profile first, by
 /// hand, and `insights` did not, so opened first it found no games. Every call now runs after the
 /// import.
