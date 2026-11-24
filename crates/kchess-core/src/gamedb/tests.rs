@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_host::TestHost;
 use kchess_contracts::types::{GameDbResult, GameDbSide, GameDbSort};
-use kchess_domain::pgn::parse_pgn;
+use kchess_domain::pgn::{make_pgn, parse_pgn};
 use kchess_domain::rules;
 use kchess_testkit::random;
 use shakmaty::Position as _;
@@ -246,15 +246,31 @@ async fn a_games_pgn_is_its_own_text_or_written_again() {
             .iter()
             .find(|o| o.header("Date") == game.header("Date"))
             .unwrap();
-        assert_eq!(game.main_line_sans(), original.main_line_sans());
-        assert_eq!(game.header("White"), original.header("White"));
-        assert_eq!(game.header("Result"), original.header("Result"));
-        if original.header("Date") == Some("2024.01.21") {
-            assert!(pgn.contains("an annotated game"), "{pgn}");
-        }
+        assert_eq!(pgn, make_pgn(original));
     }
     assert!(games.game(&id, 999).await.is_err());
     assert!(games.game("missing", 1).await.is_err());
+}
+
+/// A broadcast's game, with its clocks, evals, extra headers and a name written with spaces
+/// around it, reads back exactly as it was written, from the columns of the tables it is in.
+#[tokio::test]
+async fn a_broadcast_game_reads_back_exactly() {
+    let text = "[Event \" Open 2026 \"]\n[Site \"https://example.org/open/r1/g1\"]\n\
+        [Date \"2026.10.01\"]\n[Round \"1.4\"]\n[White \" Wang, Justin \"]\n[Black \"Lee, Ann\"]\n\
+        [Result \"0-1\"]\n[WhiteElo \"2103\"]\n[WhiteTitle \"CM\"]\n[BlackElo \"1996\"]\n\
+        [GameURL \"https://example.org/open/r1/g1\"]\n\n\
+        1. e4 { [%eval 0.18] [%clk 1:30:58] } 1... c5 { [%eval 0.32] [%clk 1:30:35] } \
+        2. Qh5?? { [%eval -1.5] } { Blunder. } { [%clk 1:29:00] } 2... Nf6 0-1\n";
+    let (profile, files) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (games, _) = service(profile.path());
+    let id = imported(&games, source(files.path(), "b.pgn", text.as_bytes()))
+        .await
+        .database
+        .id;
+    let row = games.games(query(&id)).await.unwrap().games.remove(0);
+    let pgn = games.game(&id, row.id).await.unwrap();
+    assert_eq!(pgn, make_pgn(&parse_pgn(text).remove(0)));
 }
 
 /// Every tree row is what replaying each game counts, transpositions included.
@@ -480,6 +496,22 @@ fn searches_by_player_read_the_name_index() {
         )
         .unwrap();
     assert!(tree.contains("PRIMARY KEY"), "{tree}");
+    let rated: String = db
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM games g WHERE g.low_elo >= 2600",
+            [],
+            |row| row.get(3),
+        )
+        .unwrap();
+    assert!(rated.contains("games_low_elo"), "{rated}");
+}
+
+/// The tree's memory is one table that never grows: `TREE_ROWS` rows fill it exactly.
+#[test]
+fn the_tree_buffer_fills_one_table() {
+    let rows: HashMap<(u64, u16), tree::Stats> = HashMap::with_capacity(super::TREE_ROWS);
+    assert_eq!(rows.capacity(), super::TREE_ROWS);
+    assert_eq!(std::mem::size_of::<((u64, u16), tree::Stats)>(), 64);
 }
 
 /// Random games, read in random-sized batches of tree memory: the tree always matches a replay.

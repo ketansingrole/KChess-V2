@@ -28,8 +28,9 @@ use kchess_contracts::types::{
 };
 use kchess_domain::gamedb;
 
-/// Tree rows an import holds in memory before it writes a run file: some 250 MB.
-const TREE_ROWS: usize = 3_000_000;
+/// Tree rows an import holds in memory before it writes a run file: 7/8 of a 2^21-slot table,
+/// the most it holds without growing, at 64 bytes a slot some 130 MB.
+const TREE_ROWS: usize = 1_835_008;
 /// How often an import reports its progress.
 const REPORT_EVERY: Duration = Duration::from_millis(250);
 

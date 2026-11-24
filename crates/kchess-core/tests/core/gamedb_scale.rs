@@ -43,8 +43,59 @@ async fn gamedb_scale() {
         kchess_host::env::var("KCHESS_GAMEDB_SCALE_DIR").unwrap_or_else(|| ".".into()),
     )
     .expect("profile");
-    let games = GameDbService::new(&Config::new(profile.path().to_path_buf()), support::host());
+    let host = support::host();
+    let games = GameDbService::new(&Config::new(profile.path().to_path_buf()), host.clone());
     let started = Instant::now();
+    // The process's memory every few seconds beside the import's phase, to see what grows. On
+    // macOS the footprint (what the process holds, without memory freed but kept by malloc for
+    // reuse, which the resident size still counts) comes from `footprint`.
+    let sampler = {
+        let host = host.clone();
+        tokio::spawn(async move {
+            let pid = std::process::id().to_string();
+            let run = |program: &str, args: &[&str]| {
+                std::process::Command::new(program)
+                    .args(args)
+                    .output()
+                    .ok()
+                    .and_then(|out| String::from_utf8(out.stdout).ok())
+                    .unwrap_or_default()
+            };
+            let (mut peak_rss, mut peak_footprint) = (0f64, 0f64);
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                let rss = run("ps", &["-o", "rss=", "-p", &pid])
+                    .trim()
+                    .parse::<f64>()
+                    .unwrap_or(0.0)
+                    / 1024.0;
+                // "zsh [91370]: 64-bit    Footprint: 1920 KB (16384 bytes per page)"
+                let footprint = run("footprint", &[&pid])
+                    .split("Footprint: ")
+                    .nth(1)
+                    .and_then(|rest| {
+                        let mut words = rest.split_whitespace();
+                        let value: f64 = words.next()?.parse().ok()?;
+                        Some(match words.next()? {
+                            "KB" => value / 1024.0,
+                            "GB" => value * 1024.0,
+                            _ => value,
+                        })
+                    })
+                    .unwrap_or(0.0);
+                peak_rss = peak_rss.max(rss);
+                peak_footprint = peak_footprint.max(footprint);
+                let last = host.named("gamedb:progress").pop().unwrap_or_default();
+                println!(
+                    "memory {:>5.0} s: footprint {footprint:>6.0} MB (peak {peak_footprint:>6.0}), \
+                     resident {rss:>6.0} MB (peak {peak_rss:>6.0}) {} {} games",
+                    started.elapsed().as_secs_f64(),
+                    last["phase"].as_str().unwrap_or("?"),
+                    last["games"]
+                );
+            }
+        })
+    };
     let imported = games
         .import(
             file.clone(),
@@ -56,6 +107,7 @@ async fn gamedb_scale() {
         .await
         .expect("imports");
     let took = started.elapsed();
+    sampler.abort();
     let info = &imported.database;
     println!(
         "import: {} games kept, {} skipped in {:.1} s ({:.0} games/s)",
@@ -86,6 +138,22 @@ async fn gamedb_scale() {
     println!(
         "tree: {tree_rows} rows ({:.1} a game)",
         tree_rows as f64 / imported.added.max(1) as f64
+    );
+    // How many positions' moves only one game played, and how many count no game (unfinished).
+    let by_games = |condition: &str| -> i64 {
+        db.query_row(
+            &format!("SELECT COUNT(*) FROM tree WHERE {condition}"),
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(-1)
+    };
+    let lone = by_games("white + draws + black = 1");
+    let none = by_games("white + draws + black = 0");
+    println!(
+        "tree rows of one game: {lone} ({:.1}%), of none: {none}, of more: {}",
+        100.0 * lone as f64 / tree_rows.max(1) as f64,
+        tree_rows - lone - none
     );
     for table in ["games", "tree", "players", "events"] {
         let bytes: Option<i64> = db
@@ -206,4 +274,29 @@ async fn gamedb_scale() {
         println!("search {label} ({total} games): {}", percentiles(samples));
     }
     games.close().await;
+}
+
+/// The start of a `.pgn.zst` file's text, to see what its games hold.
+#[test]
+#[ignore = "needs a .pgn.zst file: KCHESS_GAMEDB_SAMPLE"]
+fn gamedb_sample() {
+    use std::io::Read as _;
+    let Some(file) = kchess_host::env::var("KCHESS_GAMEDB_SAMPLE") else {
+        panic!("set KCHESS_GAMEDB_SAMPLE to a .pgn.zst file");
+    };
+    let bytes = std::fs::read(file).expect("reads");
+    // Lichess's files start with a skippable frame (magic 0x184D2A5?, a length, its payload).
+    let mut at = 0;
+    while bytes.len() >= at + 8
+        && u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four bytes")) & 0xFFFF_FFF0
+            == 0x184D_2A50
+    {
+        let length = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().expect("four bytes"));
+        at += 8 + length as usize;
+    }
+    let mut decoder =
+        ruzstd::decoding::StreamingDecoder::new(&bytes[at..]).expect("a zstd frame");
+    let mut text = vec![0; 6_000];
+    decoder.read_exact(&mut text).expect("reads");
+    println!("{}", String::from_utf8_lossy(&text));
 }

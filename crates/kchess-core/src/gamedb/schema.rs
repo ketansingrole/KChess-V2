@@ -62,13 +62,14 @@ const MIGRATIONS: &[&str] = &[r#"CREATE TABLE meta (
     white_elo INTEGER,
     black_elo INTEGER,
     rating INTEGER,
+    low_elo INTEGER,
     result INTEGER,
     eco TEXT,
     opening TEXT,
     fen TEXT,
     plies INTEGER NOT NULL,
     moves BLOB NOT NULL,
-    text TEXT
+    extra BLOB
   );
   CREATE TABLE tree (
     key INTEGER NOT NULL,
@@ -93,6 +94,7 @@ pub const INDEXES: &str = "
   CREATE INDEX IF NOT EXISTS games_event ON games (event, date_key);
   CREATE INDEX IF NOT EXISTS games_date ON games (date_key);
   CREATE INDEX IF NOT EXISTS games_rating ON games (rating);
+  CREATE INDEX IF NOT EXISTS games_low_elo ON games (low_elo);
   CREATE INDEX IF NOT EXISTS games_eco ON games (eco);
   CREATE INDEX IF NOT EXISTS games_import ON games (import_id);";
 

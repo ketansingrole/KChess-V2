@@ -151,9 +151,10 @@ fn io(error: std::io::Error) -> CoreError {
 impl TreeBuilder {
     /// Run files go in a private directory inside `parent` (the profile's databases folder, on
     /// the same disk as the database), removed with the builder.
+    /// The map takes its full size at once: growing would hold the old table beside the new.
     pub fn new(parent: &std::path::Path, capacity: usize) -> Result<TreeBuilder> {
         Ok(TreeBuilder {
-            rows: HashMap::with_capacity(capacity.min(1 << 20)),
+            rows: HashMap::with_capacity(capacity),
             capacity: capacity.max(1),
             runs: Vec::new(),
             temp: tempfile::Builder::new()
@@ -171,13 +172,15 @@ impl TreeBuilder {
         Ok(())
     }
 
-    fn sorted(&mut self) -> Vec<((u64, u16), Stats)> {
-        let mut rows: Vec<_> = self.rows.drain().collect();
-        rows.sort_unstable_by_key(|(at, _)| *at);
+    /// The rows in memory in key order, by reference: a sorted copy would double what a run
+    /// holds in memory.
+    fn sorted(&self) -> Vec<(&(u64, u16), &Stats)> {
+        let mut rows: Vec<_> = self.rows.iter().collect();
+        rows.sort_unstable_by_key(|(at, _)| **at);
         rows
     }
 
-    /// The rows in memory written out as a sorted run.
+    /// The rows in memory written out as a sorted run; the map keeps its size for the next.
     fn spill(&mut self) -> Result<()> {
         let rows = self.sorted();
         let path = self.temp.path().join(format!("run-{}", self.runs.len()));
@@ -188,26 +191,29 @@ impl TreeBuilder {
             .open(&path)
             .map_err(io)?;
         let mut out = BufWriter::with_capacity(1 << 20, file);
-        for ((key, mv), stats) in &rows {
+        for ((key, mv), stats) in rows {
             write_record(&mut out, *key, *mv, stats).map_err(io)?;
         }
         let mut file = out.into_inner().map_err(|e| io(e.into_error()))?;
         std::io::Seek::rewind(&mut file).map_err(io)?;
         self.runs.push(file);
+        self.rows.clear();
         Ok(())
     }
 
     /// Every row in key order, those of several runs added together, to `each`.
     fn merged(mut self, mut each: impl FnMut(u64, u16, &Stats) -> Result<()>) -> Result<()> {
         if self.runs.is_empty() {
-            for ((key, mv), stats) in self.sorted() {
-                each(key, mv, &stats)?;
+            for (&(key, mv), stats) in self.sorted() {
+                each(key, mv, stats)?;
             }
             return Ok(());
         }
         if !self.rows.is_empty() {
             self.spill()?;
         }
+        // The runs hold every row now; the map's memory goes back before the merge.
+        self.rows = HashMap::new();
         let mut readers: Vec<_> = self
             .runs
             .drain(..)

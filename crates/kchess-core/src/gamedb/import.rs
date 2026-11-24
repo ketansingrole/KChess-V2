@@ -144,6 +144,12 @@ fn date_key(stored: &Stored) -> u32 {
     year * 10_000 + u32::from(stored.month.unwrap_or(0)) * 100 + day
 }
 
+/// The lower rating of a game both of whose players have one: "both rated at least" is one
+/// indexed range on it.
+fn low_elo(stored: &Stored) -> Option<u16> {
+    Some(stored.white_elo?.min(stored.black_elo?))
+}
+
 /// The average of the ratings a game has.
 fn rating(stored: &Stored) -> Option<u16> {
     match (stored.white_elo, stored.black_elo) {
@@ -167,9 +173,9 @@ fn insert_game(
     };
     db.prepare_cached(
         "INSERT INTO games (import_id, white, black, event, site, date, date_key, year, round,
-            white_elo, black_elo, rating, result, eco, opening, fen, plies, moves, text)
+            white_elo, black_elo, rating, low_elo, result, eco, opening, fen, plies, moves, extra)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-            ?19)",
+            ?19, ?20)",
     )
     .sql()?
     .execute(params![
@@ -185,13 +191,14 @@ fn insert_game(
         stored.white_elo,
         stored.black_elo,
         rating(stored),
+        low_elo(stored),
         stored.outcome.score(),
         stored.eco,
         stored.opening,
         stored.fen,
         stored.plies as i64,
         stored.moves,
-        stored.text,
+        stored.extra,
     ])
     .sql()?;
     Ok(db.last_insert_rowid())

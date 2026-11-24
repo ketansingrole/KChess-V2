@@ -81,7 +81,7 @@ fn filters(query: &GameDbQuery, visible: i64) -> (String, Vec<SqlValue>) {
     if let Some(elo) = query.min_elo {
         args.push(SqlValue::Integer(i64::from(elo)));
         let n = args.len();
-        clauses.push(format!("g.white_elo >= ?{n} AND g.black_elo >= ?{n}"));
+        clauses.push(format!("g.low_elo >= ?{n}"));
     }
     if let Some(result) = query.result {
         clauses.push(
@@ -168,7 +168,7 @@ pub fn stored(db: &Connection, id: u64) -> Result<Option<Stored>> {
     db.query_row(
         &format!(
             "SELECT w.name, b.name, e.name, g.site, g.date, g.year, g.round, g.white_elo,
-                    g.black_elo, g.result, g.eco, g.opening, g.fen, g.plies, g.moves, g.text
+                    g.black_elo, g.result, g.eco, g.opening, g.fen, g.plies, g.moves, g.extra
              FROM games g {JOINS} WHERE g.id = ?1 AND g.import_id <= ?2"
         ),
         rusqlite::params![id as i64, visible],
@@ -192,7 +192,7 @@ pub fn stored(db: &Connection, id: u64) -> Result<Option<Stored>> {
                 fen: row.get(12)?,
                 plies: usize::try_from(row.get::<_, i64>(13)?).unwrap_or(0),
                 moves: row.get(14)?,
-                text: row.get(15)?,
+                extra: row.get(15)?,
             })
         },
     )
@@ -200,14 +200,10 @@ pub fn stored(db: &Connection, id: u64) -> Result<Option<Stored>> {
     .sql()
 }
 
-/// The game `id`'s PGN: its text as imported, or written again from its columns.
+/// The game `id`'s PGN, written again from what the database keeps of it.
 pub fn pgn(db: &Connection, id: u64) -> Result<String> {
     let Some(stored) = stored(db, id)? else {
         return Err(CoreError::new("That game is not in this database."));
     };
-    match stored.text {
-        Some(text) => Ok(text),
-        None => gamedb::rebuild_pgn(&stored)
-            .ok_or_else(|| CoreError::new("This game's moves could not be read.")),
-    }
+    gamedb::pgn_of(&stored).ok_or_else(|| CoreError::new("This game could not be read."))
 }

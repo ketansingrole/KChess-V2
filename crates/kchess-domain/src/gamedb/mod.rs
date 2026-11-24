@@ -16,8 +16,15 @@ use crate::pgn::{self, Game};
 use crate::position;
 use crate::rules;
 
+mod notes;
+
+/// The first byte of a game's `extra` when it holds the notes `notes::pack` wrote.
+const EXTRA_NOTES: u8 = 1;
+/// The first byte of a game's `extra` when it holds the game's full PGN text.
+const EXTRA_TEXT: u8 = 2;
+
 /// The headers a database keeps as columns. A game with no other header, comment, NAG or
-/// variation is stored without its text and written again from them (`rebuild_pgn`).
+/// variation is stored with no `extra` and written again from them (`pgn_of`).
 pub const KEPT_HEADERS: [&str; 11] = [
     "Event", "Site", "Date", "Round", "White", "Black", "Result", "WhiteElo", "BlackElo", "ECO",
     "Opening",
@@ -204,9 +211,9 @@ pub struct Stored {
     pub fen: Option<String>,
     pub plies: usize,
     pub moves: Vec<u8>,
-    /// The game's full text when the columns cannot write it again: other headers, comments,
-    /// NAGs, variations or a set-up start.
-    pub text: Option<String>,
+    /// What the columns and moves do not hold (other headers, comments, NAGs, a set-up start):
+    /// none for a plain game, its notes (`notes`), or its full text when it has variations.
+    pub extra: Option<Vec<u8>>,
 }
 
 /// The value of a kept header, or None when it is empty or PGN's "unknown" (`?`).
@@ -280,7 +287,7 @@ pub fn store(game: &Game) -> Result<Stored, Unusable> {
     let fen = known(game, "FEN");
     let date = known(game, "Date");
     let (year, month) = date.as_deref().map_or((None, None), date_parts);
-    Ok(Stored {
+    let mut stored = Stored {
         event: known(game, "Event"),
         site: known(game, "Site"),
         year,
@@ -294,11 +301,32 @@ pub fn store(game: &Game) -> Result<Stored, Unusable> {
         outcome: Outcome::from_header(game.header("Result")),
         eco: known(game, "ECO"),
         opening: known(game, "Opening"),
-        text: (fen.is_some() || !is_plain(game)).then(|| pgn::make_pgn(game)),
+        extra: None,
         fen,
         plies: moves.len(),
         moves: code,
-    })
+    };
+    if stored.fen.is_some() || !is_plain(game) {
+        let sans = sans_of(&start, &moves);
+        stored.extra = Some(match notes::pack(game, &stored, &sans) {
+            Some(packed) => packed,
+            None => {
+                let mut text = vec![EXTRA_TEXT];
+                text.extend_from_slice(pgn::make_pgn(game).as_bytes());
+                text
+            }
+        });
+    }
+    Ok(stored)
+}
+
+/// The main line in standard SAN, as a stored game is written.
+fn sans_of(start: &VariantPosition, moves: &[Move]) -> Vec<String> {
+    let mut pos = start.clone();
+    moves
+        .iter()
+        .map(|m| rules::san_and_play(&mut pos, *m))
+        .collect()
 }
 
 /// A game's starting position: the FEN it was stored with, or the standard start.
@@ -309,51 +337,32 @@ pub fn start_of(fen: Option<&str>) -> Option<VariantPosition> {
     }
 }
 
-/// The PGN of a game stored without its text, written from its columns in the order PGN lists
-/// them. None when its moves are damaged.
-pub fn rebuild_pgn(stored: &Stored) -> Option<String> {
+/// A stored game's PGN: written from its columns and moves, with its notes when it has any, or
+/// its text as imported when it has variations. None when its moves or notes are damaged.
+pub fn pgn_of(stored: &Stored) -> Option<String> {
+    let extra = stored.extra.as_deref();
+    if let Some((&EXTRA_TEXT, text)) = extra.and_then(<[u8]>::split_first) {
+        return String::from_utf8(text.to_vec()).ok();
+    }
     let start = start_of(stored.fen.as_deref())?;
-    let moves = decode_line(&start, &stored.moves)?;
-    let mut game = Game::empty();
-    let text = |value: &Option<String>| value.clone().unwrap_or_else(|| "?".to_string());
-    game.put_header("Event", text(&stored.event));
-    game.put_header("Site", text(&stored.site));
-    game.put_header(
-        "Date",
-        stored
-            .date
-            .clone()
-            .unwrap_or_else(|| "????.??.??".to_string()),
-    );
-    game.put_header("Round", text(&stored.round));
-    let name = |name: &str| {
-        if name.is_empty() {
-            "?".to_string()
-        } else {
-            name.to_string()
+    let sans = sans_of(&start, &decode_line(&start, &stored.moves)?);
+    let game = match extra {
+        Some(notes) if notes.first() == Some(&EXTRA_NOTES) => notes::unpack(notes, stored, &sans)?,
+        Some(_) => return None,
+        None => {
+            let mut game = Game::empty();
+            for name in KEPT_HEADERS {
+                if let Some(value) = notes::column(stored, name) {
+                    game.put_header(name, value);
+                }
+            }
+            let mut parent = 0;
+            for san in &sans {
+                parent = game.add_move(parent, pgn::PgnNode::with(san, None, None, None));
+            }
+            game
         }
     };
-    game.put_header("White", name(&stored.white));
-    game.put_header("Black", name(&stored.black));
-    game.put_header("Result", stored.outcome.header().to_string());
-    if let Some(elo) = stored.white_elo {
-        game.put_header("WhiteElo", elo.to_string());
-    }
-    if let Some(elo) = stored.black_elo {
-        game.put_header("BlackElo", elo.to_string());
-    }
-    if let Some(eco) = &stored.eco {
-        game.put_header("ECO", eco.clone());
-    }
-    if let Some(opening) = &stored.opening {
-        game.put_header("Opening", opening.clone());
-    }
-    let mut pos = start;
-    let mut parent = 0;
-    for m in moves {
-        let san = rules::san_and_play(&mut pos, m);
-        parent = game.add_move(parent, pgn::PgnNode::with(&san, None, None, None));
-    }
     Some(pgn::make_pgn(&game))
 }
 
@@ -448,24 +457,129 @@ mod tests {
             [WhiteElo \"2830\"]\n[BlackElo \"2725\"]\n[ECO \"C65\"]\n\n\
             1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 4. O-O 1-0\n";
         let stored = store(&game(text)).unwrap();
-        assert_eq!(stored.text, None);
+        assert_eq!(stored.extra, None);
         assert_eq!((stored.year, stored.month), (Some(2024), Some(1)));
         assert_eq!(stored.white_elo, Some(2830));
         assert_eq!(stored.outcome, Outcome::White);
         assert_eq!(stored.plies, 7);
-        assert_eq!(rebuild_pgn(&stored).unwrap(), pgn::make_pgn(&game(text)));
+        assert_eq!(pgn_of(&stored).unwrap(), pgn::make_pgn(&game(text)));
     }
 
     #[test]
-    fn an_annotated_game_keeps_its_text() {
+    fn a_game_with_variations_keeps_its_text() {
         let text = "[White \"A\"]\n[Black \"B\"]\n[Result \"*\"]\n[Annotator \"Me\"]\n\n\
             1. e4 { best by test } e5 (1... c5 2. Nf3) 2. Nf3 $1 *\n";
         let stored = store(&game(text)).unwrap();
-        assert_eq!(
-            stored.text.as_deref(),
-            Some(pgn::make_pgn(&game(text)).as_str())
-        );
+        let extra = stored.extra.as_deref().unwrap();
+        assert_eq!(extra.first(), Some(&EXTRA_TEXT));
+        assert_eq!(pgn_of(&stored).unwrap(), pgn::make_pgn(&game(text)));
         assert_eq!(stored.plies, 3);
+    }
+
+    const BROADCAST: &str = "[Event \"South Island Chess Championships 2026\"]\n\
+        [Site \"https://lichess.org/broadcast/2026-nz-south-island-championship/round-4/6W8sy3kg/gET308sb\"]\n\
+        [Date \"2026.09.29\"]\n[Round \"04\"]\n[White \"Wang, Justin Zhide\"]\n\
+        [Black \"Mohammadi, Arvin\"]\n[Result \"1/2-1/2\"]\n[WhiteElo \"2103\"]\n\
+        [WhiteTitle \"CM\"]\n[WhiteFideId \"4312830\"]\n[BlackElo \"1996\"]\n\
+        [BlackFideId \"12528617\"]\n[TimeControl \"90+30\"]\n[Board \"1\"]\n\
+        [Variant \"Standard\"]\n[ECO \"B23\"]\n[Opening \"Sicilian Defense: Closed\"]\n\
+        [UTCDate \"2026.09.29\"]\n[UTCTime \"00:34:40\"]\n\
+        [BroadcastName \"2026 NZ South Island Championship\"]\n\
+        [BroadcastURL \"https://lichess.org/broadcast/2026-nz-south-island-championship/round-4/6W8sy3kg\"]\n\
+        [GameURL \"https://lichess.org/broadcast/2026-nz-south-island-championship/round-4/6W8sy3kg/gET308sb\"]\n\n\
+        1. e4 { [%eval 0.18] [%clk 1:30:58] } 1... c5 { [%eval 0.32] [%clk 1:30:35] } \
+        2. Nc3 { [%eval 0.19] [%clk 1:31:18] } 2... a6 { [%eval 0.32] [%clk 1:30:33] } \
+        3. g3 { [%eval -0.18] [%clk 0:00:05.3] } 3... b5 { [%eval #-3] [%clk 1:30:57] } \
+        4. Bg2 { [%eval 0.27] } { Inaccuracy. Qe5 was best. } { [%clk 1:32:08] } \
+        4... Bb7?! $13 { [%eval -0.0] [%clk 1:31:21] } 5. Nge2 { [%clk 1:32:35] [%eval 0.25] } \
+        { A comment of its own } 5... e6 { [%clk 1:30:30] } 1/2-1/2\n";
+
+    #[test]
+    fn a_broadcast_game_is_kept_in_its_notes_exactly() {
+        let original = game(BROADCAST);
+        let stored = store(&original).unwrap();
+        let extra = stored.extra.as_deref().unwrap();
+        assert_eq!(extra.first(), Some(&EXTRA_NOTES));
+        let text = pgn::make_pgn(&original);
+        assert_eq!(pgn_of(&stored).unwrap(), text);
+        // The headers' text and the URLs they share, and four bytes or so a move.
+        assert!(extra.len() * 4 < text.len(), "{} of {}", extra.len(), text.len());
+    }
+
+    #[test]
+    fn a_set_up_game_with_comments_is_kept_in_its_notes() {
+        let text = "[SetUp \"1\"]\n[FEN \"4k3/8/8/8/8/8/4P3/4K3 b - - 0 7\"]\n\n\
+            { Black to move } 7... Kd7 { [%clk 0:01:00] } 8. e4 $1 *\n";
+        let stored = store(&game(text)).unwrap();
+        assert_eq!(stored.extra.as_deref().unwrap().first(), Some(&EXTRA_NOTES));
+        assert_eq!(pgn_of(&stored).unwrap(), pgn::make_pgn(&game(text)));
+    }
+
+    #[test]
+    fn a_damaged_note_is_refused_not_misread() {
+        let mut stored = store(&game(BROADCAST)).unwrap();
+        let extra = stored.extra.as_mut().unwrap();
+        extra.truncate(extra.len() / 2);
+        assert_eq!(pgn_of(&stored), None);
+        stored.extra = Some(vec![EXTRA_NOTES, 200, 200, 200]);
+        assert_eq!(pgn_of(&stored), None);
+        stored.extra = Some(vec![9]);
+        assert_eq!(pgn_of(&stored), None);
+    }
+
+    /// Random games with random evals, clocks, comments and NAGs read back as they were written.
+    #[test]
+    fn random_annotated_games_read_back_exactly() {
+        random::check(300, |rng| {
+            let mut pos = rules::default_position(Variant::Chess);
+            let mut text = String::from("[White \"A\"]\n[Black \"B\"]\n[Result \"*\"]\n");
+            if rng.below(2) == 0 {
+                text.push_str("[GameURL \"https://example.org/game/abcdef\"]\n");
+                text.push_str("[Site \"https://example.org/game/abcdef/x\"]\n");
+            }
+            text.push('\n');
+            if rng.below(4) == 0 {
+                text.push_str("{ before } ");
+            }
+            for ply in 0..rng.below(80) {
+                let legal = pos.legal_moves();
+                let Some(m) = rng.pick(&legal).copied() else {
+                    break;
+                };
+                if ply % 2 == 0 {
+                    text.push_str(&format!("{}. ", ply / 2 + 1));
+                }
+                text.push_str(&rules::san_and_play(&mut pos, m));
+                if rng.below(6) == 0 {
+                    text.push_str(&format!(" ${}", rng.below(140)));
+                }
+                let eval = match rng.below(5) {
+                    0 => format!("#{}", rng.below(20) as i64 - 10),
+                    1 => format!("{}", rng.below(30) as i64 - 15),
+                    _ => format!("{}.{:02}", rng.below(9) as i64 - 4, rng.below(100)),
+                };
+                let clock = format!(
+                    "{}:{:02}:{:02}{}",
+                    rng.below(3),
+                    rng.below(60),
+                    rng.below(60),
+                    if rng.below(4) == 0 { ".7" } else { "" }
+                );
+                match rng.below(7) {
+                    0 => text.push_str(&format!(" {{ [%eval {eval}] [%clk {clock}] }}")),
+                    1 => text.push_str(&format!(" {{ [%clk {clock}] }}")),
+                    2 => text.push_str(&format!(" {{ [%eval {eval}] }}")),
+                    3 => text.push_str(&format!(" {{ [%clk {clock}] [%eval {eval}] }}")),
+                    4 => text.push_str(&format!(" {{ [%eval {eval}] }} {{ Note {ply} }}")),
+                    _ => {}
+                }
+                text.push(' ');
+            }
+            text.push_str("*\n");
+            let original = game(&text);
+            let stored = store(&original).unwrap();
+            assert_eq!(pgn_of(&stored).unwrap(), pgn::make_pgn(&original), "{text}");
+        });
     }
 
     #[test]
