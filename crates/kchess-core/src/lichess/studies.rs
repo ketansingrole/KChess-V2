@@ -136,6 +136,11 @@ pub fn split_pgn(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// The study's name as a downloaded chapter names it, when it does (`StudyName`).
+pub fn study_name(pgn: &str) -> Option<String> {
+    tag_value(pgn, "StudyName")
+}
+
 /// The name a downloaded chapter, the `index`th of its study, is kept under.
 pub fn chapter_name(pgn: &str, index: usize) -> String {
     let name = tag_value(pgn, "ChapterName")

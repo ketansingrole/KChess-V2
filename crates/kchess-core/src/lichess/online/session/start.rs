@@ -389,7 +389,16 @@ impl OnlineSession {
         // The game has the challenge's id. Open it now rather than wait for the event stream,
         // which may belong to another connected account.
         if live {
-            self.attach(&challenge.account, &challenge.id).await
+            let attached = self.attach(&challenge.account, &challenge.id).await;
+            // Accepted, but another game held the board by then: this one is played elsewhere.
+            if attached.is_err() && {
+                let st = self.st();
+                st.realtime_live() && !st.is_live(&challenge.id)
+            } {
+                self.started_elsewhere(&challenge.id, false);
+                self.ongoing_changed();
+            }
+            attached
         } else {
             self.ongoing_changed();
             Ok(())

@@ -213,6 +213,9 @@ fn incoming(overrides: Value) -> ChallengeInfo {
     if let Some(id) = overrides.get("id").and_then(Value::as_str) {
         info.id = id.into();
     }
+    if let Some(account) = overrides.get("account").and_then(Value::as_str) {
+        info.account = account.into();
+    }
     if overrides.get("correspondence").is_some() {
         info.time_control = TimeControl::Correspondence {
             days: Number::from(3),
@@ -1483,6 +1486,63 @@ async fn recovery_goes_on_past_an_account_whose_check_failed() {
     online.close();
 }
 
+/// Two accounts each in a game: recovery puts the first's on the board without checking the
+/// second, so when the board's game ends help stays locked until every account is checked; it
+/// was lent at once, during the second account's game.
+#[tokio::test]
+async fn recovery_that_stops_at_a_game_keeps_help_locked_for_the_unchecked_accounts() {
+    use kchess_contracts::types::Assistance;
+    let streams: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
+        Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&streams);
+    let bob_playing = Arc::new(AtomicBool::new(true));
+    let bob = Arc::clone(&bob_playing);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/stream/event" => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            *slot.lock().unwrap() = Some(tx);
+            Reply::Stream(rx)
+        }
+        "/api/account/playing" if seen.header("Authorization") == Some("Bearer Alice-token") => {
+            Reply::Json(
+                200,
+                json!({ "nowPlaying": [{ "gameId": "Alice123", "speed": "rapid" }] }).to_string(),
+            )
+        }
+        "/api/account/playing" => {
+            let games = if bob.load(Ordering::SeqCst) {
+                json!([{ "gameId": "Bob12345", "speed": "rapid" }])
+            } else {
+                json!([])
+            };
+            Reply::Json(200, json!({ "nowPlaying": games }).to_string())
+        }
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true), ("Bob", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let resumed = online.resume().await.unwrap();
+    assert_eq!(resumed.map(|found| found.id), Some("Alice123".to_string()));
+    assert_eq!(
+        fixture.to("/api/account/playing").len(),
+        1,
+        "Bob is unchecked"
+    );
+    fixture.requested("/api/stream/event", 1).await;
+    let sender = streams.lock().unwrap().clone().unwrap();
+    let finish = json!({ "type": "gameFinish", "game": { "gameId": "Alice123" } });
+    sender.send(format!("{finish}\n")).unwrap();
+    until("the board's game ends", || !online.playing()).await;
+    assert_ne!(online.assistance(), Assistance::Allowed);
+    online.ongoing().await.expect("every account");
+    assert_eq!(online.assistance(), Assistance::LiveGame, "Bob's game");
+    bob_playing.store(false, Ordering::SeqCst);
+    online.ongoing().await.expect("every account");
+    assert_eq!(online.assistance(), Assistance::Allowed);
+    online.close();
+}
+
 /// 2026-11-20: a failed check for a game in progress left help locked while every frontend took
 /// it as lent. Each change of the lock is now reported, once, so they follow it: locked while
 /// the check runs, still locked when it fails, lent once a check finds no game.
@@ -2330,6 +2390,66 @@ async fn accepts_a_challenge_as_its_account_and_opens_the_game_at_once() {
     assert_eq!(fixture.to("/api/challenge/Chal1234/accept").len(), 1);
     assert!(online.playing());
     online.cancel();
+    online.close();
+}
+
+/// Bob accepts a challenge while Alice's game starts: when the acceptance answers, Alice's game
+/// stays on the board, and Bob's, accepted, locks help as a game played elsewhere. Bob's
+/// acceptance took the board from Alice's game, with her clock running.
+#[tokio::test]
+async fn a_challenge_accepted_as_another_game_took_the_board_leaves_it_there() {
+    use kchess_contracts::types::Assistance;
+    let (gate, gated) = tokio::sync::watch::channel(false);
+    let streams: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
+        Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&streams);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/challenge/Chal1234/accept" => Reply::Gated(
+            gated.clone(),
+            Box::new(Reply::Json(200, json!({ "ok": true }).to_string())),
+        ),
+        "/api/stream/event" if seen.header("Authorization") == Some("Bearer Alice-token") => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            *slot.lock().unwrap() = Some(tx);
+            Reply::Stream(rx)
+        }
+        "/api/account/playing" if seen.header("Authorization") == Some("Bearer Alice-token") => {
+            Reply::Json(
+                200,
+                json!({ "nowPlaying": [{ "gameId": "Alice123", "speed": "rapid" }] }).to_string(),
+            )
+        }
+        "/api/account/playing" => Reply::Json(200, json!({ "nowPlaying": [] }).to_string()),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true), ("Bob", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let accepting = tokio::spawn({
+        let online = online.clone();
+        async move {
+            online
+                .accept_challenge(&incoming(json!({ "account": "Bob" })))
+                .await
+        }
+    });
+    fixture.requested("/api/challenge/Chal1234/accept", 1).await;
+    let resumed = online.resume().await.unwrap();
+    assert_eq!(resumed.map(|found| found.id), Some("Alice123".to_string()));
+    gate.send(true).unwrap();
+    let accepted = accepting.await.unwrap();
+    assert!(accepted.is_err(), "the board was taken");
+    assert_eq!(
+        fixture.to("/api/board/game/stream/Chal1234").len(),
+        0,
+        "Bob's game is not opened over Alice's"
+    );
+    fixture.requested("/api/stream/event", 1).await;
+    let sender = streams.lock().unwrap().clone().unwrap();
+    let finish = json!({ "type": "gameFinish", "game": { "gameId": "Alice123" } });
+    sender.send(format!("{finish}\n")).unwrap();
+    until("Alice's game ends", || !online.playing()).await;
+    assert_eq!(online.assistance(), Assistance::LiveGame, "Bob's game");
     online.close();
 }
 

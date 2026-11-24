@@ -335,7 +335,7 @@ fn show_saves(
                         );
                         // The edits stay, unsaved: what another window stored shows beside them.
                         this.dirty = true;
-                        reload(&cx.entity(), cx);
+                        this.reload(cx);
                     }
                 }
                 cx.emit(SettingsChanged);
@@ -619,6 +619,36 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         panic!("timed out waiting for the settings to be read again");
+    }
+
+    /// A save the core refused reads the settings again from inside the settings' own update,
+    /// which updated them again there and panicked (a full disk).
+    #[gpui_kit::test]
+    fn a_refused_save_reads_the_settings_again(cx: &mut gpui_kit::TestAppContext) {
+        cx.executor().allow_parking();
+        let _core = cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::tests::start_core(cx)
+        });
+        let (sent, results) = mpsc::unbounded();
+        let entity = cx.update(|cx| {
+            let entity = super::init_for_tests(cx);
+            super::show_saves(entity.downgrade(), results, cx);
+            entity
+        });
+        sent.unbounded_send((
+            defaults(),
+            Err(kchess_contracts::CoreError::new("The disk is full")),
+        ))
+        .expect("the answer");
+        for _ in 0..300 {
+            cx.run_until_parked();
+            if cx.update(|cx| entity.read(cx).failed) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timed out waiting for the refused save");
     }
 
     fn settings(writes: Writer<Save>) -> AppSettings {

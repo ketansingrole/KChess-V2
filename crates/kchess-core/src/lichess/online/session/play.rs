@@ -210,7 +210,7 @@ impl OnlineSession {
         let st = self.st();
         if st.live.is_some() || !st.protected_game.is_empty() || !st.elsewhere.is_empty() {
             Assistance::LiveGame
-        } else if st.recovery_unverified {
+        } else if st.recovery_unverified || st.accounts_unchecked {
             Assistance::Unverified
         } else {
             Assistance::Allowed
@@ -492,6 +492,7 @@ impl OnlineSession {
             st.protected_account.clear();
             st.current_account.clear();
             st.recovery_unverified = false;
+            st.accounts_unchecked = false;
             st.epoch
         };
         self.emit_state(session, "", "", Lane::Game, OnlinePhase::Idle, None);

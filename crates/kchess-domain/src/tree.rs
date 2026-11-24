@@ -490,8 +490,14 @@ impl TreeNode {
         };
         let nodes = self.nodes_along(path);
         let mut line = Vec::new();
-        for node in nodes.iter().skip(1).rev() {
-            line = vec![alone(node, line)];
+        for (depth, node) in nodes.iter().enumerate().skip(1).rev() {
+            let mut next = vec![alone(node, line)];
+            // Each move now continues the line: a note that opened its variation, written before
+            // it, would be read back as the previous move's. The first has no move before it.
+            if depth > 1 {
+                continues_line(&mut next);
+            }
+            line = next;
         }
         let mut root = alone(self, line);
         root.headers = self
@@ -808,6 +814,23 @@ mod tests {
         );
         let saved = tree_to_pgn(&tree, None).unwrap();
         assert_eq!(TreeNode::from_pgn(&saved).unwrap(), tree, "{saved}");
+    }
+
+    /// A copied line keeps a variation's opening note on its move: written before the move as the
+    /// line's own, it was read back as the previous move's.
+    #[test]
+    fn a_copied_lines_note_stays_on_its_move() {
+        let tree = TreeNode::from_pgn("1. e4 e5 ( {Sicilian idea} 1... c5 ) *").unwrap();
+        let c5 = &tree.children[0].children[1];
+        let path = format!("{} {}", tree.children[0].uci, c5.uci);
+        let copied = tree_to_pgn(&tree.line_to(&path), None).unwrap();
+        let reopened = TreeNode::from_pgn(&copied).unwrap();
+        assert_eq!(reopened.children[0].comments, None, "{copied}");
+        assert_eq!(
+            reopened.children[0].children[0].comments.as_deref(),
+            Some(&["Sicilian idea".to_string()][..]),
+            "{copied}"
+        );
     }
 
     /// The analysis board's edits through paths: adding, following, finding, promoting and

@@ -156,6 +156,13 @@ impl OnlineSession {
         if self.st().is_live(id) {
             return Ok(());
         }
+        // A real-time game took the board meanwhile (another account's started as a challenge
+        // was being accepted): it stays, with its clock running.
+        if self.st().realtime_live() {
+            return Err(CoreError::new(
+                "Finish the game on the board before opening another.",
+            ));
+        }
         self.cancel_inner();
         let handle = {
             let mut st = self.st();
@@ -271,8 +278,10 @@ impl OnlineSession {
             accounts.insert(0, protected_account.clone());
         }
         let mut first_error: Option<CoreError> = None;
-        for account in accounts {
+        let total = accounts.len();
+        for (index, account) in accounts.into_iter().enumerate() {
             checking.account = account.clone();
+            checking.others_unchecked = index + 1 < total || first_error.is_some();
             match self
                 .resume_account(attempt, &account, &protected_account, checking)
                 .await
@@ -292,7 +301,11 @@ impl OnlineSession {
         if let Some(error) = first_error {
             return Err(error);
         }
-        self.st().recovery_unverified = false;
+        {
+            let mut st = self.st();
+            st.recovery_unverified = false;
+            st.accounts_unchecked = false;
+        }
         self.cancel_inner();
         let (session, account) = {
             let mut st = self.st();
@@ -386,7 +399,11 @@ impl OnlineSession {
                 let found = checking.elsewhere.clone();
                 self.st().found_elsewhere(found, checking.began, false);
             }
-            self.st().recovery_unverified = false;
+            {
+                let mut st = self.st();
+                st.recovery_unverified = false;
+                st.accounts_unchecked = checking.others_unchecked;
+            }
             self.cancel_inner();
             {
                 let mut st = self.st();
@@ -508,6 +525,9 @@ impl OnlineSession {
             // The board's own game ends with the board; another account's beside it does not.
             elsewhere.retain(|id| !st.concerns(id));
             st.found_elsewhere(elsewhere, began, complete);
+            if complete {
+                st.accounts_unchecked = false;
+            }
         }
         self.refresh_assistance();
         if let Some(error) = first_error.filter(|_| games.is_empty()) {

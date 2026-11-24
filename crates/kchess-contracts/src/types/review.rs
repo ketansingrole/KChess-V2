@@ -66,6 +66,10 @@ pub struct ReviewStatus {
     /// The last review asked for that could not be done, and why.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<ReviewFailure>,
+    /// The key of the last review stopped before it was done, by whichever client stopped it:
+    /// another waiting for the same review learns it will not come.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancelled: Option<String>,
 }
 
 /// The payload of `review:update`: the review as stored, and its summary.

@@ -47,6 +47,10 @@ impl Line {
 
 /// Why the review keyed `key` failed, when `status` reports that.
 fn failure(status: ReviewStatus, key: &str) -> Option<String> {
+    // Stopped by another client sharing the core (Analysis): nothing more will come for it.
+    if status.cancelled.as_deref() == Some(key) {
+        return Some("The review was cancelled.".into());
+    }
     status
         .failed
         .filter(|failed| failed.key == key)
@@ -247,6 +251,20 @@ mod tests {
         assert_eq!(
             failure(status("k1"), "k1"),
             Some("The review failed: No engine.".into())
+        );
+        assert_eq!(failure(status("k2"), "k1"), None);
+    }
+
+    /// Another window cancelled the review this command waits for: it ends, rather than wait for
+    /// the review for ever.
+    #[test]
+    fn a_review_cancelled_elsewhere_ends_the_wait() {
+        let status = |key: &str| -> ReviewStatus {
+            serde_json::from_value(json!({ "waiting": 0, "cancelled": key })).expect("a status")
+        };
+        assert_eq!(
+            failure(status("k1"), "k1"),
+            Some("The review was cancelled.".into())
         );
         assert_eq!(failure(status("k2"), "k1"), None);
     }

@@ -248,6 +248,21 @@ impl Stream {
     }
 }
 
+/// A request's status and whole body, within `ANSWER_TIMEOUT`.
+async fn answered_in_time(
+    sent: impl std::future::Future<Output = reqwest::Result<reqwest::Response>>,
+) -> std::result::Result<(u16, String), Refusal> {
+    let read = async {
+        let response = sent.await?;
+        let status = response.status().as_u16();
+        Ok::<_, reqwest::Error>((status, response.text().await?))
+    };
+    tokio::time::timeout(ANSWER_TIMEOUT, read)
+        .await
+        .map_err(|_| Refusal::new(Problem::Unavailable, "timeout"))?
+        .map_err(|cause| Refusal::new(Problem::Unavailable, cause.without_url().to_string()))
+}
+
 /// The HTTP side of ChatGPT plan usage.
 pub struct Ai {
     client: reqwest::Client,
@@ -260,6 +275,9 @@ pub struct Ai {
     /// Refresh tokens rotate: two refreshes at once would burn the sign-in. It counts the
     /// disconnects, so a sign-in started before one does not connect again after it.
     pub refreshing: std::sync::Arc<AsyncMutex<u64>>,
+    /// The renewals in progress, each with its save: the core's close waits for them before it
+    /// closes the keychain and the database (`Core::shutdown`).
+    pub renewals: tokio_util::task::TaskTracker,
 }
 
 impl Ai {
@@ -275,6 +293,7 @@ impl Ai {
             api: origin.unwrap_or_else(|| API.to_string()),
             lifetime,
             refreshing: std::sync::Arc::new(AsyncMutex::new(0)),
+            renewals: tokio_util::task::TaskTracker::new(),
         })
     }
 
@@ -324,26 +343,30 @@ impl Ai {
         &self,
         sent: impl std::future::Future<Output = reqwest::Result<reqwest::Response>>,
     ) -> std::result::Result<(u16, String), Refusal> {
-        let read = async {
-            let response = sent.await?;
-            let status = response.status().as_u16();
-            Ok::<_, reqwest::Error>((status, response.text().await?))
-        };
         tokio::select! {
-            answer = tokio::time::timeout(ANSWER_TIMEOUT, read) => answer
-                .map_err(|_| Refusal::new(Problem::Unavailable, "timeout"))?
-                .map_err(|cause| Refusal::new(Problem::Unavailable, cause.without_url().to_string())),
+            answer = answered_in_time(sent) => answer,
             () = self.lifetime.cancelled() => Err(Refusal::new(Problem::Unavailable, "closing")),
         }
     }
 
-    async fn token(&self, form: &[(&str, &str)]) -> std::result::Result<TokenResponse, Refusal> {
+    /// A token request. A renewal (`outlives_close`) reads its answer within `ANSWER_TIMEOUT`
+    /// even as the core closes: OpenAI rotates the refresh token as it answers, so an answer
+    /// left unread leaves the profile a refresh token that no longer works.
+    async fn token(
+        &self,
+        form: &[(&str, &str)],
+        outlives_close: bool,
+    ) -> std::result::Result<TokenResponse, Refusal> {
         let sent = self
             .client
             .post(format!("{}/api/accounts/oauth/token", self.auth))
             .form(form)
             .send();
-        let (status, body) = self.answered(sent).await?;
+        let (status, body) = if outlives_close {
+            answered_in_time(sent).await?
+        } else {
+            self.answered(sent).await?
+        };
         if status != 200 {
             let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
             let code = parsed["error"]
@@ -372,14 +395,17 @@ impl Ai {
         now_ms: f64,
     ) -> Result<SignedIn> {
         let response = self
-            .token(&[
-                ("grant_type", "authorization_code"),
-                ("code", code),
-                ("code_verifier", verifier),
-                ("redirect_uri", redirect),
-                ("client_id", client_id),
-                ("resource", RESOURCE),
-            ])
+            .token(
+                &[
+                    ("grant_type", "authorization_code"),
+                    ("code", code),
+                    ("code_verifier", verifier),
+                    ("redirect_uri", redirect),
+                    ("client_id", client_id),
+                    ("resource", RESOURCE),
+                ],
+                false,
+            )
             .await
             .map_err(|_| CoreError::new("ChatGPT sign-in failed. Try again."))?;
         let scopes = response.scope.as_deref().unwrap_or_default();
@@ -413,12 +439,15 @@ impl Ai {
         now_ms: f64,
     ) -> std::result::Result<Tokens, Refusal> {
         let response = self
-            .token(&[
-                ("grant_type", "refresh_token"),
-                ("refresh_token", tokens.refresh.as_str()),
-                ("client_id", client_id),
-                ("resource", RESOURCE),
-            ])
+            .token(
+                &[
+                    ("grant_type", "refresh_token"),
+                    ("refresh_token", tokens.refresh.as_str()),
+                    ("client_id", client_id),
+                    ("resource", RESOURCE),
+                ],
+                true,
+            )
             .await?;
         Ok(Tokens {
             expires_at: now_ms + response.expires_in.unwrap_or(3600.0) * 1000.0,
@@ -698,6 +727,24 @@ mod tests {
             .await
             .expect("the call ends when the core closes");
         assert!(answer.is_err());
+    }
+
+    /// A renewal sent as the core closes reads its answer: OpenAI had already used up the old
+    /// refresh token, so the close left the profile one that no longer works.
+    #[tokio::test]
+    async fn a_renewal_reads_its_answer_as_the_core_closes() {
+        let body = r#"{"access_token":"a2","refresh_token":"r2","expires_in":3600}"#;
+        let (origin, _served) = serve(vec![http("200 OK", body)]).await;
+        let lifetime = CancellationToken::new();
+        let ai = Ai::new(Some(origin), lifetime.clone()).unwrap();
+        lifetime.cancel();
+        let tokens = Tokens {
+            access: "a1".into(),
+            refresh: "r1".into(),
+            expires_at: 0.0,
+        };
+        let renewed = ai.refresh(&tokens, "client", 0.0).await.expect("renewed");
+        assert_eq!(renewed.refresh, "r2");
     }
 
     #[tokio::test]

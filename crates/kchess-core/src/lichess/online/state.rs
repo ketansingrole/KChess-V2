@@ -64,6 +64,10 @@ pub(crate) struct State {
     /// they ended never brings them back.
     pub(crate) finished: std::collections::VecDeque<String>,
     pub(crate) recovery_unverified: bool,
+    /// A recovery put a game on the board before every account was checked: another may be in a
+    /// game of its own, so help stays locked once the board's ends, until a check of every
+    /// account answers (`ongoing`, or a recovery that finds no game).
+    pub(crate) accounts_unchecked: bool,
     pub(crate) current_account: String,
     /// The challenge sent and not yet answered, cancelled with the session.
     pub(crate) pending_challenge: Option<String>,
@@ -231,6 +235,7 @@ impl State {
             elsewhere_changes: 0,
             finished: std::collections::VecDeque::new(),
             recovery_unverified: true,
+            accounts_unchecked: false,
             current_account: String::new(),
             pending_challenge: None,
             epoch: 0,

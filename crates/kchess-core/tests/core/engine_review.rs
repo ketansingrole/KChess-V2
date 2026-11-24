@@ -574,6 +574,11 @@ async fn cancelling_keeps_the_finished_quick_pass_and_is_not_complete() {
         (rig.host.last_status()?.current.is_none()).then_some(())
     })
     .await;
+    // Named as cancelled: a command line waiting for it (`kchess-cli review`) waited for ever.
+    assert_eq!(
+        rig.host.last_status().and_then(|status| status.cancelled),
+        Some(key.clone())
+    );
     let stored = rig.store.review(&key).expect("the partial review is kept");
     assert!(!stored.complete, "an interrupted review is never complete");
     assert!(stored.evals.iter().all(Option::is_some));
