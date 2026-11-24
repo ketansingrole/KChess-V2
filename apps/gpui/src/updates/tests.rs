@@ -44,6 +44,24 @@ fn processes() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Clean up the kept downloads until `kept` is gone once its holder has let it go: as with
+/// `wait_unlocked`, a process another test forks meanwhile holds a copy of its lock until its own
+/// exec closes it, so one cleanup straight after the drop can still find it held (Linux CI).
+fn wait_pruned(root: &Path, kept: &Path) {
+    let started = std::time::Instant::now();
+    loop {
+        super::prune_kept(root, |_| true);
+        if !kept.exists() {
+            return;
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "the kept download stays after its holder let it go"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 /// Wait until the installation's lock is free once its holder has let it go. A process another
 /// test forks meanwhile (the end-to-end tests' engines, which do not hold `PROCESSES`) holds a
 /// copy of the lock until its own exec closes it, so the lock is given a moment.
@@ -1172,8 +1190,7 @@ fn a_patch_is_held_while_it_is_rebuilt() {
         Some(package),
         "the patch is still there to rebuild from"
     );
-    super::prune_kept(&root, |_| true);
-    assert!(!kept.exists(), "let go after the rebuild");
+    wait_pruned(&root, &kept);
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -1190,8 +1207,7 @@ fn a_finished_download_is_held_until_it_is_let_go() {
     super::prune_kept(&root, |_| true);
     assert!(downloaded.path.exists(), "held by this app");
     drop(downloaded);
-    super::prune_kept(&root, |_| true);
-    assert!(!kept.exists(), "let go");
+    wait_pruned(&root, &kept);
     let _ = std::fs::remove_dir_all(&root);
 }
 
