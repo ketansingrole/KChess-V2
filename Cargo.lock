@@ -4575,6 +4575,7 @@ dependencies = [
  "log",
  "memchr",
  "mio",
+ "nix",
  "num-complex",
  "num-rational",
  "num-traits",
