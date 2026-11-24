@@ -5,6 +5,7 @@
 //! through its own read-only lane, so they go on while an import writes. One import runs at a
 //! time; its progress reaches every window as `gamedb:progress`.
 
+pub mod explore;
 pub mod import;
 pub mod schema;
 pub mod search;
@@ -24,7 +25,7 @@ use kchess_contracts::CoreEvent;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
     DatabaseInfo, DatabaseSource, GameDbImported, GameDbPage, GameDbPhase as Phase, GameDbProgress,
-    GameDbQuery, GameDbStatus,
+    GameDbQuery, GameDbStatus, LookupOptions, PositionLookup,
 };
 use kchess_domain::gamedb;
 
@@ -500,6 +501,27 @@ impl GameDbService {
             Err(error) => Err(error),
         };
         self.inner.logged("tree", result)
+    }
+
+    /// The position `fen` looked up in the database `options` names, as the explorer shows it.
+    pub async fn lookup(&self, fen: String, options: LookupOptions) -> Result<PositionLookup> {
+        let Some(id) = options.database.clone() else {
+            return Err(CoreError::new("Choose a game database."));
+        };
+        let result = match self.inner.reader(&id) {
+            Ok(lane) => {
+                lane.run(move |db| explore::lookup(db, &id, &fen, &options, crate::time::now_ms()))
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        let saved = self.inner.logged("lookup", result)?;
+        Ok(PositionLookup {
+            saved,
+            cached: false,
+            stale: false,
+            message: None,
+        })
     }
 
     /// Stops the import and releases every file.

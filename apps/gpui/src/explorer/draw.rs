@@ -95,22 +95,54 @@ impl PositionExplorer {
         v_flex()
             .gap(px(8.))
             .text_size(px(12.))
-            .when(prefs.kind != PositionLookupKind::Masters, |filters| {
-                filters.child(h_flex().flex_wrap().gap(px(4.)).children(
-                    ExplorerSpeed::ALL.iter().map(|&speed| {
-                        toggle(
-                            SharedString::from(format!("speed-{}", speed.as_str())),
-                            speed_label(speed).into(),
-                            prefs.speeds.contains(&speed),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.update_prefs(cx, |prefs| {
-                                prefs.speeds = toggled(&prefs.speeds, &speed)
-                            });
-                            this.filters_changed(cx);
-                        }))
-                    }),
-                ))
+            .when(
+                !matches!(
+                    prefs.kind,
+                    PositionLookupKind::Masters | PositionLookupKind::Database
+                ),
+                |filters| {
+                    filters.child(h_flex().flex_wrap().gap(px(4.)).children(
+                        ExplorerSpeed::ALL.iter().map(|&speed| {
+                            toggle(
+                                SharedString::from(format!("speed-{}", speed.as_str())),
+                                speed_label(speed).into(),
+                                prefs.speeds.contains(&speed),
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.update_prefs(cx, |prefs| {
+                                        prefs.speeds = toggled(&prefs.speeds, &speed)
+                                    });
+                                    this.filters_changed(cx);
+                                },
+                            ))
+                        }),
+                    ))
+                },
+            )
+            .when(prefs.kind == PositionLookupKind::Database, |filters| {
+                filters.child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap(px(4.))
+                        .children(MIN_ELOS.map(|elo| {
+                            let label = match elo {
+                                0 => "Any rating".to_string(),
+                                elo => format!("{elo}+"),
+                            };
+                            toggle(
+                                SharedString::from(format!("min-elo-{elo}")),
+                                label,
+                                prefs.min_elo == elo,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.update_prefs(cx, |prefs| prefs.min_elo = elo);
+                                    this.filters_changed(cx);
+                                },
+                            ))
+                        })),
+                )
             })
             .when(prefs.kind == PositionLookupKind::Opening, |filters| {
                 filters.child(
@@ -207,6 +239,77 @@ impl PositionExplorer {
                 true,
                 palette,
             ))
+    }
+
+    /// A game database: which one, whose games and with which side; or an import when there
+    /// is none yet, or one runs.
+    fn render_database(&self, prefs: &Prefs, cx: &mut Context<Self>, palette: &Palette) -> Div {
+        let handle = cx.global::<GameDbHandle>().0.clone();
+        let (count, importing) = {
+            let db = handle.read(cx);
+            (db.databases().len(), db.busy())
+        };
+        let sides = [None, Some(Color::White), Some(Color::Black)];
+        let chosen = sides
+            .iter()
+            .position(|side| *side == prefs.db_color)
+            .unwrap_or_default();
+        let pill = |label: &'static str| Pill {
+            icon: None,
+            label: label.into(),
+            badge: None,
+            disabled: false,
+        };
+        v_flex()
+            .gap(px(8.))
+            .when(count > 0, |column| {
+                column.child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap(px(8.))
+                        .when(count > 1, |row| {
+                            row.child(
+                                div().w(px(160.)).child(
+                                    Select::new(&self.databases)
+                                        .small()
+                                        .accessibility_label("Game database"),
+                                ),
+                            )
+                        })
+                        .child(
+                            div().w(px(144.)).child(
+                                Input::new(&self.db_player)
+                                    .xsmall()
+                                    .aria_label("Player name"),
+                            ),
+                        )
+                        .when(!prefs.db_player.trim().is_empty(), |row| {
+                            row.child(widgets::pills(
+                                "explorer-db-side",
+                                vec![pill("either side"), pill("as White"), pill("as Black")],
+                                chosen,
+                                {
+                                    let explorer = cx.entity().downgrade();
+                                    move |index, _, cx| {
+                                        explorer
+                                            .update(cx, |this, cx| {
+                                                this.update_prefs(cx, |prefs| {
+                                                    prefs.db_color = sides[index]
+                                                });
+                                                this.filters_changed(cx);
+                                            })
+                                            .ok();
+                                    }
+                                },
+                                true,
+                                palette,
+                            ))
+                        }),
+                )
+            })
+            .when(count == 0 || importing, |column| {
+                column.child(game_db::import_card(cx, palette))
+            })
     }
 
     fn render_moves(
@@ -395,7 +498,11 @@ impl PositionExplorer {
             .games
             .as_ref()
             .filter(|games| !games.is_empty())?;
-        let masters = result.saved.kind == PositionLookupKind::Masters;
+        // Masters' and game databases' games can be guessed through, move by move.
+        let masters = matches!(
+            result.saved.kind,
+            PositionLookupKind::Masters | PositionLookupKind::Database
+        );
         let title = if masters { "Top games" } else { "Recent games" };
         Some(
             v_flex()
@@ -426,6 +533,7 @@ impl PositionExplorer {
                     let guessed = game.clone();
                     let row = h_flex()
                         .id(("explorer-game", index))
+                        .test_support()
                         .role(Role::Button)
                         .keyboard_focus(palette.primary)
                         .aria_label("Open game")
@@ -493,6 +601,15 @@ impl Render for PositionExplorer {
             .position(|kind| *kind == prefs.kind)
             .unwrap_or_default();
         let needs_player = self.needs_player(cx);
+        let needs_database = self.needs_database(cx);
+        let about = if prefs.kind == PositionLookupKind::Database {
+            "Looked up in a game database on this computer. Statistics describe games, not \
+             move quality."
+        } else {
+            "Lookups send this position to Lichess. The Lichess, Masters and Player databases \
+             use a connected account; saved results stay available offline. Statistics \
+             describe games, not move quality."
+        };
         let choose_kind = {
             let explorer = cx.entity().downgrade();
             let kinds = kinds.clone();
@@ -548,14 +665,7 @@ impl Render for PositionExplorer {
                 div()
                     .id("explorer-about")
                     .text_color(palette.text_muted)
-                    .tooltip(|window, cx| {
-                        Tooltip::new(
-                            "Lookups send this position to Lichess. The Lichess, Masters and \
-                             Player databases use a connected account; saved results stay \
-                             available offline. Statistics describe games, not move quality.",
-                        )
-                        .build(window, cx)
-                    })
+                    .tooltip(move |window, cx| Tooltip::new(about).build(window, cx))
                     .child(icon("info").size(px(14.))),
             );
         let status = if self.busy {
@@ -578,7 +688,7 @@ impl Render for PositionExplorer {
                 .child(
                     h_flex()
                         .gap(px(4.))
-                        .child(self.heading(&result, &prefs))
+                        .child(self.heading(&result, &prefs, cx))
                         .children(total.map(|total| {
                             div()
                                 .text_color(palette.text_muted)
@@ -631,6 +741,9 @@ impl Render for PositionExplorer {
             .when(prefs.kind == PositionLookupKind::Player, |explorer| {
                 explorer.child(self.render_player(&prefs, cx, &palette))
             })
+            .when(prefs.kind == PositionLookupKind::Database, |explorer| {
+                explorer.child(self.render_database(&prefs, cx, &palette))
+            })
             .when(
                 self.show_filters && prefs.kind != PositionLookupKind::Tablebase,
                 |explorer| explorer.child(self.render_filters(&prefs, cx, &palette)),
@@ -649,7 +762,7 @@ impl Render for PositionExplorer {
                                 .icon(icon("search"))
                                 .label("Look up this position")
                                 .loading(self.busy)
-                                .disabled(needs_player)
+                                .disabled(needs_player || needs_database)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.lookup(None, true, Some(window), cx)
                                 })),

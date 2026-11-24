@@ -20,6 +20,10 @@ impl StudiesApi for Core {
         fen: Fen,
         options: Option<LookupOptions>,
     ) -> Result<PositionLookup> {
+        // A game database is on this computer: nothing to fetch, so nothing to keep.
+        if kind == PositionLookupKind::Database {
+            return self.gamedb.lookup(fen.0, options.unwrap_or_default()).await;
+        }
         let lookups = self.services.lookups();
         lookups.lookup(kind, &fen.0, options.as_ref()).await
     }

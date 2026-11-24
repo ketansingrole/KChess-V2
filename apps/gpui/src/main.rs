@@ -52,8 +52,8 @@ use kchess_app::{
 };
 // The board and the games on it (`crates/kchess-board`).
 use kchess_board::{
-    ai, board, engine_view, export, game, microphone, notation, player_search, position_engine,
-    puzzle_db, rating_history, sound, voice, widgets,
+    ai, board, engine_view, export, game, game_db, microphone, notation, player_search,
+    position_engine, puzzle_db, rating_history, sound, voice, widgets,
 };
 // The pages as the shell drives them (`crates/kchess-nav`).
 use kchess_nav::{part, play_layout, swipe};
@@ -151,6 +151,7 @@ fn start_models(profile: startup::Profile, cx: &mut App) {
     accounts::init(cx);
     ai::init(cx);
     puzzle_db::init(cx);
+    game_db::init(cx);
     updates::init(cx);
     sound::init(cx);
     // Before the online state, which checks Lichess again when the network returns.

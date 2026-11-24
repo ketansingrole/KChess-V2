@@ -12,7 +12,7 @@ use kchess_domain::gamedb::{self, Outcome, Stored};
 
 /// The games a search may see: those of finished imports. An import adding to a database writes
 /// its games as it goes; until it finishes they are not the database's yet.
-fn visible(db: &Connection) -> Result<i64> {
+pub(super) fn visible(db: &Connection) -> Result<i64> {
     db.query_row(
         "SELECT COALESCE(MAX(id), 0) FROM imports WHERE finished_at IS NOT NULL",
         [],
@@ -41,7 +41,7 @@ fn names(table: &str, words: &str, args: &mut Vec<SqlValue>) -> String {
 }
 
 /// The `WHERE` clause of a search, and its arguments.
-fn filters(query: &GameDbQuery, visible: i64) -> (String, Vec<SqlValue>) {
+pub(super) fn filters(query: &GameDbQuery, visible: i64) -> (String, Vec<SqlValue>) {
     let mut args = vec![SqlValue::Integer(visible)];
     let mut clauses = vec!["g.import_id <= ?1".to_string()];
     if let Some(player) = &query.player {
@@ -100,7 +100,7 @@ fn filters(query: &GameDbQuery, visible: i64) -> (String, Vec<SqlValue>) {
     (clauses.join(" AND "), args)
 }
 
-fn row(row: &Row<'_>) -> rusqlite::Result<GameDbRow> {
+pub(super) fn row(row: &Row<'_>) -> rusqlite::Result<GameDbRow> {
     let elo = |value: Option<i64>| value.and_then(|elo| u32::try_from(elo).ok());
     Ok(GameDbRow {
         id: row.get::<_, i64>(0)? as u64,
@@ -119,10 +119,11 @@ fn row(row: &Row<'_>) -> rusqlite::Result<GameDbRow> {
     })
 }
 
-const COLUMNS: &str = "g.id, w.name, b.name, g.white_elo, g.black_elo, g.result, e.name, g.site,
+pub(super) const COLUMNS: &str =
+    "g.id, w.name, b.name, g.white_elo, g.black_elo, g.result, e.name, g.site,
     g.date, g.round, g.eco, g.opening, g.plies";
 
-const JOINS: &str = "JOIN players w ON w.id = g.white JOIN players b ON b.id = g.black
+pub(super) const JOINS: &str = "JOIN players w ON w.id = g.white JOIN players b ON b.id = g.black
     LEFT JOIN events e ON e.id = g.event";
 
 /// One page of the games `query` matches, and how many it matches.

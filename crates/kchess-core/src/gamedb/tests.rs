@@ -1,11 +1,13 @@
 use super::*;
 use crate::test_host::TestHost;
-use kchess_contracts::types::{GameDbResult, GameDbSide, GameDbSort};
+use kchess_contracts::types::{
+    GameDbResult, GameDbSide, GameDbSort, PositionLookupKind, SavedLookup,
+};
 use kchess_domain::pgn::{make_pgn, parse_pgn};
 use kchess_domain::rules;
 use kchess_testkit::random;
-use shakmaty::Position as _;
 use shakmaty::variant::Variant;
+use shakmaty::{Color, Position as _};
 
 fn service(profile: &Path) -> (GameDbService, Arc<TestHost>) {
     let host = TestHost::new();
@@ -559,5 +561,180 @@ fn the_tree_matches_a_replay_of_random_games() {
             .map(|r| r.unwrap())
             .collect();
         assert_eq!(rows, expected);
+    });
+}
+
+const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+fn in_database(id: &str) -> LookupOptions {
+    LookupOptions {
+        database: Some(id.to_string()),
+        ..LookupOptions::default()
+    }
+}
+
+/// A lookup's moves as `san white/draws/black`, sorted.
+fn counted(lookup: &SavedLookup) -> Vec<String> {
+    let mut moves: Vec<String> = lookup
+        .moves
+        .iter()
+        .map(|m| {
+            format!(
+                "{} {}/{}/{}",
+                m.san,
+                m.white.unwrap(),
+                m.draws.unwrap(),
+                m.black.unwrap()
+            )
+        })
+        .collect();
+    moves.sort();
+    moves
+}
+
+#[tokio::test]
+async fn a_lookup_lists_the_moves_and_best_rated_games_of_a_position() {
+    let (profile, files) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (games, _) = service(profile.path());
+    let id = imported(&games, source(files.path(), "g.pgn", GAMES.as_bytes()))
+        .await
+        .database
+        .id;
+    let found = games.lookup(START.into(), in_database(&id)).await.unwrap();
+    assert!(!found.cached && !found.stale);
+    let found = found.saved;
+    assert_eq!(found.kind, PositionLookupKind::Database);
+    assert_eq!(found.total, Some(3));
+    assert_eq!(counted(&found), ["Nf3 0/1/0", "d4 0/0/1", "e4 1/0/0"]);
+    assert_eq!(
+        found.moves.iter().find(|m| m.san == "e4").unwrap().uci,
+        "e2e4"
+    );
+    // The rated games first, each with the move it played from here; the unrated one last.
+    let listed = found.games.unwrap();
+    let rows: Vec<(&str, Option<&str>, Option<i64>)> = listed
+        .iter()
+        .map(|game| (game.white.as_str(), game.san.as_deref(), game.year))
+        .collect();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[2], ("Smith", Some("d4"), Some(1999)));
+    assert_eq!(listed[2].winner, Some(Color::Black));
+    assert!(listed[0].white_rating.is_some() && listed[1].black_rating.is_some());
+    // A listed game's id opens it.
+    let pgn = games
+        .game(&id, listed[0].id.parse().unwrap())
+        .await
+        .unwrap();
+    assert!(pgn.contains("[Event \"Tata Steel\"]"));
+
+    let refused = games.lookup(START.into(), LookupOptions::default()).await;
+    assert_eq!(refused.unwrap_err().message, "Choose a game database.");
+    let missing = games.lookup(START.into(), in_database("nope")).await;
+    assert_eq!(
+        missing.unwrap_err().message,
+        "That database is not on this computer."
+    );
+}
+
+#[tokio::test]
+async fn filtered_lookups_count_only_the_games_that_match() {
+    let (profile, files) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (games, _) = service(profile.path());
+    let id = imported(&games, source(files.path(), "g.pgn", GAMES.as_bytes()))
+        .await
+        .database
+        .id;
+    let look = async |fen: &str, options: LookupOptions| {
+        counted(&games.lookup(fen.into(), options).await.unwrap().saved)
+    };
+    let carlsen = LookupOptions {
+        player: Some("carlsen".into()),
+        ..in_database(&id)
+    };
+    assert_eq!(
+        look(START, carlsen.clone()).await,
+        ["Nf3 0/1/0", "e4 1/0/0"]
+    );
+    let as_black = LookupOptions {
+        color: Some(Color::Black),
+        ..carlsen.clone()
+    };
+    assert_eq!(look(START, as_black).await, ["Nf3 0/1/0"]);
+    let rated = LookupOptions {
+        min_elo: Some(2700),
+        ..in_database(&id)
+    };
+    assert_eq!(look(START, rated).await, ["Nf3 0/1/0", "e4 1/0/0"]);
+    let old = LookupOptions {
+        until: Some("2000".into()),
+        ..in_database(&id)
+    };
+    assert_eq!(look(START, old).await, ["d4 0/0/1"]);
+    let nobody = LookupOptions {
+        player: Some("nobody".into()),
+        ..in_database(&id)
+    };
+    assert!(look(START, nobody).await.is_empty());
+
+    // Replayed, the two Carlsen games still meet after 1.e4 e5 2.Nf3 Nc6 by either order.
+    let mut pos = rules::default_position(Variant::Chess);
+    for san in ["e4", "e5", "Nf3", "Nc6"] {
+        let m = rules::parse_san(&pos, san).unwrap();
+        pos.play_unchecked(m);
+    }
+    let met = rules::make_fen(&pos);
+    assert_eq!(look(&met, carlsen).await, ["Bb5 1/0/0", "d4 0/1/0"]);
+}
+
+#[test]
+fn a_filter_every_game_matches_finds_what_the_tree_finds() {
+    random::check(5, |rng| {
+        let profile = tempfile::tempdir().unwrap();
+        let mut pgn = String::new();
+        let mut lines = Vec::new();
+        for game in 0..40 {
+            let mut pos = rules::default_position(Variant::Chess);
+            let mut sans = Vec::new();
+            let mut fens = vec![rules::make_fen(&pos)];
+            // Within the tree's depth, so both count the same plies.
+            for _ in 0..rng.below(schema::INDEX_DEPTH as usize) {
+                let legal = pos.legal_moves();
+                let Some(m) = rng.pick(&legal).copied() else {
+                    break;
+                };
+                sans.push(rules::san_and_play(&mut pos, m));
+                fens.push(rules::make_fen(&pos));
+            }
+            let result = ["1-0", "0-1", "1/2-1/2"][game % 3];
+            // The moves alone: `pgn_from_san` writes headers of its own, which would replace these.
+            let moves: Vec<String> = sans
+                .iter()
+                .enumerate()
+                .map(|(ply, san)| match ply % 2 {
+                    0 => format!("{}. {san}", ply / 2 + 1),
+                    _ => san.clone(),
+                })
+                .collect();
+            pgn.push_str(&format!(
+                "[White \"P{game}\"]\n[Black \"Q\"]\n[Result \"{result}\"]\n\n{} {result}\n\n",
+                moves.join(" ")
+            ));
+            lines.push(fens);
+        }
+        let id = write_database(profile.path(), "R", &pgn).unwrap();
+        let db =
+            schema::open_read(&profile.path().join("databases").join(format!("{id}.kdb"))).unwrap();
+        let everyone = LookupOptions {
+            player: Some("Q".into()),
+            ..in_database(&id)
+        };
+        for fens in &lines {
+            for fen in fens.iter().take(8) {
+                let tree = explore::lookup(&db, &id, fen, &in_database(&id), 0).unwrap();
+                let replayed = explore::lookup(&db, &id, fen, &everyone, 0).unwrap();
+                assert_eq!(replayed.moves, tree.moves, "{fen}");
+                assert_eq!(replayed.total, tree.total, "{fen}");
+            }
+        }
     });
 }

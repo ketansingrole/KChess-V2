@@ -69,7 +69,9 @@ can add them as a friend, challenge them or watch their current game.
   tablebase. Filters: speeds, rating groups, player and colour, and a since date. The Masters
   and Player databases list notable games, which open on the analysis board. A _Follow moves_
   switch refreshes the explorer as you move. A variant game is looked up in Lichess's games of
-  that variant (the Lichess and Player databases).
+  that variant (the Lichess and Player databases). Beyond Lichess, a **Database** tab looks the
+  position up in a game database on this computer (an imported PGN file), filtered by player,
+  colour, both players' rating and a year, and lists its best-rated games.
 - **Lichess cloud evaluation**: Lichess's stored deep evaluation of the position, shown beside
   the local engine, or in its place when Stockfish is off. It is off by default because every
   position is sent to Lichess. Settings → Analysis, or the cloud button in the engine panel.
@@ -93,7 +95,7 @@ can add them as a friend, challenge them or watch their current game.
   `kchess-cli pgn <link>` prints a game's or a public study chapter's PGN, and
   `kchess-cli review <link|file|moves>` reviews a game (in any variant) with the engine, printing each
   side's accuracy and the inaccuracies, mistakes and blunders.
-  `kchess-cli explore [masters|opening|tablebase] <fen|moves>` prints the explorer's moves for a
+  `kchess-cli explore [masters|opening|tablebase|database <id>] <fen|moves>` prints the explorer's moves for a
   position, from the tablebase when it has seven pieces or fewer (`--variant crazyhouse` looks
   up Lichess's games of a variant), and
   `kchess-cli opening <fen|moves>` names the opening it reaches, offline, and

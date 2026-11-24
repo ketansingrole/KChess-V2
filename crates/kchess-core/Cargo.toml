@@ -11,6 +11,9 @@ publish.workspace = true
 # is checked against (tests/facade_dispatch.rs).
 kchess-contracts.workspace = true
 kchess-domain.workspace = true
+# A game database's positions (`gamedb::explore`), and random legal games for the compression
+# benchmark (`examples/http_compression.rs`).
+shakmaty.workspace = true
 # Lowercase hex and the SHA-256 of a file (`hex`, `file_digest`).
 kchess-delta.workspace = true
 # The speech helper's pipe protocol (`voice/recognizer.rs`, the fake helper).
@@ -74,8 +77,6 @@ packaged = ["kchess-host/packaged"]
 [dev-dependencies]
 # The loopback HTTP fixture's request parsing and response heads (`tests/support/lichess_http.rs`).
 kchess-testkit.workspace = true
-# Random legal games for the compression benchmark (`examples/http_compression.rs`).
-shakmaty.workspace = true
 
 # A scripted UCI engine for the engine tests (see tests/support/fake_uci.rs).
 [[bin]]
