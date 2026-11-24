@@ -527,7 +527,9 @@ impl PositionExplorer {
         let request = self.epoch.start();
         let prefs = self.shown_prefs(cx);
         let database = (prefs.kind == PositionLookupKind::Database).then(|| prefs.database.clone());
-        let call = cx.global::<AppCore>().request(calls::PositionLookup {
+        // Replaced by a newer lookup (`lookup_task`), it is dropped, which stops it in the core:
+        // a game database's lookup may replay a million games.
+        let call = cx.global::<AppCore>().lookup(calls::PositionLookup {
             kind: prefs.kind,
             fen: Fen(self.fen.clone()),
             options: Some(self.options(&prefs)),
