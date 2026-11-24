@@ -262,12 +262,21 @@ core_api! {
         AssistanceStatus = "assistanceStatus" fn assistance_status() -> crate::types::Assistance;
         CancelOnline = "cancelOnline" fn cancel_online() -> ();
         PlayOnline = "playOnline" fn play_online(id: GameId, r#move: Uci) -> ();
+        /// The moves played so far in a correspondence game still on this account's move at
+        /// `fen`: the turn a reply from its notification is for.
+        CorrespondenceTurn = "correspondenceTurn" fn correspondence_turn(
+            account: Username,
+            id: GameId,
+            fen: FullFen
+        ) -> u32;
         /// Send a move to a correspondence game that is not on the board (a reply from its
-        /// notification): only while it is still this account's move at `fen`, and only once.
+        /// notification): only while it is still this account's move at `fen` after the `plies`
+        /// moves `correspondenceTurn` gave, and only once.
         PlayCorrespondence = "playCorrespondence" fn play_correspondence(
             account: Username,
             id: GameId,
             fen: FullFen,
+            plies: u32,
             r#move: Uci
         ) -> ();
         OnlineAction = "onlineAction" fn online_action(

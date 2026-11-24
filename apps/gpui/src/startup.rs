@@ -4,7 +4,7 @@
 
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
-use kchess_contracts::types::{Library, Settings};
+use kchess_contracts::types::{CustomThemeReport, Library, Settings};
 
 use crate::core::AppCore;
 use kchess_contracts::{CoreError, calls};
@@ -14,10 +14,13 @@ pub struct Started;
 
 impl Global for Started {}
 
-/// What the models start from, as the core read it from the profile.
+/// What the models start from, as the core read it from the profile. The custom themes and view
+/// preferences may fail to read: the app then starts without them.
 pub struct Profile {
     pub settings: Settings,
     pub library: Library,
+    pub themes: Result<CustomThemeReport, CoreError>,
+    pub view_preferences: Result<serde_json::Map<String, serde_json::Value>, CoreError>,
 }
 
 /// The settings and library the models start from, when the core can read them, or why not.
@@ -27,21 +30,33 @@ pub fn check(cx: &App) -> Result<Profile, String> {
         || bridge.request_now(calls::DesktopSettings {}),
         || bridge.request_now(calls::Library {}),
     )
-    .map(|(settings, library)| Profile { settings, library })
+    .map(|(settings, library)| Profile {
+        settings,
+        library,
+        themes: bridge.request_now(calls::CustomThemes {}),
+        view_preferences: bridge.request_now(calls::ViewPreferences {}),
+    })
     .map_err(|cause| cause.message)
 }
 
 /// `check`, for the startup screen's Try again: the core answers on its own threads, so the
-/// window keeps drawing while it reads the library.
-fn check_later(cx: &App) -> impl Future<Output = Result<Profile, String>> + 'static {
+/// window keeps drawing while it reads everything the models start from. 2026-11-24: the custom
+/// themes and view preferences were read on the main thread once this answered, and a slow disk
+/// froze the app with no window shown.
+fn check_later(cx: &App) -> impl Future<Output = Result<Profile, String>> + 'static + use<> {
     let bridge = cx.global::<AppCore>().bridge.clone();
     async move {
         let settings = bridge.request(calls::DesktopSettings {}).await;
         let checked = match settings {
-            Ok(settings) => bridge
-                .request(calls::Library {})
-                .await
-                .map(|library| Profile { settings, library }),
+            Ok(settings) => match bridge.request(calls::Library {}).await {
+                Ok(library) => Ok(Profile {
+                    settings,
+                    library,
+                    themes: bridge.request(calls::CustomThemes {}).await,
+                    view_preferences: bridge.request(calls::ViewPreferences {}).await,
+                }),
+                Err(cause) => Err(cause),
+            },
             Err(cause) => Err(cause),
         };
         checked.map_err(|cause| cause.message)
@@ -223,6 +238,33 @@ mod tests {
         app.cx
             .update_window(window, |_, window, _| window.remove_window())
             .expect("still open");
+        app.settle();
+    }
+
+    /// 2026-11-24: after Try again answered, Settings read the custom themes and the view
+    /// preferences read themselves on the main thread, so a slow disk froze the app with no window
+    /// shown. Try again reads them with the rest, and the models start without waiting.
+    #[gpui_kit::test]
+    fn the_models_start_from_the_retried_check_without_waiting(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = crate::e2e::Harness::start(cx);
+        let checked = app.cx.update(|cx| super::check_later(cx));
+        let profile = app
+            .cx
+            .foreground_executor()
+            .block_test(checked)
+            .expect("the profile reads");
+        assert!(profile.themes.is_ok(), "the custom themes are read");
+        assert!(
+            profile.view_preferences.is_ok(),
+            "the view preferences are read"
+        );
+        app.cx.update(|cx| {
+            // Fails naming any call that waits for the core.
+            crate::slow_calls::drawing(|| {
+                crate::settings::init(profile.settings, profile.themes, cx);
+                crate::prefs::start(profile.view_preferences, cx);
+            })
+        });
         app.settle();
     }
 

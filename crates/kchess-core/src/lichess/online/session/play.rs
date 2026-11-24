@@ -268,16 +268,29 @@ impl OnlineSession {
         self.send_action(&auth, &path, &[]).await
     }
 
+    /// The moves played so far in a correspondence game still on this account's move at `fen`:
+    /// the turn a reply typed into its notification is for, which `move_correspondence` checks
+    /// again before it sends the reply.
+    pub async fn correspondence_turn(&self, account: &str, id: &str, fen: &str) -> CoreResult<u32> {
+        let auth = self
+            .inner
+            .lichess
+            .signed_in(account, UsageKind::Play)
+            .await?;
+        self.turn_at(&auth, id, fen).await
+    }
+
     /// Send one move to a correspondence game that is not on the board: a reply typed into its
-    /// notification. Lichess's list of the account's games is read first, and the move goes only
-    /// while the game is still on this account's move at `fen` (its placement: the list gives no
-    /// more), so a reply to a position that has moved on is refused, not played. Like any move it
-    /// is sent once: an ambiguous answer is an error, never a retry.
+    /// notification. The move goes only while the game is still on this account's move at `fen`
+    /// after the `plies` moves it had when the reply was typed (`correspondence_turn`): a game
+    /// that moved on, even back to the same position, refuses it rather than playing it. Like any
+    /// move it is sent once: an ambiguous answer is an error, never a retry.
     pub async fn move_correspondence(
         &self,
         account: &str,
         id: &str,
         fen: &str,
+        plies: u32,
         uci: &str,
     ) -> CoreResult<()> {
         let _sending = MoveInFlight::claim(self)?;
@@ -286,11 +299,24 @@ impl OnlineSession {
             .lichess
             .signed_in(account, UsageKind::Play)
             .await?;
-        let playing: Value = self
-            .inner
-            .lichess
-            .client()
-            .get("/api/account/playing", &auth)
+        if self.turn_at(&auth, id, fen).await? != plies {
+            return Err(moved_on());
+        }
+        let path = format!(
+            "/api/board/game/{}/move/{}",
+            path_segment(id),
+            path_segment(uci)
+        );
+        self.send_action(&auth, &path, &[]).await
+    }
+
+    /// The moves played so far in game `id`, refused unless it is on this account's move at
+    /// `fen`. Lichess's list of the account's games gives whose move it is and the placement; the
+    /// game's own stream opens with its moves, which tell a later turn at the same position apart.
+    async fn turn_at(&self, auth: &Auth, id: &str, fen: &str) -> CoreResult<u32> {
+        let client = self.inner.lichess.client();
+        let playing: Value = client
+            .get("/api/account/playing", auth)
             .query(&[("nb", "50")])
             .read_json()
             .await?;
@@ -311,16 +337,36 @@ impl OnlineSession {
         if game.get("isMyTurn").and_then(Value::as_bool) != Some(true)
             || placement(current) != placement(fen)
         {
-            return Err(CoreError::new(
-                "The game has moved on. Open it to see where it stands.",
-            ));
+            return Err(moved_on());
         }
-        let path = format!(
-            "/api/board/game/{}/move/{}",
-            path_segment(id),
-            path_segment(uci)
-        );
-        self.send_action(&auth, &path, &[]).await
+        // The stream never ends: the read stops at its first record, the game in full.
+        let mut full: Option<Value> = None;
+        let read = client
+            .get(
+                &format!("/api/board/game/stream/{}", path_segment(id)),
+                auth,
+            )
+            .lines(
+                || {},
+                |line| {
+                    full = Some(serde_json::from_str(line).map_err(|cause| {
+                        CoreError::new(format!("Lichess sent an unreadable game record: {cause}"))
+                    })?);
+                    Err(CoreError::new("read"))
+                },
+            )
+            .await;
+        let Some(full) = full else {
+            return Err(read
+                .err()
+                .unwrap_or_else(|| CoreError::new("The game could not be read.")));
+        };
+        let state = &full["state"];
+        if full["type"] != "gameFull" || state["status"] != "started" {
+            return Err(CoreError::new("This game is no longer in progress."));
+        }
+        let moves = state["moves"].as_str().unwrap_or_default();
+        Ok(u32::try_from(moves.split_whitespace().count()).unwrap_or(u32::MAX))
     }
 
     /// The private chat between the two players so far (the last 200 lines).
@@ -513,4 +559,9 @@ impl OnlineSession {
             timer.abort();
         }
     }
+}
+
+/// The refusal of a correspondence reply whose turn has passed.
+fn moved_on() -> CoreError {
+    CoreError::new("The game has moved on. Open it to see where it stands.")
 }

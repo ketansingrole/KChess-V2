@@ -248,9 +248,12 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
         .unwrap();
     let before = fixture.requests().len();
     let timeline = core.call("timeline", vec![]).await.unwrap();
-    // One at a time, in the list's order: a burst gets a minute's lockout from Lichess.
+    // One at a time, in the list's order: a burst gets a minute's lockout from Lichess. The
+    // account's event stream, which the core keeps open for every signed-in account, can
+    // (re)open meanwhile; it is no part of the timeline.
     let asked: Vec<String> = fixture.requests()[before..]
         .iter()
+        .filter(|seen| seen.path() != "/api/stream/event")
         .map(|seen| format!("{} {}", seen.method, seen.target))
         .collect();
     assert_eq!(

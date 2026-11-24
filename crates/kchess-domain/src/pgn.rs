@@ -547,7 +547,17 @@ impl Parser {
                     for (start, end) in tokens(line) {
                         let token = &line[start..end];
                         match token {
-                            ";" => return,
+                            // The rest of the line is a comment (PGN's `;`): kept as a brace
+                            // comment is, so a study edit no longer drops it (2026-11-24).
+                            ";" => {
+                                let rest = &line[end..];
+                                let text = rest.strip_prefix(' ').unwrap_or(rest).trim_end();
+                                if !text.is_empty() {
+                                    self.comment_buf.push(text.to_string());
+                                    self.handle_comment();
+                                }
+                                return;
+                            }
                             "!" => self.handle_nag(1),
                             "?" => self.handle_nag(2),
                             "!!" => self.handle_nag(3),
@@ -943,6 +953,27 @@ pub fn setup_pgn<S: AsRef<str>>(
 
 #[cfg(test)]
 mod tests {
+    /// 2026-11-24: a `;` comment was dropped as it was read, so editing another move of a study
+    /// and saving it lost the comment. It is the move's comment now, written back in braces, and
+    /// the next line's moves still follow.
+    #[test]
+    fn a_semicolon_comment_is_kept_as_the_moves_comment() {
+        let pgn = "1. e4 e5 ; The open game 2. Nf3\r\n2. Nc3 ;\n2... Nc6 *";
+        let game = parse_pgn(pgn).into_iter().next().unwrap();
+        assert_eq!(game.main_line_sans(), ["e4", "e5", "Nc3", "Nc6"]);
+        let e5 = game.main_line().nth(1).unwrap();
+        assert_eq!(
+            game.nodes[e5].comments.as_deref(),
+            Some(&["The open game 2. Nf3".to_string()][..])
+        );
+        let nc3 = game.main_line().nth(2).unwrap();
+        assert_eq!(game.nodes[nc3].comments, None, "an empty one adds nothing");
+        let written = make_pgn(&game);
+        assert!(written.contains("e5 { The open game 2. Nf3 }"), "{written}");
+        let again = parse_pgn(&written).into_iter().next().unwrap();
+        assert_eq!(make_pgn(&again), written);
+    }
+
     #[test]
     fn the_main_line_follows_first_children_past_variations() {
         let games = parse_pgn("1. e4 (1. d4 d5) 1... e5 (1... c5 2. Nf3) 2. Nf3 *");

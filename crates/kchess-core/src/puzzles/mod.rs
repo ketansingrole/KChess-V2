@@ -43,12 +43,15 @@ struct Download {
 struct Installing<'a> {
     inner: &'a Inner,
     download: Arc<Download>,
-    ended: bool,
+    /// How the download ended, reported as its slot is freed; a cancellation when it never got
+    /// that far (its caller was dropped).
+    end: Option<PuzzleDbProgress>,
 }
 
 impl Drop for Installing<'_> {
     fn drop(&mut self) {
         self.download.cancel.cancel();
+        let _ending = lock(&self.inner.ending);
         let ours = {
             let mut running = lock(&self.inner.running);
             let ours = running
@@ -59,17 +62,17 @@ impl Drop for Installing<'_> {
             }
             ours
         };
-        if ours && !self.ended {
-            self.inner
-                .host
-                .emit(CoreEvent::PuzzleDbProgress(PuzzleDbProgress {
-                    phase: Phase::Cancelled,
-                    received: 0,
-                    kept: 0,
-                    total: None,
-                    message: None,
-                }));
+        if !ours {
+            return;
         }
+        let end = self.end.take().unwrap_or(PuzzleDbProgress {
+            phase: Phase::Cancelled,
+            received: 0,
+            kept: 0,
+            total: None,
+            message: None,
+        });
+        self.inner.host.emit(CoreEvent::PuzzleDbProgress(end));
     }
 }
 
@@ -78,6 +81,11 @@ struct Inner {
     meter: Arc<dyn Meter>,
     lane: Arc<Lane>,
     running: Mutex<Option<Arc<Download>>>,
+    /// Held while a download's slot is freed and its end reported, and by the next download as
+    /// it claims the slot: the end of one always reaches the windows before the next one's first
+    /// progress. Reported after the slot was freed, an end could land after a download another
+    /// window started meanwhile, and hide its progress and Cancel.
+    ending: Mutex<()>,
 }
 
 pub struct PuzzleService {
@@ -213,6 +221,7 @@ impl PuzzleService {
                 meter,
                 lane: Arc::new(lane),
                 running: Mutex::new(None),
+                ending: Mutex::new(()),
             }),
         }
     }
@@ -314,6 +323,7 @@ impl PuzzleService {
     /// completion via the `puzzledb:progress` `cancelled`/`done` phase, not the result.
     pub async fn install(&self, url: String) -> Result<PuzzleDbStatus> {
         let download = {
+            let _ending = lock(&self.inner.ending);
             let mut running = lock(&self.inner.running);
             if running.is_some() {
                 let error = CoreError::new("The puzzle database is already downloading.");
@@ -330,7 +340,7 @@ impl PuzzleService {
         let mut installing = Installing {
             inner: &self.inner,
             download: Arc::clone(&download),
-            ended: false,
+            end: None,
         };
         let mut progress = Progress {
             host: Arc::clone(&self.inner.host),
@@ -341,26 +351,22 @@ impl PuzzleService {
         let result = self.download(&url, &download, &mut progress).await;
         let aborted = download.cancel.is_cancelled();
         // No longer running before its end is reported: a window that read the status on hearing
-        // a failure once found it still running, and nothing told it otherwise afterwards.
-        installing.ended = true;
-        drop(installing);
-        let outcome = match result {
-            Ok(kept) => {
-                progress.report(Phase::Done, kept, true);
-                Ok(())
-            }
+        // a failure once found it still running, and nothing told it otherwise afterwards. Both
+        // happen under `ending` (`Installing::drop`).
+        let (end, outcome) = match result {
+            Ok(kept) => (progress.event(Phase::Done, kept, None), Ok(())),
             Err(error) => {
-                progress.finished(
-                    if aborted {
-                        Phase::Cancelled
-                    } else {
-                        Phase::Failed
-                    },
-                    (!aborted).then_some(error.message.as_str()),
-                );
-                if aborted { Ok(()) } else { Err(error) }
+                let phase = if aborted {
+                    Phase::Cancelled
+                } else {
+                    Phase::Failed
+                };
+                let end = progress.event(phase, 0, (!aborted).then_some(error.message.as_str()));
+                (end, if aborted { Ok(()) } else { Err(error) })
             }
         };
+        installing.end = Some(end);
+        drop(installing);
         let result = match outcome {
             Ok(()) => {
                 self.inner
@@ -498,19 +504,19 @@ impl Progress {
         self.send(phase, kept, None);
     }
 
-    fn finished(&mut self, phase: Phase, message: Option<&str>) {
-        self.send(phase, 0, message);
+    fn send(&self, phase: Phase, kept: usize, message: Option<&str>) {
+        let progress = self.event(phase, kept, message);
+        self.host.emit(CoreEvent::PuzzleDbProgress(progress));
     }
 
-    fn send(&self, phase: Phase, kept: usize, message: Option<&str>) {
-        let progress = PuzzleDbProgress {
+    fn event(&self, phase: Phase, kept: usize, message: Option<&str>) -> PuzzleDbProgress {
+        PuzzleDbProgress {
             phase,
             received: self.received,
             kept: kept as u64,
             total: self.total,
             message: message.map(str::to_string),
-        };
-        self.host.emit(CoreEvent::PuzzleDbProgress(progress));
+        }
     }
 }
 
@@ -787,6 +793,78 @@ mod tests {
         let refused = serve(404, Some(b"gone".to_vec())).await;
         assert!(puzzles.install(refused).await.is_err());
         assert_eq!(*watching.running_at_end.lock().unwrap(), [false, false]);
+        puzzles.close().await;
+    }
+
+    /// 2026-11-24: a download's end was reported after its slot was freed, so a download another
+    /// window started in between could report its first progress before it, and the late end hid
+    /// the new download's progress and Cancel. The end now always comes first.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_downloads_end_is_reported_before_the_next_one_starts() {
+        struct Slow {
+            host: Arc<TestHost>,
+            ending: tokio::sync::Notify,
+        }
+        impl Host for Slow {
+            fn log(&self, level: crate::host::Level, scope: &str, message: &str) {
+                self.host.log(level, scope, message);
+            }
+            fn emit(&self, event: CoreEvent) {
+                if let CoreEvent::PuzzleDbProgress(progress) = &event
+                    && progress.phase == Phase::Failed
+                {
+                    // The worker pauses on its way to report the end; the next download starts.
+                    self.ending.notify_one();
+                    std::thread::sleep(Duration::from_millis(300));
+                }
+                self.host.emit(event);
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let slow = Arc::new(Slow {
+            host: TestHost::new(),
+            ending: tokio::sync::Notify::new(),
+        });
+        let puzzles = Arc::new(PuzzleService::new(
+            Config::new(dir.path().to_path_buf()),
+            Arc::clone(&slow) as Arc<dyn Host>,
+            Arc::new(crate::usage::UsageLog::default()) as Arc<dyn Meter>,
+        ));
+        // The next download reports its first bytes, then waits.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let hanging = format!("http://{}/puzzles.csv.zst", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut request = [0u8; 4096];
+                    let _ = socket.read(&mut request).await;
+                    let head = "HTTP/1.1 200 OK\r\ncontent-length: 100000\r\n\r\n";
+                    let _ = socket.write_all(head.as_bytes()).await;
+                    let _ = socket.write_all(&[0u8; 1000]).await;
+                    std::future::pending::<()>().await;
+                });
+            }
+        });
+        let next = tokio::spawn({
+            let (puzzles, slow) = (Arc::clone(&puzzles), Arc::clone(&slow));
+            async move {
+                slow.ending.notified().await;
+                puzzles.install(hanging).await
+            }
+        });
+        let refused = serve(404, Some(b"gone".to_vec())).await;
+        assert!(puzzles.install(refused).await.is_err());
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while phases(&slow.host).len() < 2 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the next download reports its progress");
+        let phases = phases(&slow.host);
+        assert_eq!(phases[..2], ["failed", "downloading"], "{phases:?}");
+        puzzles.cancel();
+        next.await.unwrap().unwrap();
         puzzles.close().await;
     }
 

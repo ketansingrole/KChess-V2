@@ -3,8 +3,10 @@
 //! Cancel), so nothing typed there is played unseen. Only correspondence games are offered this:
 //! a live game is played on the board, where its clock and the opponent are in sight.
 //!
-//! The core sends the move (`playCorrespondence`) only while the game is still on the account's
-//! move at the position the reply was typed for, and only once.
+//! The confirmation is offered for the game's turn as the core reads it (`correspondenceTurn`:
+//! the moves played so far), and the core sends the move (`playCorrespondence`) only while the
+//! game is still at that turn, so a game that moved on, even back to the same position, refuses
+//! it; and only once.
 
 use kchess_contracts::calls;
 use kchess_contracts::check::{FullFen, GameId, Uci, Username};
@@ -24,6 +26,8 @@ pub struct Reply {
     pub opponent: String,
     /// The position it was typed for, as the core checks it again before sending.
     pub fen: String,
+    /// The moves played when it was confirmed (`turn`), as the core checks them again.
+    pub plies: u32,
     pub uci: String,
     pub san: String,
 }
@@ -79,6 +83,7 @@ pub fn read(game: &OngoingGame, text: &str) -> Option<Reply> {
         id: game.game_id.clone(),
         opponent: game.opponent.name.clone(),
         fen,
+        plies: 0,
         uci: played.uci,
         san: played.san,
     })
@@ -96,12 +101,25 @@ pub fn take(tag: &str, cx: &mut App) -> Option<Reply> {
     cx.default_global::<Pending>().0.remove(tag)
 }
 
+/// The moves played so far in `reply`'s game, while it is still at the reply's position on your
+/// move: the turn its confirmation is for. The error names why it is not.
+pub fn turn(reply: &Reply, cx: &mut App) -> gpui_kit::Task<Result<u32, String>> {
+    let call = cx.global::<AppCore>().request(calls::CorrespondenceTurn {
+        account: Username(reply.account.clone()),
+        id: GameId(reply.id.clone()),
+        fen: FullFen(reply.fen.clone()),
+    });
+    cx.background_executor()
+        .spawn(async move { call.await.map_err(|cause| cause.message) })
+}
+
 /// Send `reply`; the answer is the core's, an error naming why it was not played.
 pub fn send(reply: &Reply, cx: &mut App) -> gpui_kit::Task<Result<(), String>> {
     let call = cx.global::<AppCore>().request(calls::PlayCorrespondence {
         account: Username(reply.account.clone()),
         id: GameId(reply.id.clone()),
         fen: FullFen(reply.fen.clone()),
+        plies: reply.plies,
         r#move: Uci(reply.uci.clone()),
     });
     cx.background_executor()
