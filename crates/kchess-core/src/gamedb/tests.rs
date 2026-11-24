@@ -494,7 +494,7 @@ fn the_tree_matches_a_replay_of_random_games() {
             let mut sans = Vec::new();
             for ply in 0..rng.below(50) {
                 let legal = pos.legal_moves();
-                let Some(m) = rng.pick(&legal).cloned() else {
+                let Some(m) = rng.pick(&legal).copied() else {
                     break;
                 };
                 if ply < schema::INDEX_DEPTH as usize {

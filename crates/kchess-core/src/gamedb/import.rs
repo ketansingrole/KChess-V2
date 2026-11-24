@@ -420,14 +420,14 @@ fn read_games(
             let id = insert_game(db, import, &stored, &mut players, &mut events)?;
             add_to_tree(&mut tree, id, &stored, depth)?;
             count.games += 1;
-            if (count.games + count.skipped) % 1_000 == 0 {
+            if (count.games + count.skipped).is_multiple_of(1_000) {
                 if watch.cancelled() {
                     return Err(cancelled_error());
                 }
                 count.bytes = read.load(Ordering::Relaxed);
                 watch.reading(count);
             }
-            if count.games % BATCH == 0 {
+            if count.games.is_multiple_of(BATCH) {
                 db.execute_batch("COMMIT").sql()?;
                 open = false;
             }

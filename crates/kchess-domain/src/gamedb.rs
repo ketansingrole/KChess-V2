@@ -52,12 +52,12 @@ pub fn unpack_move(pos: &VariantPosition, packed: u16) -> Option<Move> {
 /// which `pack_move` orders the same way.
 fn ordered_moves(pos: &VariantPosition) -> MoveList {
     let mut moves = pos.legal_moves();
-    moves.sort_unstable_by_key(|m| order_key(m));
+    moves.sort_unstable_by_key(order_key);
     moves
 }
 
 fn order_key(m: &Move) -> (u8, u8, u8) {
-    let from = m.from().map_or(64, |sq| u8::from(sq));
+    let from = m.from().map_or(64, u8::from);
     let promotion = m.promotion().map_or(0, |role| role as u8);
     (from, u8::from(m.to()), promotion)
 }
@@ -70,7 +70,7 @@ pub fn encode_line(start: &VariantPosition, moves: &[Move]) -> Option<Vec<u8>> {
     for m in moves {
         let index = ordered_moves(&pos).iter().position(|legal| legal == m)?;
         code.push(u8::try_from(index).ok()?);
-        pos.play_unchecked(m.clone());
+        pos.play_unchecked(*m);
     }
     Some(code)
 }
@@ -91,7 +91,7 @@ pub fn walk_line(
         if !visit(&pos, m) {
             return true;
         }
-        pos.play_unchecked(m.clone());
+        pos.play_unchecked(*m);
     }
     true
 }
@@ -100,7 +100,7 @@ pub fn walk_line(
 pub fn decode_line(start: &VariantPosition, code: &[u8]) -> Option<Vec<Move>> {
     let mut moves = Vec::with_capacity(code.len());
     walk_line(start, code, |_, m| {
-        moves.push(m.clone());
+        moves.push(*m);
         true
     })
     .then_some(moves)
@@ -273,7 +273,7 @@ pub fn store(game: &Game) -> Result<Stored, Unusable> {
         let Some(m) = rules::parse_san(&pos, game.node(node).san.as_str()) else {
             return Err(Unusable::Move);
         };
-        pos.play_unchecked(m.clone());
+        pos.play_unchecked(m);
         moves.push(m);
     }
     let code = encode_line(&start, &moves).ok_or(Unusable::Move)?;
@@ -399,10 +399,10 @@ mod tests {
             let mut moves = Vec::new();
             for _ in 0..rng.below(160) {
                 let legal = pos.legal_moves();
-                let Some(m) = rng.pick(&legal).cloned() else {
+                let Some(m) = rng.pick(&legal).copied() else {
                     break;
                 };
-                pos.play_unchecked(m.clone());
+                pos.play_unchecked(m);
                 moves.push(m);
             }
             let code = encode_line(&start, &moves).unwrap();
@@ -411,7 +411,7 @@ mod tests {
             let mut pos = start.clone();
             for m in &moves {
                 assert_eq!(unpack_move(&pos, pack_move(m)).as_ref(), Some(m));
-                pos.play_unchecked(m.clone());
+                pos.play_unchecked(*m);
             }
         });
     }
@@ -421,7 +421,7 @@ mod tests {
         let pos =
             rules::standard_from_fen("r3k2r/pPpp1ppp/8/8/8/8/PPPP1PPP/R3K2R w KQkq - 0 1").unwrap();
         for m in pos.legal_moves() {
-            assert_eq!(unpack_move(&pos, pack_move(&m)), Some(m.clone()));
+            assert_eq!(unpack_move(&pos, pack_move(&m)), Some(m));
         }
     }
 

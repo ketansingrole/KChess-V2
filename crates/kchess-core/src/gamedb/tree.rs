@@ -262,7 +262,7 @@ impl TreeBuilder {
         let mut insert = db.prepare_cached(sql).sql()?;
         let mut written = 0u64;
         self.merged(|key, mv, s| {
-            if written % 65_536 == 0 && cancelled() {
+            if written.is_multiple_of(65_536) && cancelled() {
                 return Err(CoreError::new("Import cancelled."));
             }
             insert
