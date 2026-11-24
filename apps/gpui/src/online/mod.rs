@@ -152,6 +152,8 @@ pub struct OnlineState {
     /// How long after a failed check for a game in progress the next one runs; doubles up to
     /// `RECHECK_MAX`, and starts over once a check answers.
     recheck_after: Duration,
+    /// A retry came due while a check was underway (`retry_if_due`).
+    recheck_due: bool,
     _recheck: Option<Task<()>>,
 }
 
@@ -323,6 +325,7 @@ impl OnlineState {
         for effect in &outcome.effects {
             self.run(effect, cause, cx);
         }
+        self.retry_if_due(cx);
         cx.notify();
         outcome
     }
@@ -831,6 +834,7 @@ impl OnlineState {
             CoreEvent::Assistance(assistance) => {
                 self.assistance_reports += 1;
                 self.assistance = *assistance;
+                self.retry_if_due(cx);
                 cx.notify();
             }
             CoreEvent::OnlineError(message) => notice(cx, message.clone()),
@@ -916,6 +920,7 @@ pub fn init(cx: &mut App) {
             assistance: Assistance::Unverified,
             assistance_reports: 0,
             recheck_after: RECHECK_FIRST,
+            recheck_due: false,
             _recheck: None,
         };
         state.read_assistance(cx);
@@ -1021,6 +1026,8 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
             if state.resumes != attempt {
                 return;
             }
+            // This check's own end settles a retry that came due during it.
+            state.recheck_due = false;
             if resumed.is_ok() {
                 state.recheck_after = RECHECK_FIRST;
                 state._recheck = None;

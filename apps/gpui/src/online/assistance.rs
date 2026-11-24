@@ -97,6 +97,21 @@ impl OnlineState {
             cx.update(check_again);
         }));
     }
+
+    /// A retry that came due during a check is made once that check has failed too.
+    pub(super) fn retry_if_due(&mut self, cx: &mut Context<Self>) {
+        if !self.recheck_due {
+            return;
+        }
+        match self.pause() {
+            Some(Pause::Unverified) => {
+                self.recheck_due = false;
+                cx.defer(check_again);
+            }
+            None => self.recheck_due = false,
+            _ => {}
+        }
+    }
 }
 
 /// Ask Lichess again for a game in progress after a check that failed (its Check again button,
@@ -109,9 +124,17 @@ pub fn check_again(cx: &mut App) {
         return;
     };
     let failed = state.update(cx, |state, cx| {
-        if state.pause() != Some(Pause::Unverified) {
-            return false;
+        match state.pause() {
+            Some(Pause::Unverified) => {}
+            // A check that is not this app's own (the core's, after reconnecting) may fail
+            // without anything asking again: the retry waits for it to end.
+            Some(Pause::Checking) => {
+                state.recheck_due = true;
+                return false;
+            }
+            _ => return false,
         }
+        state.recheck_due = false;
         state._recheck = None;
         state.transition(Model::checking, None, cx);
         true
