@@ -724,6 +724,14 @@ fn reached(db: &Connection, query: &GameDbQuery, stop: &AtomicBool) -> Result<Ve
 #[derive(Default)]
 pub struct Listed(Mutex<Option<(String, std::sync::Arc<Vec<Reached>>)>>);
 
+impl Listed {
+    /// Forgets the games kept: their database was removed or written afresh, and a file written
+    /// again counts its imports from the first, so the key alone would not tell.
+    pub fn forget(&self) {
+        lock(&self.0).take();
+    }
+}
+
 /// One page of the games `query` matches that reached its position, in its order.
 pub fn games_at(
     db: &Connection,

@@ -13,6 +13,10 @@ use crate::tasks::lock;
 /// The connection of an app that embeds the core, and of calls made outside any connection.
 pub const APP: u64 = 0;
 
+/// The origin of the core's own writes (a background job's): no client made them, so every
+/// window reads them again.
+pub const NOBODY: u64 = u64::MAX;
+
 pub use kchess_contracts::Capability;
 
 /// Who a client is, as it says when it connects.

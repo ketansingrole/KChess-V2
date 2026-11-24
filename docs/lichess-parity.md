@@ -70,10 +70,11 @@ can add them as a friend, challenge them or watch their current game.
   and Player databases list notable games, which open on the analysis board. A _Follow moves_
   switch refreshes the explorer as you move. A variant game is looked up in Lichess's games of
   that variant (the Lichess and Player databases). Beyond Lichess, a **Database** tab looks the
-  position up in a game database on this computer (an imported PGN file), filtered by player,
-  colour, both players' rating and a year, and lists its best-rated games. The **Database**
-  page lists a game database's games, searched by player, side, event, years, rating and
-  result, a page at a time, and opens any on the analysis board; the analysis board's
+  position up in a game database on this computer (an imported PGN file, or **Your games**: the
+  synced Lichess and Chess.com games and the finished games of Game history, kept up to date),
+  filtered by player, colour, both players' rating and a year, and lists its best-rated games.
+  The **Database** page lists a game database's games, searched by player, side, event, years,
+  rating and result, a page at a time, and opens any on the analysis board; the analysis board's
   _Games with this position_ lists the games that reached its position, at any depth. A PGN
   file dropped on the page is imported. _Master games_ downloads Lichess's broadcast archive
   (over-the-board games since 2020, CC BY-SA 4.0, shown under its games) month by month, checking

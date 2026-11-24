@@ -20,14 +20,12 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
+use crate::connection::NOBODY;
 use crate::host::{Host, Level};
 use crate::lichess::accounts::Lichess;
 use crate::store::Database;
 use crate::store::library;
 use crate::time::now_ms;
-
-/// The origin of the watch's own writes: no client made them, so every window reads them again.
-const NOBODY: u64 = u64::MAX;
 
 /// How often a tournament is looked at around a chosen round's start: from `NEAR` before it
 /// until it goes live, for up to `LATE` after it was due.

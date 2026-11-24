@@ -4,12 +4,14 @@
 //! fails or is cancelled leaves every database as it was (`import`). Searches read each file
 //! through its own read-only lane, so they go on while an import writes. One import (or the
 //! master games download, `master`) runs at a time; its progress reaches every window as
-//! `gamedb:progress`.
+//! `gamedb:progress`. One database, "Your games", is kept in step with the player's own games
+//! (`own`), rebuilt when no import or download runs.
 
 pub mod deep;
 pub mod explore;
 pub mod import;
 pub mod master;
+pub mod own;
 pub mod schema;
 pub mod search;
 pub mod tree;
@@ -23,6 +25,7 @@ use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 use crate::host::{Config, Host, Level};
+use crate::store::Database;
 use crate::store::sql::{Lane, LaneMessages, Sql as _};
 use crate::tasks::lock;
 use kchess_contracts::CoreEvent;
@@ -62,6 +65,8 @@ struct Inner {
     running: Mutex<Option<Arc<Running>>>,
     /// The games the last position search found, for its other pages.
     listed: Arc<explore::Listed>,
+    /// "Your games" and the keeper that rebuilds it.
+    own: own::Own,
 }
 
 pub struct GameDbService {
@@ -98,6 +103,8 @@ impl Drop for Importing<'_> {
             message: None,
         });
         self.inner.host.emit(CoreEvent::GameDbProgress(end));
+        // A rebuild of "Your games" waiting for the import to end goes ahead.
+        self.inner.own.idle.notify_waiters();
     }
 }
 
@@ -280,15 +287,21 @@ impl Inner {
         result
     }
 
-    /// What an earlier run left when it was stopped mid-import: partial files and tree runs.
+    /// What an earlier run left when it was stopped mid-import: partial files and run files.
+    /// Only while nothing writes a database: the slot's lock is held, so none starts meanwhile.
     fn sweep(&self) {
+        let running = lock(&self.running);
+        if running.is_some() || self.own.building() {
+            return;
+        }
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
             return;
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = entry.path();
-            if name.starts_with(".tree-") {
+            // The run files of the opening tree and of the position index.
+            if name.starts_with(".tree-") || name.starts_with(".deep-") {
                 std::fs::remove_dir_all(&path).ok();
             } else if name.ends_with(".partial") {
                 import::remove_files(&path);
@@ -390,15 +403,37 @@ impl GameDbService {
                 readers: Mutex::new(HashMap::new()),
                 running: Mutex::new(None),
                 listed: Arc::default(),
+                own: own::Own::new(),
             }),
         }
     }
 
+    /// Keeps "Your games" in step with `database`'s own games, from now until `stop`.
+    pub fn keep_own(&self, database: Arc<Database>) {
+        own::start(&self.inner, database, own::QUIET);
+    }
+
+    /// `keep_own`, following the games once they have not changed for `quiet`.
+    #[cfg(test)]
+    fn keep_own_after(&self, database: Arc<Database>, quiet: Duration) {
+        own::start(&self.inner, database, quiet);
+    }
+
+    /// What the keeper of "Your games" has done, as it does it.
+    #[cfg(test)]
+    fn own_report(&self) -> tokio::sync::watch::Receiver<own::Report> {
+        own::report(&self.inner)
+    }
+
+    /// Tests: "Your games" follows the games as they are now, without waiting for quiet; what the
+    /// keeper has done once it has.
+    pub async fn settle_own(&self) -> own::Report {
+        own::settle(&self.inner).await
+    }
+
     pub async fn status(&self) -> Result<GameDbStatus> {
         let busy = self.inner.running().is_some();
-        if !busy {
-            self.inner.sweep();
-        }
+        self.inner.sweep();
         let mut databases = Vec::new();
         for id in self.inner.ids() {
             match self.inner.info(&id).await {
@@ -428,6 +463,10 @@ impl GameDbService {
             ));
         }
         *slot = Some(Arc::clone(&running));
+        // A rebuild of "Your games" gives way, and runs again once this run has ended.
+        if let Some(build) = lock(&self.inner.own.build).as_ref() {
+            build.cancel();
+        }
         Ok(Importing {
             inner: &self.inner,
             running,
@@ -461,6 +500,7 @@ impl GameDbService {
         let path = PathBuf::from(path);
         let id = match &into {
             Some(id) => {
+                own::refuse(id, "Your games holds only your own games.")?;
                 if !self.inner.file(id).is_file() {
                     return Err(CoreError::new("That database is not on this computer."));
                 }
@@ -526,16 +566,23 @@ impl GameDbService {
     }
 
     pub async fn delete(&self, id: &str) -> Result<GameDbStatus> {
+        own::refuse(
+            id,
+            "Your games follows the games you sync and play, so it can't be deleted.",
+        )?;
         self.refuse_while_importing(id)?;
         if !self.inner.file(id).is_file() {
             return Err(CoreError::new("That database is not on this computer."));
         }
         self.inner.release(id).await;
         import::remove_files(&self.inner.file(id));
+        // A database made again under this id (the master games) counts its imports afresh.
+        self.inner.listed.forget();
         self.status().await
     }
 
     pub async fn rename(&self, id: &str, name: String) -> Result<GameDbStatus> {
+        own::refuse(id, "Your games can't be renamed.")?;
         self.refuse_while_importing(id)?;
         let file = self.inner.file(id);
         if !file.is_file() {
@@ -616,9 +663,17 @@ impl GameDbService {
         })
     }
 
-    /// Stops the import and releases every file.
-    pub async fn close(&self) {
+    /// Stops the import and the rebuild of "Your games"; `close` waits for them to end.
+    pub fn stop(&self) {
         self.cancel();
+        own::stop(&self.inner);
+    }
+
+    /// Stops the import and the rebuild of "Your games", waits for the rebuild to end, and
+    /// releases every file.
+    pub async fn close(&self) {
+        self.stop();
+        own::close(&self.inner).await;
         let lanes: Vec<Arc<Lane>> = lock(&self.inner.readers).drain().map(|(_, l)| l).collect();
         for lane in lanes {
             lane.close().await;

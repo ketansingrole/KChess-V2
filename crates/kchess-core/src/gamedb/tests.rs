@@ -753,6 +753,446 @@ fn a_filter_every_game_matches_finds_what_the_tree_finds() {
     });
 }
 
+/* ── "Your games" ── */
+
+/// A profile's store and game databases, with Alice's Lichess account to sync.
+struct Own {
+    profile: tempfile::TempDir,
+    database: Arc<Database>,
+    games: Arc<GameDbService>,
+    host: Arc<TestHost>,
+}
+
+/// Longer than any test: the keeper runs a pass only when the test settles it.
+const NEVER_QUIET: Duration = Duration::from_secs(3_600);
+
+impl Own {
+    async fn new(profile: tempfile::TempDir) -> Own {
+        let host = TestHost::new();
+        let config = Config::new(profile.path().to_path_buf());
+        let database = Arc::new(Database::new(config.clone(), host.clone()));
+        database
+            .write_async(|ctx| crate::store::games::add_account(ctx.db, "Alice", true))
+            .await
+            .unwrap();
+        Own {
+            games: Arc::new(GameDbService::new(&config, host.clone())),
+            profile,
+            database,
+            host,
+        }
+    }
+
+    /// The keeper, following the games once they have not changed for `quiet`.
+    fn keep(&self, quiet: Duration) {
+        self.games.keep_own_after(Arc::clone(&self.database), quiet);
+    }
+
+    /// The core closed and another opened on the same profile, as the next start does.
+    async fn reopened(self) -> Own {
+        self.games.close().await;
+        self.database.close_async().await;
+        Own::new(self.profile).await
+    }
+
+    async fn sync(&self, games: Vec<serde_json::Value>) {
+        self.database
+            .write_async(move |ctx| {
+                crate::store::games::save_games_page(ctx.host, ctx.db, "Alice", &games, &[])
+            })
+            .await
+            .unwrap();
+    }
+
+    /// A game against the computer, the fool's mate, finished or still being played.
+    async fn play(&self, id: &str, finished: bool) {
+        let result = if finished { "0-1" } else { "*" };
+        self.play_line(id, &["f2f3", "e7e5", "g2g4", "d8h4"], result)
+            .await;
+    }
+
+    /// A finished game against the computer: its UCI moves and its result.
+    async fn play_line(&self, id: &str, moves: &[&str], result: &str) {
+        let finished = result != "*";
+        let game = kchess_domain::library::decode_archived_game(&serde_json::json!({
+            "id": id, "source": "computer", "startedAt": 1_761_091_200_000.0_f64,
+            "updatedAt": 1_761_091_260_000.0_f64, "white": "Stockfish", "black": "You",
+            "result": result, "reason": "checkmate",
+            "timeControl": "-", "finished": finished,
+            "setup": { "variant": "standard", "fen": START },
+            "moves": moves,
+        }))
+        .unwrap();
+        self.database
+            .write_async(move |ctx| crate::store::library::write_game(ctx.db, &game))
+            .await
+            .unwrap();
+    }
+
+    async fn remove_played(&self, id: &'static str) {
+        self.database
+            .write_async(move |ctx| crate::store::library::remove_archived_game(ctx.db, id))
+            .await
+            .unwrap();
+    }
+
+    async fn own(&self) -> Option<DatabaseInfo> {
+        let status = self.games.status().await.unwrap();
+        status
+            .databases
+            .into_iter()
+            .find(|database| database.id == own::OWN_ID)
+    }
+
+    /// Waits for the keeper's `rebuilds`th rebuild: told by the keeper, never slept for.
+    async fn rebuilt(&self, rebuilds: u64) {
+        let mut report = self.games.own_report();
+        tokio::time::timeout(
+            Duration::from_secs(60),
+            report.wait_for(|report| report.rebuilds >= rebuilds),
+        )
+        .await
+        .expect("the rebuild ends")
+        .unwrap();
+    }
+
+    /// The names of what a rebuild writes before its database is whole.
+    fn half_written(&self) -> Vec<String> {
+        std::fs::read_dir(&self.games.inner.dir)
+            .map(|entries| {
+                entries
+                    .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                    .filter(|name| {
+                        name.ends_with(".partial")
+                            || name.starts_with(".tree-")
+                            || name.starts_with(".deep-")
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// A synced Lichess game of Alice's: with Lichess's PGN, or with only its moves.
+fn synced(id: &str, sans: &[&str], with_pgn: bool) -> serde_json::Value {
+    let numbered: Vec<String> = sans
+        .chunks(2)
+        .enumerate()
+        .map(|(n, pair)| format!("{}. {}", n + 1, pair.join(" ")))
+        .collect();
+    let pgn = format!(
+        "[Event \"Rated blitz game\"]\n[Site \"https://lichess.org/{id}\"]\n\
+         [Date \"2026.10.01\"]\n[White \"Alice\"]\n[Black \"Bob\"]\n[Result \"1-0\"]\n\
+         [WhiteElo \"1900\"]\n[BlackElo \"1850\"]\n\n{} 1-0\n",
+        numbered.join(" ")
+    );
+    serde_json::json!({
+        "account": "Alice", "id": id, "createdAt": 1_759_276_800_000_i64,
+        "lastMoveAt": 1_759_277_000_000_i64, "rated": true, "speed": "blitz", "perf": "blitz",
+        "status": "resign", "winner": "white", "color": "white", "opponent": "Bob",
+        "opponentRating": 1850, "playerRating": 1900, "ratingDiff": 6,
+        "moves": sans.join(" "),
+        "pgn": if with_pgn { serde_json::Value::String(pgn) } else { serde_json::Value::Null },
+    })
+}
+
+/// A game that reaches its own position only past the opening tree: e4 e5, the knights go out
+/// and back ten times (40 plies), then h4 h5, then `then`. Its UCI moves, and the FEN after h4
+/// h5, 44 plies in.
+fn past_the_tree(then: &[&'static str]) -> (Vec<&'static str>, String) {
+    let mut moves: Vec<&'static str> = vec!["e2e4", "e7e5"];
+    for _ in 0..10 {
+        moves.extend(["g1f3", "g8f6", "f3g1", "f6g8"]);
+    }
+    moves.extend(["h2h4", "h7h5"]);
+    let mut pos = shakmaty::Chess::default();
+    for uci in &moves {
+        let m = uci
+            .parse::<shakmaty::uci::UciMove>()
+            .unwrap()
+            .to_move(&pos)
+            .unwrap();
+        pos.play_unchecked(m);
+    }
+    let fen = shakmaty::fen::Fen::from_position(&pos, shakmaty::EnPassantMode::Legal).to_string();
+    moves.extend(then);
+    (moves, fen)
+}
+
+fn by(player: &str) -> GameDbQuery {
+    GameDbQuery {
+        player: Some(player.to_string()),
+        ..query(own::OWN_ID)
+    }
+}
+
+/// The synced games and the finished played ones become "Your games" after a quiet moment, and
+/// it follows them: a removed game leaves it, and with no games left it is gone. Other databases
+/// stay as they are, and "Your games" is never renamed, deleted or imported into.
+#[tokio::test]
+async fn your_games_follow_the_synced_and_played_games() {
+    let own = Own::new(tempfile::tempdir().unwrap()).await;
+    own.sync(vec![
+        synced("g1", &["e4", "e5", "Nf3"], true),
+        // An older game kept without Lichess's PGN is written from its moves.
+        synced("g2", &["d4", "d5", "c4"], false),
+    ])
+    .await;
+    own.play("won", true).await;
+    // A game still being played waits until it ends.
+    own.play("playing", false).await;
+    let (long, deep) = past_the_tree(&["a2a4", "a7a5"]);
+    own.play_line("long", &long, "0-1").await;
+    own.keep(Duration::from_millis(20));
+    own.rebuilt(1).await;
+    let listed = own.own().await.expect("Your games is listed");
+    assert_eq!(
+        (listed.name.as_str(), listed.source, listed.games),
+        ("Your games", DatabaseSource::Own, 4)
+    );
+    assert_eq!(own.games.games(by("alice")).await.unwrap().total, 2);
+    let played = own.games.games(by("you")).await.unwrap();
+    assert_eq!(played.total, 2);
+    let pgn = own
+        .games
+        .game(own::OWN_ID, played.games[0].id)
+        .await
+        .unwrap();
+    assert!(pgn.contains("[Event \"KChess computer game\"]"), "{pgn}");
+    assert!(pgn.contains("[Date \"2025.10.22\"]"), "{pgn}");
+    let found = own
+        .games
+        .lookup(START.into(), in_database(own::OWN_ID))
+        .await
+        .unwrap()
+        .saved;
+    assert_eq!(counted(&found), ["d4 1/0/0", "e4 1/0/1", "f3 0/0/1"]);
+    // Past the opening tree, the position index finds the game too.
+    let past = |own: &Own| {
+        let (games, deep) = (Arc::clone(&own.games), deep.clone());
+        async move {
+            let found = games
+                .lookup(deep, in_database(own::OWN_ID))
+                .await
+                .unwrap()
+                .saved;
+            counted(&found)
+        }
+    };
+    assert_eq!(past(&own).await, ["a4 0/0/1"]);
+    let changed = own.host.named("profile:changed");
+    assert!(
+        changed
+            .iter()
+            .any(|change| change["areas"] == serde_json::json!(["gameDb"])),
+        "{changed:?}"
+    );
+
+    // A finished game leaves Game history, and "Your games" follows.
+    own.remove_played("won").await;
+    own.rebuilt(2).await;
+    assert_eq!(own.own().await.unwrap().games, 3);
+    assert_eq!(own.games.games(by("you")).await.unwrap().total, 1);
+    // Another game through the same late position comes, and the first goes: the position index
+    // is the new games' alone, as the tree is.
+    let (other, _) = past_the_tree(&["b2b4", "b7b5"]);
+    own.play_line("other", &other, "1/2-1/2").await;
+    own.rebuilt(3).await;
+    assert_eq!(past(&own).await, ["a4 0/0/1", "b4 0/1/0"]);
+    own.remove_played("long").await;
+    own.rebuilt(4).await;
+    assert_eq!(own.own().await.unwrap().games, 3);
+    assert_eq!(past(&own).await, ["b4 0/1/0"]);
+    let file = schema::open_read(&own.games.inner.file(own::OWN_ID)).unwrap();
+    assert!(deep::built(&file).unwrap());
+    drop(file);
+
+    let files = tempfile::tempdir().unwrap();
+    let theirs = imported(&own.games, source(files.path(), "g.pgn", GAMES.as_bytes()))
+        .await
+        .database
+        .id;
+    let refused = own.games.rename(own::OWN_ID, "Mine".into()).await;
+    assert_eq!(refused.unwrap_err().message, "Your games can't be renamed.");
+    assert!(own.games.delete(own::OWN_ID).await.is_err());
+    let into = own
+        .games
+        .import(
+            source(files.path(), "more.pgn", GAMES.as_bytes()),
+            false,
+            Some(own::OWN_ID.into()),
+            None,
+            DatabaseSource::Imported,
+        )
+        .await;
+    assert_eq!(
+        into.unwrap_err().message,
+        "Your games holds only your own games."
+    );
+    assert_eq!(own.own().await.unwrap().games, 3);
+
+    // Clearing the account's games leaves the played one; with it gone there are none: no
+    // database, rather than an empty one.
+    own.database
+        .write_async(|ctx| crate::store::games::clear_account_data(ctx.db, "Alice"))
+        .await
+        .unwrap();
+    own.rebuilt(5).await;
+    assert_eq!(own.own().await.unwrap().games, 1);
+    own.remove_played("other").await;
+    own.rebuilt(6).await;
+    assert!(own.own().await.is_none());
+    assert!(!own.games.inner.file(own::OWN_ID).exists());
+    let status = own.games.status().await.unwrap();
+    let ids: Vec<&str> = status.databases.iter().map(|d| d.id.as_str()).collect();
+    assert_eq!(ids, [theirs.as_str()]);
+    own.games.close().await;
+}
+
+/// The games a position search found in "Your games" are found again once it is written
+/// afresh: a new file counts its imports from the first again, as the one it replaced did, so the
+/// search kept from before would otherwise stand for it.
+#[tokio::test]
+async fn a_position_search_follows_your_games_written_afresh() {
+    let own = Own::new(tempfile::tempdir().unwrap()).await;
+    own.keep(NEVER_QUIET);
+    let at_start = || GameDbQuery {
+        position: Some(START.to_string()),
+        ..query(own::OWN_ID)
+    };
+    own.sync(vec![synced("g1", &["e4", "e5"], true)]).await;
+    own.games.settle_own().await;
+    assert_eq!(own.games.games(at_start()).await.unwrap().total, 1);
+    own.database
+        .write_async(|ctx| crate::store::games::clear_account_data(ctx.db, "Alice"))
+        .await
+        .unwrap();
+    own.games.settle_own().await;
+    assert!(own.own().await.is_none());
+    own.sync(vec![
+        synced("g2", &["d4", "d5"], true),
+        synced("g3", &["c4", "e5"], true),
+    ])
+    .await;
+    assert_eq!(own.games.settle_own().await.rebuilds, 3);
+    assert_eq!(own.games.games(at_start()).await.unwrap().total, 2);
+    own.games.close().await;
+}
+
+/// A sync's pages and a played game in a burst are one rebuild, once the writes stop; a sync that
+/// writes the same games again writes nothing. The next start writes the database only when it
+/// is missing or older than the games.
+#[tokio::test]
+async fn a_burst_of_writes_is_one_rebuild_and_a_start_catches_up() {
+    let own = Own::new(tempfile::tempdir().unwrap()).await;
+    own.keep(NEVER_QUIET);
+    own.sync(vec![synced("g1", &["e4", "e5"], true)]).await;
+    own.sync(vec![synced("g2", &["d4", "d5"], true)]).await;
+    own.play("won", true).await;
+    own.sync(vec![synced("g3", &["c4", "e5"], true)]).await;
+    // Still writing: nothing is written yet.
+    assert_eq!(*own.games.own_report().borrow(), own::Report::default());
+    assert!(own.own().await.is_none());
+    let report = own.games.settle_own().await;
+    assert_eq!((report.passes, report.rebuilds), (1, 1));
+    assert_eq!(own.own().await.unwrap().games, 4);
+    own.sync(vec![synced("g3", &["c4", "e5"], true)]).await;
+    let report = own.games.settle_own().await;
+    assert_eq!((report.passes, report.rebuilds), (2, 1));
+
+    // The next start finds the database as the games are.
+    let own = own.reopened().await;
+    own.keep(NEVER_QUIET);
+    let report = own.games.settle_own().await;
+    assert_eq!((report.passes, report.rebuilds), (1, 0));
+    // A game synced while no keeper ran: the database is older than the games.
+    let own = own.reopened().await;
+    own.sync(vec![synced("g4", &["Nf3", "d5"], true)]).await;
+    own.keep(NEVER_QUIET);
+    assert_eq!(own.games.settle_own().await.rebuilds, 1);
+    assert_eq!(own.own().await.unwrap().games, 5);
+    // The database went missing.
+    let own = own.reopened().await;
+    import::remove_files(&own.games.inner.file(own::OWN_ID));
+    own.keep(NEVER_QUIET);
+    assert_eq!(own.games.settle_own().await.rebuilds, 1);
+    assert_eq!(own.own().await.unwrap().games, 5);
+    own.games.close().await;
+}
+
+/// A rebuild asked for while the player's import runs waits for the import to end.
+#[tokio::test]
+async fn a_rebuild_waits_for_the_import_running() {
+    let own = Own::new(tempfile::tempdir().unwrap()).await;
+    own.keep(NEVER_QUIET);
+    let files = tempfile::tempdir().unwrap();
+    let path = source(files.path(), "many.pgn", GAMES.repeat(2_000).as_bytes());
+    let importing = {
+        let games = Arc::clone(&own.games);
+        tokio::spawn(async move {
+            games
+                .import(path, false, None, None, DatabaseSource::Imported)
+                .await
+        })
+    };
+    while own.host.named("gamedb:progress").is_empty() {
+        tokio::task::yield_now().await;
+    }
+    own.sync(vec![synced("g1", &["e4", "e5"], true)]).await;
+    let settled = {
+        let games = Arc::clone(&own.games);
+        tokio::spawn(async move { games.settle_own().await })
+    };
+    own.games.cancel();
+    assert!(importing.await.unwrap().is_err());
+    assert_eq!(settled.await.unwrap().rebuilds, 1);
+    // The import's end came first, then "Your games".
+    let events = own.host.events();
+    let ended = events
+        .iter()
+        .position(|(name, body)| name == "gamedb:progress" && body["phase"] == "cancelled")
+        .expect("the import ended");
+    let rebuilt = events
+        .iter()
+        .position(|(name, _)| name == "profile:changed")
+        .expect("Your games was written");
+    assert!(ended < rebuilt, "{events:?}");
+    assert_eq!(own.own().await.unwrap().games, 1);
+    own.games.close().await;
+}
+
+/// Closing the service while it rebuilds ends the rebuild and waits for it: nothing is left
+/// half-written, and the next start writes the whole database.
+#[tokio::test]
+async fn closing_ends_a_rebuild_and_leaves_nothing_half_written() {
+    let own = Own::new(tempfile::tempdir().unwrap()).await;
+    let moves = ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6"];
+    let many: Vec<serde_json::Value> = (0..3_000)
+        .map(|n| synced(&format!("g{n}"), &moves, true))
+        .collect();
+    own.sync(many).await;
+    own.keep(NEVER_QUIET);
+    let mut report = own.games.own_report();
+    let settled = {
+        let games = Arc::clone(&own.games);
+        tokio::spawn(async move { games.settle_own().await })
+    };
+    report.wait_for(|report| report.building).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(60), own.games.close())
+        .await
+        .expect("closing waits for the rebuild to end");
+    // The keeper has ended: a settle no longer waits for it.
+    settled.await.unwrap();
+    assert!(!own.games.own_report().borrow().building);
+    assert_eq!(own.half_written(), Vec::<String>::new());
+    let own = own.reopened().await;
+    own.keep(NEVER_QUIET);
+    own.games.settle_own().await;
+    assert_eq!(own.own().await.unwrap().games, 3_000);
+    assert_eq!(own.half_written(), Vec::<String>::new());
+    own.games.close().await;
+}
+
 /// A position at any depth is found in every game that reached it, as replaying every game in
 /// full counts it: the tree's plies and those past it (the position index) together, with
 /// filters or without, the same position early in one game and late in another. A file whose

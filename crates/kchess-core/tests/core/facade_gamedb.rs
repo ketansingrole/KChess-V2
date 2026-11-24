@@ -154,3 +154,91 @@ async fn closing_the_core_ends_an_import_and_leaves_no_database() {
         .unwrap_or_default();
     assert!(left.is_empty(), "{left:?}");
 }
+
+/// The player's synced and played games become "Your games", which every list shows and the
+/// explorer looks positions up in, and which is never deleted while it has games.
+#[tokio::test]
+async fn your_games_are_a_database_the_core_keeps() {
+    use kchess_core::store::games;
+    use support::store::{library_game, list};
+
+    let profile = tempfile::tempdir().expect("profile");
+    let host = support::host();
+    let core = Core::open(Config::new(profile.path().to_path_buf()), host.clone()).expect("opens");
+    // The first call starts the core's background work, "Your games" with it.
+    let status = core.call("gameDbStatus", vec![]).await.expect("status");
+    assert_eq!(status["databases"], json!([]));
+    core.call("addAccount", vec![json!("Alice")])
+        .await
+        .expect("adds the account");
+    let pgn = "[White \"Alice\"]\n[Black \"Bob\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 1-0\n";
+    let synced = json!([
+        library_game("g1", &[("pgn", json!(pgn))]),
+        library_game("g2", &[("pgn", json!(pgn.replace("e4 e5", "d4 d5")))]),
+    ]);
+    core.database_for_tests()
+        .write_async(move |c| games::save_games(c.host, c.db, "Alice", list(&synced), Some(1)))
+        .await
+        .expect("synced");
+    let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    core.call(
+        "saveArchivedGame",
+        vec![json!({
+            "id": "board1", "source": "board", "startedAt": 1, "updatedAt": 2, "white": "Ana",
+            "black": "Ben", "result": "1/2-1/2", "reason": "agreement", "timeControl": "-",
+            "finished": true, "setup": { "variant": "standard", "fen": start },
+            "moves": ["e2e4", "c7c5"],
+        })],
+    )
+    .await
+    .expect("saves the played game");
+    let report = core.own_games_settled_for_tests().await;
+    assert_eq!(report.rebuilds, 1);
+    let status = core.call("gameDbStatus", vec![]).await.expect("status");
+    let own = &status["databases"][0];
+    assert_eq!(
+        (&own["id"], &own["name"], &own["source"], &own["games"]),
+        (
+            &json!("own"),
+            &json!("Your games"),
+            &json!("own"),
+            &json!(3)
+        )
+    );
+    core.call("resumeOnline", vec![])
+        .await
+        .expect("no game is live");
+    let lookup = core
+        .call(
+            "positionLookup",
+            vec![
+                json!("database"),
+                json!(start),
+                json!({ "database": "own" }),
+            ],
+        )
+        .await
+        .expect("looks up");
+    assert_eq!(lookup["total"], 3);
+    let page = core
+        .call(
+            "gameDbGames",
+            vec![json!({ "database": "own", "player": "alice", "offset": 0, "limit": 20 })],
+        )
+        .await
+        .expect("searches");
+    assert_eq!(page["total"], 2);
+    let refused = core
+        .call("gameDbDelete", vec![json!("own")])
+        .await
+        .expect_err("Your games stays");
+    assert!(refused.message.starts_with("Your games"), "{refused:?}");
+    let changed: Vec<Value> = host.named("profile:changed");
+    assert!(
+        changed
+            .iter()
+            .any(|change| change["areas"] == json!(["gameDb"])),
+        "{changed:?}"
+    );
+    core.close().await;
+}
