@@ -127,6 +127,10 @@ impl OnlineSession {
                         this.ongoing_changed();
                         return;
                     }
+                    // Help is locked as the game starts, not once the board has read the
+                    // account's login (a keychain prompt can take a while, or fail): until
+                    // the board has it, it is a game played elsewhere.
+                    this.started_elsewhere(&game_id, false);
                     let this = this.clone();
                     let account = for_account.clone();
                     tokio::spawn(async move {
@@ -144,6 +148,8 @@ impl OnlineSession {
                                 ),
                             );
                             this.report(&cause, None);
+                            // Not on the board: a check finds whether it is still played.
+                            this.ongoing_changed();
                         }
                     });
                 }

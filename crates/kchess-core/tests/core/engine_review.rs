@@ -1032,6 +1032,34 @@ async fn a_failed_review_closes_the_engine_left_open() {
     rig.reviews.stop_reviews().await;
 }
 
+/// A review whose stored copy cannot be read once its turn comes fails, said with its key, so
+/// whoever waits for it (`kchess-cli review`) stops waiting: it was dropped with a log line.
+#[tokio::test]
+async fn a_review_whose_store_fails_as_it_starts_is_reported_failed() {
+    let rig = rig("review", "store-fails", false, "off", true);
+    *rig.host.busy.lock().expect("busy") = Some(Pause::Online);
+    rig.reviews
+        .request_review(request(&SCHOLARS))
+        .await
+        .expect("the request");
+    wait_until(WAIT, "the review queued", || {
+        (rig.reviews.review_status().waiting == 1).then_some(())
+    })
+    .await;
+    rig.store
+        .database
+        .write(|c| {
+            c.db.execute_batch("ALTER TABLE reviews RENAME TO reviews_gone")
+                .map_err(|cause| kchess_contracts::CoreError::new(cause.to_string()))
+        })
+        .expect("the store breaks");
+    *rig.host.busy.lock().expect("busy") = None;
+    rig.reviews.reviews_changed();
+    let failed = wait_until(WAIT, "the failed review", || rig.host.last_status()?.failed).await;
+    assert_eq!(failed.key, key_of(START, &SCHOLARS));
+    rig.reviews.stop_reviews().await;
+}
+
 /// Offline, the automatic reviews mark the games looked up and review them here at once.
 #[tokio::test]
 async fn automatic_reviews_review_locally_when_lichess_cannot_be_reached() {

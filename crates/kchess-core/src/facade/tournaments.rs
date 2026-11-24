@@ -228,10 +228,13 @@ impl TournamentsApi for Core {
         account: Username,
     ) -> Result<Reply<bool>> {
         let lichess = self.services.lichess();
+        // A join (another window) kept while this leave waited for Lichess may be the newer:
+        // its place stays. Forgotten, the account's stream closed while Lichess had it entered.
+        let changes = self.memberships.seen(system, &id.0, &account.0);
         let left = tournaments::leave_tournament(lichess, system, &id.0, &account.0).await;
         let result = done(left)?;
         if result == Reply::Done(true) {
-            self.forget_tournament(system, &id.0, Some(&account.0), None)
+            self.forget_tournament(system, &id.0, Some(&account.0), Some(changes))
                 .await?;
         }
         Ok(result)

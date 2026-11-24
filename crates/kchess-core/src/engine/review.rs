@@ -1007,7 +1007,18 @@ async fn run(s: &Arc<Shared>, job: Arc<Job>) {
                 Level::Warn,
                 &format!("Review failed: {} {cause}", job.key),
             );
-            lock(&s.state).running = None;
+            let mut state = lock(&s.state);
+            state.running = None;
+            // Someone waits for this review (`kchess-cli review`): it ends with the failure,
+            // as an engine's does. Dropped unsaid, the wait never ended.
+            if !job.background.load(Ordering::SeqCst) {
+                state.failed = Some(ReviewFailure {
+                    key: job.key.clone(),
+                    message: cause.message.clone(),
+                });
+                drop(state);
+                send_status(s);
+            }
             return;
         }
     };

@@ -61,6 +61,9 @@ impl OnlineSession {
             });
             st.protected_game = id.to_string();
             st.protected_account = st.current_account.clone();
+            // On the board now, the board's game locks help: kept as played elsewhere too, its
+            // finish on the board alone would leave help locked.
+            st.elsewhere.remove(id);
             (handle, st.current_account.clone(), st.epoch)
         };
         let finished = Arc::new(AtomicBool::new(false));

@@ -416,3 +416,30 @@ fn a_refused_accept_leaves_the_board_on_its_game(cx: &mut gpui_kit::TestAppConte
     assert_eq!(accepted.get(), Some(false));
     assert_eq!((account.as_str(), id.as_str()), ("me", "Live1234"));
 }
+
+/// Accepting a live challenge while a real-time game is on the board leaves the board on that
+/// game until the core answers: moved to the challenge meanwhile, it dropped the game's moves.
+#[gpui_kit::test]
+fn an_accept_during_a_live_game_leaves_the_board_on_it(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_contracts::types::ChallengeInfo;
+    use kchess_domain::online_game::model::GamePhase;
+    let mut app = started(cx, None);
+    let online = settled(&mut app);
+    let challenge: ChallengeInfo = serde_json::from_value(serde_json::json!({
+        "id": "Chal5678", "account": "other", "direction": "in", "opponent": { "name": "Bob" },
+        "variant": "standard", "variantName": "Standard", "rated": false, "speed": "blitz",
+        "timeControl": { "type": "clock", "limit": 300, "increment": 3 }, "color": "white",
+        "playable": true, "receivedAt": 0,
+    }))
+    .expect("a challenge");
+    let id = app.with_window(|_, cx| {
+        online.update(cx, |state, cx| {
+            state.model.online_account = "me".into();
+            state.model.online_id = "Live1234".into();
+            state.set_phase(GamePhase::Playing, cx);
+            state.accept(&challenge, cx).detach();
+            state.model.online_id.clone()
+        })
+    });
+    assert_eq!(id, "Live1234");
+}

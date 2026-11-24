@@ -149,25 +149,29 @@ pub fn chapter_name(pgn: &str, index: usize) -> String {
     js::slice_utf16(&name, 120).to_string()
 }
 
-/// `/^\[NAME "([^"]*)"\]/m`: the value of the first tag line named `name`.
+/// The value of the first tag line named `name` (`[NAME "value"]`). A quote or a backslash in
+/// it comes escaped (`\"`, `\\`), as the PGN reader reads it: a reader that stopped at the
+/// first quote found no title, so a study renamed here was taken for unchanged and its name
+/// replaced.
 fn tag_value(pgn: &str, name: &str) -> Option<String> {
     let prefix = format!("[{name} \"");
-    let mut line_start = 0;
-    loop {
-        if pgn[line_start..].starts_with(&prefix) {
-            let value_start = line_start + prefix.len();
-            if let Some(quote) = pgn[value_start..].find('"') {
-                let end = value_start + quote;
-                if pgn[end + 1..].starts_with(']') {
-                    return Some(pgn[value_start..end].to_string());
-                }
+    pgn.lines().find_map(|line| {
+        let mut chars = line.strip_prefix(&prefix)?.chars();
+        let mut value = String::new();
+        loop {
+            match chars.next()? {
+                '"' => return chars.as_str().starts_with(']').then_some(value),
+                '\\' => match chars.next()? {
+                    escaped @ ('"' | '\\') => value.push(escaped),
+                    other => {
+                        value.push('\\');
+                        value.push(other);
+                    }
+                },
+                other => value.push(other),
             }
         }
-        {
-            let newline = pgn[line_start..].find('\n')?;
-            line_start += newline + 1
-        }
-    }
+    })
 }
 
 /// Every chapter of a study, with variations, comments and
@@ -685,5 +689,23 @@ mod tests {
         let undated = study_metadata(&serde_json::json!({ "id": "Study002", "name": "Undated" }))
             .expect("a record without timestamps");
         assert_eq!(undated.updated_at, 0);
+    }
+}
+
+#[cfg(test)]
+mod tag_tests {
+    use super::{chapter_name, study_name};
+
+    /// A title with a quote in it comes escaped: the reader once stopped at the first quote and
+    /// found no title, so a study renamed here was taken for unchanged and its name replaced.
+    #[test]
+    fn titles_with_quotes_are_read_whole() {
+        let pgn = "[Event \"Open \\\"A\\\"\"]\n[StudyName \"My \\\"Best\\\" Lines\"]\n\
+                   [ChapterName \"The \\\"Najdorf\\\"\"]\n\n1. e4 c5 *";
+        assert_eq!(study_name(pgn).as_deref(), Some("My \"Best\" Lines"));
+        assert_eq!(chapter_name(pgn, 0), "The \"Najdorf\"");
+        let unnamed = "[Event \"Open \\\"A\\\"\"]\n\n1. e4 *";
+        assert_eq!(chapter_name(unnamed, 0), "Open \"A\"");
+        assert_eq!(chapter_name("1. e4 *", 2), "Chapter 3");
     }
 }

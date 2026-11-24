@@ -303,6 +303,15 @@ impl OnlineSession {
         }
         {
             let mut st = self.st();
+            // Every account was checked: this is what is played elsewhere now, and a finish
+            // missed while the stream was down no longer keeps assistance locked. Kept before
+            // the flags clear and the session ends (which reports the lock): kept after, help
+            // was lent meanwhile during a game recovery had just found.
+            st.found_elsewhere(
+                std::mem::take(&mut checking.elsewhere),
+                checking.began,
+                true,
+            );
             st.recovery_unverified = false;
             st.accounts_unchecked = false;
         }
@@ -310,13 +319,6 @@ impl OnlineSession {
         let (session, account) = {
             let mut st = self.st();
             st.protected_game.clear();
-            // Every account was checked: this is what is played elsewhere now, and a finish
-            // missed while the stream was down no longer keeps assistance locked.
-            st.found_elsewhere(
-                std::mem::take(&mut checking.elsewhere),
-                checking.began,
-                true,
-            );
             (st.epoch, st.current_account.clone())
         };
         self.emit_state(session, &account, "", Lane::Game, OnlinePhase::Idle, None);

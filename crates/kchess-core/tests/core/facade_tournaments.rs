@@ -567,3 +567,67 @@ async fn two_accounts_joining_one_arena_both_keep_their_place() {
     assert_eq!(accounts, ["Alice", "Bob"], "{joined}");
     core.close().await;
 }
+
+/// A leave whose answer arrives after a join from another window keeps the join's place: it
+/// forgot the membership the join had just kept, though Lichess had the player entered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_leave_answered_after_a_rejoin_keeps_the_membership() {
+    let (release, gate) = tokio::sync::watch::channel(false);
+    let held = Arc::new(tokio::sync::Notify::new());
+    let streams: Arc<Mutex<Vec<tokio::sync::mpsc::UnboundedSender<String>>>> = Arc::default();
+    let fixture = serve({
+        let (held, streams) = (Arc::clone(&held), Arc::clone(&streams));
+        move |seen| match (seen.method.as_str(), seen.path()) {
+            (_, "/api/stream/event") => {
+                let (sender, events) = tokio::sync::mpsc::unbounded_channel();
+                streams.lock().unwrap().push(sender);
+                Reply::Stream(events)
+            }
+            ("GET", "/api/tournament/Abcd1234") => {
+                Reply::Json(200, detail(true, false).to_string())
+            }
+            ("POST", "/api/tournament/Abcd1234/withdraw") => {
+                held.notify_one();
+                let answer = Reply::Json(200, json!({ "ok": true }).to_string());
+                Reply::Gated(gate.clone(), Box::new(answer))
+            }
+            ("POST", "/api/tournament/Abcd1234/join") => {
+                Reply::Json(200, json!({ "ok": true }).to_string())
+            }
+            _ => Reply::Json(404, "{}".into()),
+        }
+    })
+    .await;
+    let profile = signed_in::open(&fixture.base).await;
+    let core = Arc::new(profile.core.clone());
+    let leave = tokio::spawn({
+        let core = Arc::clone(&core);
+        async move {
+            core.call(
+                "leaveTournament",
+                vec![json!("arena"), json!("Abcd1234"), json!("Alice")],
+            )
+            .await
+        }
+    });
+    held.notified().await;
+    assert_eq!(
+        core.call(
+            "joinTournament",
+            vec![
+                json!("arena"),
+                json!("Abcd1234"),
+                json!("Alice"),
+                Value::Null
+            ],
+        )
+        .await
+        .unwrap(),
+        json!(true)
+    );
+    let _ = release.send(true);
+    assert_eq!(leave.await.unwrap().unwrap(), json!(true));
+    let joined = core.call("joinedTournaments", vec![]).await.unwrap();
+    assert_eq!(joined.as_array().map(Vec::len), Some(1), "{joined}");
+    core.close().await;
+}
