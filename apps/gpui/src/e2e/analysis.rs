@@ -1367,6 +1367,76 @@ fn the_explorer_looks_up_a_crazyhouse_position_in_its_variant(cx: &mut gpui_kit:
     });
 }
 
+const TATA_STEEL: &str = r#"[Event "Tata Steel"]
+[Date "2024.01.20"]
+[White "Carlsen, Magnus"]
+[Black "Gukesh D"]
+[Result "1-0"]
+[WhiteElo "2830"]
+[BlackElo "2725"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 1-0
+
+[Event "Tata Steel"]
+[Date "2024.01.21"]
+[White "Gukesh D"]
+[Black "Carlsen, Magnus"]
+[Result "1/2-1/2"]
+[WhiteElo "2725"]
+[BlackElo "2830"]
+
+1. Nf3 Nc6 2. e4 e5 3. d4 exd4 1/2-1/2
+
+[Event "Club"]
+[White "Smith"]
+[Black "Jones"]
+[Result "0-1"]
+
+1. d4 d5 2. c4 0-1
+"#;
+
+/// With no game database yet, the explorer's Database tab imports a PGN file, then looks the
+/// position up in it: the moves its games played, those of one player with one side, and a
+/// listed game opened on the board.
+#[gpui_kit::test]
+fn the_explorer_imports_a_game_database_and_looks_positions_up_in_it(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut app = analysis(cx);
+    app.click("Explorer");
+    app.click_label("Database");
+    let files = tempfile::tempdir().expect("a folder for the file");
+    let path = files.path().join("tata.pgn");
+    std::fs::write(&path, TATA_STEEL).expect("the file");
+    app.click("gamedb-import");
+    app.wait_for_open_dialog();
+    app.cx
+        .simulate_path_prompt_response(move |_| Some(vec![path]));
+    let shows =
+        |window: &mut gpui_kit::Window, label: &str| window.try_find_by_label(label).is_some();
+    app.wait_for("every game's first move", |window, _| {
+        ["Play e4", "Play Nf3", "Play d4"]
+            .iter()
+            .all(|label| shows(window, label))
+    });
+    assert!(!app.shows("gamedb-import"), "the import is done");
+
+    // Carlsen's games, then only those he had Black in.
+    app.click_label("Player name");
+    app.type_text("carlsen");
+    app.wait_for("Carlsen's moves", |window, _| {
+        shows(window, "Play e4") && !shows(window, "Play d4")
+    });
+    app.click_label("as Black");
+    app.wait_for("Carlsen's moves with Black", |window, _| {
+        shows(window, "Play Nf3") && !shows(window, "Play e4")
+    });
+    // Its one game, listed under the moves, opens on the board.
+    app.click(("explorer-game", 0usize));
+    app.click("Moves");
+    app.find("tree-g1f3 b8c6 e2e4 e7e5");
+}
+
 /// A public Lichess study's link imports the chapter it names, or the study's first, in its own
 /// variant.
 #[gpui_kit::test]

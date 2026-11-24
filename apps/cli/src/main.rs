@@ -86,6 +86,7 @@ commands! {
     }
     Explore "explore" [] {
         "[masters|opening|tablebase] [--variant name] <fen|startpos|moves>" => "Look a position up (the tablebase for 7 pieces or fewer)",
+        "database <id> <fen|startpos|moves>" => "Look a position up in a game database on this computer",
     }
     Opening "opening" [] {
         "<fen|startpos|moves>" => "Name the opening a position or line reaches (ECO)",
@@ -798,6 +799,7 @@ fn position_info(words: &[String]) -> Result<Value, String> {
 /// What `explore` looks up: the database named first, else the tablebase when it covers the
 /// position (seven pieces or fewer, no castling rights) and the masters' games when not. A
 /// variant's position (`--variant`, or a PGN's header) is looked up in Lichess's games of it.
+/// `database` is followed by a game database's id (`gameDbStatus`).
 fn explore_request(
     words: &[String],
 ) -> Result<(PositionLookupKind, String, LookupOptions), String> {
@@ -807,7 +809,24 @@ fn explore_request(
         .and_then(|word| serde_json::from_value(json!(word)).ok())
         .filter(|kind| *kind != PositionLookupKind::Player);
     let words = if named.is_some() { &words[1..] } else { words };
+    let (database, words) = match (named, words) {
+        (Some(PositionLookupKind::Database), [id, rest @ ..]) => (Some(id.clone()), rest),
+        (Some(PositionLookupKind::Database), []) => {
+            return Err("explore database requires a database's id.".into());
+        }
+        _ => (None, words),
+    };
     let request = analysis_request("explore", words)?;
+    if database.is_some() {
+        if request.variant.is_some() {
+            return Err("Game databases are standard chess only.".into());
+        }
+        let options = LookupOptions {
+            database,
+            ..LookupOptions::default()
+        };
+        return Ok((PositionLookupKind::Database, request.fen, options));
+    }
     let fen = request.fen;
     if let Some(variant) = request.variant.as_deref().and_then(Variant::from_key) {
         return match named {
@@ -1244,6 +1263,32 @@ mod tests {
         assert_eq!(
             explore_request(&strings(&["masters", "--variant", "atomic", "startpos"])),
             Err("Masters games and tablebases are standard chess only.".into())
+        );
+        // A game database is named by its id, before the position.
+        assert_eq!(
+            explore_request(&strings(&["database", "twic-1", "1.", "e4"])),
+            Ok((
+                PositionLookupKind::Database,
+                "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1".to_string(),
+                LookupOptions {
+                    database: Some("twic-1".into()),
+                    ..standard()
+                }
+            ))
+        );
+        assert_eq!(
+            explore_request(&strings(&["database"])),
+            Err("explore database requires a database's id.".into())
+        );
+        assert_eq!(
+            explore_request(&strings(&[
+                "database",
+                "twic-1",
+                "--variant",
+                "atomic",
+                "startpos"
+            ])),
+            Err("Game databases are standard chess only.".into())
         );
     }
 

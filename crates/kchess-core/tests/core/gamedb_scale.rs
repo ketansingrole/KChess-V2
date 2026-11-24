@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use kchess_contracts::types::{DatabaseSource, GameDbQuery, GameDbSort};
+use kchess_contracts::types::{DatabaseSource, GameDbQuery, GameDbSort, LookupOptions};
 use kchess_core::Config;
 use kchess_core::gamedb::{GameDbService, schema};
 use rusqlite::OptionalExtension as _;
@@ -278,6 +278,99 @@ async fn gamedb_scale() {
             samples.push(begun.elapsed());
         }
         println!("search {label} ({total} games): {}", percentiles(samples));
+    }
+    // The explorer: the tree alone, and filters that replay the games they match.
+    let lines = [
+        ("start", ""),
+        ("1.e4 c5", "e4 c5"),
+        ("Najdorf", "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6"),
+    ];
+    let filters = [
+        ("no filter", LookupOptions::default()),
+        (
+            "carlsen",
+            LookupOptions {
+                player: Some("carlsen".into()),
+                ..LookupOptions::default()
+            },
+        ),
+        (
+            "carlsen as white",
+            LookupOptions {
+                player: Some("carlsen".into()),
+                color: Some(shakmaty::Color::White),
+                ..LookupOptions::default()
+            },
+        ),
+        (
+            "both 2700+",
+            LookupOptions {
+                min_elo: Some(2700),
+                ..LookupOptions::default()
+            },
+        ),
+        // Near and past the most games a lookup replays (`explore::REPLAY_MAX`).
+        (
+            "both 2400+",
+            LookupOptions {
+                min_elo: Some(2400),
+                ..LookupOptions::default()
+            },
+        ),
+        (
+            "both 2450+",
+            LookupOptions {
+                min_elo: Some(2450),
+                ..LookupOptions::default()
+            },
+        ),
+        (
+            "since 2025",
+            LookupOptions {
+                since: Some("2025".into()),
+                ..LookupOptions::default()
+            },
+        ),
+        (
+            "both 2500+ since 2025",
+            LookupOptions {
+                min_elo: Some(2500),
+                since: Some("2025".into()),
+                ..LookupOptions::default()
+            },
+        ),
+    ];
+    for (line, sans) in lines {
+        let mut pos = kchess_domain::rules::default_position(shakmaty::variant::Variant::Chess);
+        for san in sans.split_whitespace() {
+            let m = kchess_domain::rules::parse_san(&pos, san).expect("legal line");
+            shakmaty::Position::play_unchecked(&mut pos, m);
+        }
+        let fen = kchess_domain::rules::make_fen(&pos);
+        for (label, options) in &filters {
+            let options = LookupOptions {
+                database: Some(info.id.clone()),
+                ..options.clone()
+            };
+            let mut samples = Vec::new();
+            let mut answer = String::new();
+            for _ in 0..3 {
+                let begun = Instant::now();
+                answer = match games.lookup(fen.clone(), options.clone()).await {
+                    Ok(found) => format!(
+                        "{} games, {} moves",
+                        found.saved.total.unwrap_or(0),
+                        found.saved.moves.len()
+                    ),
+                    Err(error) => error.message,
+                };
+                samples.push(begun.elapsed());
+            }
+            println!(
+                "lookup {line}, {label} ({answer}): {}",
+                percentiles(samples)
+            );
+        }
     }
     games.close().await;
 }

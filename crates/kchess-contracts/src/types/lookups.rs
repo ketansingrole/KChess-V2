@@ -2,11 +2,12 @@
 
 use super::*;
 
-wire_enum!(#[doc = "`opening` is the Lichess games database, `masters` over-the-board master games, `player` one player's games."] PositionLookupKind, POSITION_LOOKUP_KINDS {
+wire_enum!(#[doc = "`opening` is the Lichess games database, `masters` over-the-board master games, `player` one player's games, `database` a game database on this computer (`gameDbImport`)."] PositionLookupKind, POSITION_LOOKUP_KINDS {
     Opening = "opening",
     Masters = "masters",
     Player = "player",
     Tablebase = "tablebase",
+    Database = "database",
 });
 
 wire_enum!(#[doc = "Time control of an opening-explorer game pool."] ExplorerSpeed, EXPLORER_SPEEDS {
@@ -30,7 +31,8 @@ pub struct LookupOptions {
     /// Lichess database: rating groups (each is the lower bound of its band).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ratings: Option<Vec<u32>>,
-    /// Player database: whose games, and with which colour.
+    /// Player database: whose games (a Lichess username), and with which colour. A game
+    /// database: a name its players' names match word by word, and the side they had.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player: Option<String>,
     #[serde(
@@ -42,9 +44,18 @@ pub struct LookupOptions {
     /// Player database: rated, casual or both.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modes: Option<Vec<LookupMode>>,
-    /// Games since this month (`YYYY-MM`; masters use a year).
+    /// Games since this month (`YYYY-MM`; masters and game databases use a year).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<String>,
+    /// A game database: games up to this year (`YYYY`, or `YYYY-MM` read as its year).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
+    /// A game database: which one (`gameDbStatus`'s ids). Required for its lookups.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
+    /// A game database: games whose players are both rated at least this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_elo: Option<u32>,
     /// The Lichess and player databases' variant; standard chess when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<Variant>,

@@ -365,10 +365,53 @@ fn a_typed_argument_is_refused_with_its_message() {
     ));
     assert_eq!(
         kind.unwrap_err().message,
-        "invalid value, expected one of opening, masters, player, tablebase"
+        "invalid value, expected one of opening, masters, player, tablebase, database"
     );
     assert_eq!(api.calls(), Vec::<String>::new());
     assert_eq!(api.0.refused.lock().unwrap().len(), 2);
+}
+
+/// A lookup's player is a Lichess username for Lichess's databases, and any name for a game
+/// database, which must be named.
+#[test]
+fn a_lookups_player_is_checked_for_its_database() {
+    let api = recorder::Api::default();
+    let start = json!("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    let lookup = |kind: &str, options: serde_json::Value| {
+        futures_lite_block_on(dispatch(
+            &api,
+            "positionLookup",
+            vec![json!(kind), start.clone(), options],
+        ))
+    };
+    for player in ["a", "Magnus Carlsen"] {
+        assert_eq!(
+            lookup("player", json!({ "player": player }))
+                .unwrap_err()
+                .message,
+            "player: invalid value, expected a Lichess username",
+            "{player}"
+        );
+    }
+    assert_eq!(
+        lookup("database", json!({ "player": "Magnus Carlsen" }))
+            .unwrap_err()
+            .message,
+        "Choose a game database."
+    );
+    let long = "a".repeat(81);
+    assert_eq!(
+        lookup("database", json!({ "database": "tata-1", "player": long }))
+            .unwrap_err()
+            .message,
+        "player: invalid value, expected a name"
+    );
+    // Checked and passed on: the stand-in answers nothing of its own.
+    let _answer = lookup(
+        "database",
+        json!({ "database": "tata-1", "player": "Magnus Carlsen" }),
+    );
+    assert_eq!(api.calls(), ["positionLookup"]);
 }
 
 /// A call made as a Lichess account answers its result, or that the account must connect again.

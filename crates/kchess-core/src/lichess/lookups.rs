@@ -219,6 +219,8 @@ fn fresh_ms(kind: Kind) -> i64 {
         Kind::Opening => 86_400_000,
         Kind::Masters | Kind::Tablebase => 30 * 86_400_000,
         Kind::Player => 3_600_000,
+        // Never fetched or kept (`normalize_options` refuses it).
+        Kind::Database => 0,
     }
 }
 
@@ -572,7 +574,7 @@ impl PositionLookups {
                         query.append_pair("since", since);
                     }
                 }
-                Kind::Tablebase => {}
+                Kind::Tablebase | Kind::Database => {}
             }
         }
         query.0
@@ -589,6 +591,7 @@ impl PositionLookups {
             Kind::Opening => self.explorer_get("/lichess").await?,
             Kind::Masters => self.explorer_get("/masters").await?,
             Kind::Player => self.explorer_get("/player").await?,
+            Kind::Database => return Err(not_lichess()),
         };
         let request = request
             .query(&query)
@@ -702,6 +705,11 @@ fn in_order(speeds: &[ExplorerSpeed]) -> Vec<ExplorerSpeed> {
         .collect()
 }
 
+/// A game database answers from this computer (`GameDbService::lookup`), never from Lichess.
+fn not_lichess() -> CoreError {
+    CoreError::new("A game database is not on Lichess.")
+}
+
 /// The filters each database understands, in a fixed order; standard chess has no variant.
 fn normalize_options(kind: Kind, options: &LookupOptions) -> CoreResult<LookupOptions> {
     let variant = options
@@ -713,6 +721,7 @@ fn normalize_options(kind: Kind, options: &LookupOptions) -> CoreResult<LookupOp
         ));
     }
     match kind {
+        Kind::Database => Err(not_lichess()),
         Kind::Tablebase => Ok(LookupOptions::default()),
         Kind::Masters => Ok(LookupOptions {
             since: options
@@ -780,7 +789,7 @@ fn filters_json(kind: Kind, options: &LookupOptions) -> String {
     let mut fields: Vec<String> = Vec::new();
     let text = |key: &str, value: Value| format!("{}:{}", json!(key), value);
     match kind {
-        Kind::Tablebase => {}
+        Kind::Tablebase | Kind::Database => {}
         Kind::Masters => {
             if let Some(since) = &options.since {
                 fields.push(text("since", json!(since)));

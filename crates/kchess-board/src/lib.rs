@@ -3,7 +3,7 @@
 //! Settings shows it (`notation`), move and game sounds (`sound`), the boards, pieces and sounds
 //! embedded (`assets`), the board pages' own widgets (`widgets`), the engine's evaluation as
 //! they show it (`engine_view`), pictures of a game (`game_image`), the puzzle database
-//! (`puzzle_db`), the ChatGPT explainer (`ai`), a player's rating history (`rating_history`), and
+//! (`puzzle_db`) and the game databases (`game_db`), the ChatGPT explainer (`ai`), a player's rating history (`rating_history`), and
 //! moves said aloud (`voice`) through the microphone (`microphone`), the puzzle board
 //! (`puzzle_board`), exporting games (`export`) and finding players (`player_search`).
 //! It depends on the design system (`kchess-ui`) and the app's services (`kchess-app`), never on
@@ -22,6 +22,7 @@ pub mod board;
 pub mod engine_view;
 pub mod export;
 pub mod game;
+pub mod game_db;
 pub mod game_image;
 pub mod live_game;
 pub mod microphone;

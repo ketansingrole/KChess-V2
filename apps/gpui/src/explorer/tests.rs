@@ -76,6 +76,44 @@ fn options_leave_out_what_is_not_set() {
     assert_eq!(json!(prefs.options()), json!({ "since": "2019" }));
     prefs.kind = PositionLookupKind::Tablebase;
     assert_eq!(json!(prefs.options()), json!({}));
+    // A game database: its side only with a player, and a year for since.
+    prefs.kind = PositionLookupKind::Database;
+    prefs.database = "tata-1".into();
+    prefs.db_color = Some(Color::Black);
+    assert_eq!(
+        json!(prefs.options()),
+        json!({ "database": "tata-1", "since": "2019" })
+    );
+    prefs.db_player = " Carlsen ".into();
+    prefs.min_elo = 2600;
+    assert_eq!(
+        json!(prefs.options()),
+        json!({ "database": "tata-1", "player": "Carlsen", "color": "black", "since": "2019",
+                "minElo": 2600 })
+    );
+}
+
+/// A view preference holds no nulls: either side, stored as one, made every save of the
+/// explorer's settings fail, which then kept an update from installing.
+#[test]
+fn every_side_saves_as_a_view_preference() {
+    for side in [None, Some(Color::White), Some(Color::Black)] {
+        let prefs = Prefs {
+            db_color: side,
+            ..Prefs::default()
+        };
+        let saved = json!(prefs);
+        assert!(
+            saved
+                .as_object()
+                .unwrap()
+                .values()
+                .all(|value| !value.is_null()),
+            "{saved}"
+        );
+        let read: Prefs = serde_json::from_value(saved).unwrap();
+        assert_eq!(read.db_color, side);
+    }
 }
 
 /// The preference an earlier version stored reads as it did when its values are all known,
@@ -98,7 +136,16 @@ fn stored_preferences_still_load() {
         [ExplorerSpeed::Bullet, ExplorerSpeed::Correspondence]
     );
     assert_eq!(prefs.color, Color::Black);
-    assert_eq!(json!(prefs), stored);
+    // Saved back with the settings added since, at their defaults.
+    let mut saved = stored.clone();
+    for (key, value) in [
+        ("database", json!("")),
+        ("dbPlayer", json!("")),
+        ("minElo", json!(0)),
+    ] {
+        saved[key] = value;
+    }
+    assert_eq!(json!(prefs), saved);
 
     let odd: Prefs = serde_json::from_value(json!({
         "kind": "lichess",

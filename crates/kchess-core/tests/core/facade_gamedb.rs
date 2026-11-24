@@ -56,9 +56,38 @@ async fn a_file_is_imported_searched_and_read_through_the_core() {
         .await
         .expect_err("withheld until the game status is known");
     assert_eq!(withheld.kind, Some(kchess_contracts::ErrorKind::Withheld));
+    let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    let in_database = json!({ "database": id, "player": "ana", "color": "black" });
+    let lookup = core
+        .call(
+            "positionLookup",
+            vec![json!("database"), json!(start), in_database.clone()],
+        )
+        .await
+        .expect_err("the explorer is withheld too");
+    assert_eq!(lookup.kind, Some(kchess_contracts::ErrorKind::Withheld));
     core.call("resumeOnline", vec![])
         .await
         .expect("no game is live");
+    // The explorer's Database kind: Ana's games with Black, from this computer, never saved.
+    let lookup = core
+        .call(
+            "positionLookup",
+            vec![json!("database"), json!(start), in_database],
+        )
+        .await
+        .expect("looks up");
+    assert_eq!(lookup["kind"], "database");
+    assert_eq!(lookup["cached"], false);
+    assert_eq!(lookup["total"], 1);
+    assert_eq!(lookup["moves"][0]["san"], "d4");
+    assert_eq!(lookup["moves"][0]["black"], 1);
+    assert_eq!(lookup["games"][0]["black"], "Ana");
+    let refused = core
+        .call("positionLookup", vec![json!("database"), json!(start)])
+        .await
+        .expect_err("no database named");
+    assert_eq!(refused.message, "Choose a game database.");
     let page = core
         .call(
             "gameDbGames",

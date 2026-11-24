@@ -30,6 +30,10 @@ struct SentFilters {
     color: Option<SentSide>,
     modes: Option<Vec<LookupMode>>,
     since: Option<String>,
+    until: Option<String>,
+    database: Option<String>,
+    #[serde(rename = "minElo")]
+    min_elo: Option<u64>,
     variant: Option<String>,
 }
 
@@ -84,26 +88,38 @@ impl Validate for LookupOptions {
             }
             None => None,
         };
+        // Which names a player may have depends on the database: `position_lookup` checks it.
         if let Some(player) = &sent.player {
-            matches(
-                player,
-                patterns::username,
+            ensure(
+                (1..=80).contains(&player.trim().chars().count()),
                 None,
                 "player",
-                "a Lichess username",
+                || "a name".to_string(),
             )?;
+        }
+        if let Some(database) = &sent.database {
+            ensure(is_database_id(database), None, "database", || {
+                "a database's id".to_string()
+            })?;
+        }
+        if let Some(elo) = sent.min_elo {
+            ensure(elo <= 4000, None, "minElo", || {
+                "a rating up to 4000".to_string()
+            })?;
         }
         if let Some(modes) = &sent.modes {
             max_items(modes, 2, None, "modes")?;
         }
-        if let Some(since) = &sent.since {
-            matches(
-                since,
-                patterns::since,
-                None,
-                "since",
-                "a year or a year and month",
-            )?;
+        for (name, value) in [("since", &sent.since), ("until", &sent.until)] {
+            if let Some(value) = value {
+                matches(
+                    value,
+                    patterns::since,
+                    None,
+                    name,
+                    "a year or a year and month",
+                )?;
+            }
         }
         let variant = match &sent.variant {
             Some(key) => {
@@ -122,6 +138,9 @@ impl Validate for LookupOptions {
             }),
             modes: sent.modes,
             since: sent.since,
+            until: sent.until,
+            database: sent.database,
+            min_elo: sent.min_elo.map(|elo| elo as u32),
             variant,
         })
     }
@@ -130,8 +149,35 @@ impl Validate for LookupOptions {
 /// `positionLookup`'s arguments together: the position is one of the filters' variant, by that
 /// variant's rules.
 pub fn position_lookup(
-    (_, fen, options): &(PositionLookupKind, Fen, Option<LookupOptions>),
+    (kind, fen, options): &(PositionLookupKind, Fen, Option<LookupOptions>),
 ) -> Result<(), Refusal> {
+    let player = options
+        .as_ref()
+        .and_then(|options| options.player.as_deref());
+    match kind {
+        PositionLookupKind::Database => {
+            let database = options
+                .as_ref()
+                .and_then(|options| options.database.as_ref());
+            ensure(
+                database.is_some(),
+                Some("Choose a game database."),
+                "",
+                String::new,
+            )?;
+        }
+        _ => {
+            if let Some(player) = player {
+                matches(
+                    player,
+                    patterns::username,
+                    None,
+                    "player",
+                    "a Lichess username",
+                )?;
+            }
+        }
+    }
     let variant = options
         .as_ref()
         .and_then(|options| options.variant)
