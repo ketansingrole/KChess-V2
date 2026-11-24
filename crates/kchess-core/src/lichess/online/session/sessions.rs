@@ -90,6 +90,8 @@ impl OnlineSession {
                 .map(|id| (id, st.current_account.clone()));
             (phase_report, cancel_pending)
         };
+        // The accounts the ended streams covered are watched until a new stream covers them.
+        self.sync_watchers();
         if let Some((session, account, game, phase, message)) = phase_report {
             self.emit_state(session, &account, &game, Lane::Game, phase, message);
         } else {
@@ -278,6 +280,7 @@ impl OnlineSession {
         if attempt != self.st().resume_attempt {
             return Err(CoreError::aborted("Recovery cancelled."));
         }
+        let watched = accounts.clone();
         // A protected game's account is checked first.
         let protected_account = {
             let st = self.st();
@@ -300,7 +303,12 @@ impl OnlineSession {
                 .resume_account(attempt, &account, &protected_account, checking)
                 .await
             {
-                Ok(Some(found)) => return Ok(Some(found)),
+                Ok(Some(found)) => {
+                    // Each account's games are followed from now on, so one started after this
+                    // check is seen too; the board's account has its own stream already.
+                    self.watch(watched);
+                    return Ok(Some(found));
+                }
                 Ok(None) => {}
                 Err(cause) => return Err(cause),
             }
@@ -342,6 +350,7 @@ impl OnlineSession {
         };
         self.emit_state(session, &account, "", Lane::Game, OnlinePhase::Idle, None);
         self.start_lobby();
+        self.watch(watched);
         Ok(None)
     }
 
@@ -480,6 +489,7 @@ impl OnlineSession {
             .filter(|row| row.connected)
             .map(|row| row.username)
             .collect();
+        let watched = accounts.clone();
         // An account without an open event stream hears of no challenge: list them instead.
         let challenges_wanted = self
             .inner
@@ -553,6 +563,9 @@ impl OnlineSession {
                 st.accounts_unchecked = false;
             }
         }
+        // Followed from now on; a watcher that gave up (offline for long) or was refused is
+        // tried again.
+        self.watch(watched);
         self.refresh_assistance();
         if let Some(error) = first_error.filter(|_| games.is_empty()) {
             return Err(error);

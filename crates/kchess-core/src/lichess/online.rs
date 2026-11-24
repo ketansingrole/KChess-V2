@@ -1,6 +1,7 @@
 //! The online-play session: the account's
 //! event stream (challenges and pairings), the game stream of the board, the idle lobby stream,
-//! seeks and challenge creation, recovery after a restart, and the moves and actions of the live
+//! the quiet streams that follow every other connected account's games, seeks and challenge
+//! creation, recovery after a restart, and the moves and actions of the live
 //! game.
 //!
 //! Lichess's streams are authoritative: every state change comes from an event or a reply, and

@@ -80,6 +80,17 @@ pub(crate) struct State {
     pub(crate) announced: Vec<String>,
     pub(crate) lobby_account: String,
     pub(crate) lobby: Option<(String, CancellationToken)>,
+    /// Every connected account, as the profile last had them (`watch_accounts`).
+    pub(crate) watched: Vec<String>,
+    /// The event streams of the watched accounts no other stream covers, by lowercase name
+    /// (`session/watchers.rs`).
+    pub(crate) watchers: std::collections::BTreeMap<String, super::session::Watcher>,
+    /// The accounts whose stream has opened once since the core started: what they play is
+    /// known, and a later drop keeps that.
+    pub(crate) watch_established: std::collections::BTreeSet<String>,
+    /// The accounts whose stream Lichess refused for good (a login revoked): unknown until
+    /// they are watched again.
+    pub(crate) watch_refused: std::collections::BTreeSet<String>,
     pub(crate) ongoing_timer: Option<JoinHandle<()>>,
     pub(crate) presence: Vec<(String, Instant, PresenceReport)>,
 }
@@ -245,6 +256,10 @@ impl State {
             announced: Vec::new(),
             lobby_account: String::new(),
             lobby: None,
+            watched: Vec::new(),
+            watchers: std::collections::BTreeMap::new(),
+            watch_established: std::collections::BTreeSet::new(),
+            watch_refused: std::collections::BTreeSet::new(),
             ongoing_timer: None,
             presence: Vec::new(),
         }

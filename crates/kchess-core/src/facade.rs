@@ -91,6 +91,23 @@ impl CoreApi for Core {
         {
             self.reviews.reviews_changed();
         }
+        // An account connected or signed out: its games are watched, or no longer.
+        if areas.contains(&ProfileArea::Accounts) {
+            let online = self.services.online().clone();
+            let host = Arc::clone(&self.host);
+            let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+                return;
+            };
+            runtime.spawn(async move {
+                if let Err(cause) = online.watch_accounts().await {
+                    host.log(
+                        Level::Warn,
+                        "online",
+                        &format!("The accounts to watch could not be read: {}", cause.message),
+                    );
+                }
+            });
+        }
         self.host.emit(CoreEvent::ProfileChanged(ProfileChange {
             areas: areas.to_vec(),
             origin: crate::connection::current_or_app(),

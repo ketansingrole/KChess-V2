@@ -26,6 +26,8 @@ use super::state::{
 };
 
 mod lobby;
+mod watchers;
+pub(crate) use watchers::Watcher;
 mod play;
 mod sessions;
 mod start;
@@ -460,6 +462,8 @@ impl OnlineSession {
     /// The event stream of the account being played: challenges go to the inbox,
     /// a real-time game starting opens it on the board, and the rest is passed on.
     fn start_event_stream(&self, auth: Auth, handle: Handle) {
+        // This account's watcher closes first: Lichess keeps one event stream per account.
+        self.sync_watchers();
         let account = self.st().current_account.clone();
         let options = self.listen_options(Lane::Events, true, None, None);
         let this = self.clone();

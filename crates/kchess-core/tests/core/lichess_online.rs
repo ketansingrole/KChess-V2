@@ -2482,6 +2482,113 @@ async fn an_invalid_ongoing_answer_keeps_a_game_played_elsewhere() {
     online.close();
 }
 
+type Senders = Arc<Mutex<Vec<tokio::sync::mpsc::UnboundedSender<String>>>>;
+
+/// Serves each account's event stream, kept open by a sender kept per account (`Bob` or the
+/// rest), and no game in progress; `bob` answers Bob's stream instead when given.
+async fn two_accounts(bob: Option<Reply>) -> (fixtures::Fixture, Senders, Senders) {
+    let (alice_streams, bob_streams): (Senders, Senders) = Default::default();
+    let (alice_slot, bob_slot) = (Arc::clone(&alice_streams), Arc::clone(&bob_streams));
+    let bob = Arc::new(Mutex::new(bob));
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/stream/event" => {
+            let is_bob = seen.header("Authorization") == Some("Bearer Bob-token");
+            if is_bob && let Some(reply) = bob.lock().unwrap().take() {
+                return reply;
+            }
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            if is_bob { &bob_slot } else { &alice_slot }
+                .lock()
+                .unwrap()
+                .push(tx);
+            Reply::Stream(rx)
+        }
+        "/api/account/playing" => Reply::Json(200, json!({ "nowPlaying": [] }).to_string()),
+        _ => Reply::Hang,
+    })
+    .await;
+    (fixture, alice_streams, bob_streams)
+}
+
+/// 2026-11-24: only the selected account's event stream was open, so a real-time game started on
+/// another connected account (on the website, or a phone) went unseen while help was lent, until
+/// a check of every account that the correspondence setting can turn off. Every connected
+/// account's games are followed now, each account by one stream.
+#[tokio::test]
+async fn a_game_started_on_another_account_locks_help_at_once() {
+    let (fixture, _alice, bob) = two_accounts(None).await;
+    let (host, store, tokens) = rig(&[("Alice", true), ("Bob", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    assert_eq!(online.resume().await.unwrap().map(|found| found.id), None);
+    online.stay_connected("Alice");
+    until("Bob's games are followed", || {
+        !bob.lock().unwrap().is_empty()
+    })
+    .await;
+    assert_eq!(online.assistance(), Assistance::Allowed);
+    let sender = bob.lock().unwrap()[0].clone();
+    let game = json!({ "gameId": "Phone123", "speed": "rapid" });
+    sender
+        .send(format!(
+            "{}\n",
+            json!({ "type": "gameStart", "game": game })
+        ))
+        .unwrap();
+    until("the game on Bob locks help", || {
+        online.assistance() == Assistance::LiveGame
+    })
+    .await;
+    assert!(!online.playing(), "it is not opened on Alice's board");
+    sender
+        .send(format!(
+            "{}\n",
+            json!({ "type": "gameFinish", "game": game })
+        ))
+        .unwrap();
+    until("its end lends help again", || {
+        online.assistance() == Assistance::Allowed
+    })
+    .await;
+    let streams = |token: &str| {
+        fixture
+            .to("/api/stream/event")
+            .iter()
+            .filter(|seen| seen.header("Authorization") == Some(token))
+            .count()
+    };
+    assert_eq!(
+        streams("Bearer Alice-token"),
+        1,
+        "Alice's is the lobby's alone"
+    );
+    assert_eq!(streams("Bearer Bob-token"), 1);
+    online.close();
+}
+
+/// An account whose event stream Lichess refuses (its login revoked) is followed by nothing:
+/// help stays locked, as when the startup check cannot reach it, until a check of every account
+/// follows it again.
+#[tokio::test]
+async fn an_account_whose_games_cannot_be_followed_keeps_help_locked() {
+    let refused = Reply::Json(401, json!({ "error": "No such token" }).to_string());
+    let (fixture, _alice, bob) = two_accounts(Some(refused)).await;
+    let (host, store, tokens) = rig(&[("Alice", true), ("Bob", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    assert_eq!(online.resume().await.unwrap().map(|found| found.id), None);
+    online.stay_connected("Alice");
+    until("Bob's refused stream locks help", || {
+        online.assistance() == Assistance::Unverified
+    })
+    .await;
+    online.ongoing().await.expect("the games in progress");
+    until("Bob's games are followed again", || {
+        !bob.lock().unwrap().is_empty()
+    })
+    .await;
+    assert_eq!(online.assistance(), Assistance::Allowed);
+    online.close();
+}
+
 /// A check of every account that began first and answers last, from before a bullet game
 /// began, leaves the game a later check found locked: two windows checking at once once let the
 /// older empty answer lend help in the middle of the game.
