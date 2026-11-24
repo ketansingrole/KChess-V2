@@ -1,9 +1,13 @@
 //! A position looked up in a game database, as the explorer shows Lichess's: the moves played
 //! from it with their results, and its best-rated games.
 //!
-//! With no filter the opening tree answers, one indexed read. With filters (a player, the side
-//! they had, years, a rating) the matching games are replayed to the position: the tree counts
-//! every game, so it cannot tell a player's. However many games match, every one is replayed, on
+//! A position is found at any depth, in two parts summed. A game's first `index_depth` plies: with
+//! no filter the opening tree answers, one indexed read. Past them: the games the position index
+//! (`deep`) says passed through the position's structure are replayed, a handful of games.
+//!
+//! With filters (a player, the side they had, years, a rating) the first part is replayed too:
+//! the tree counts every game, so it cannot tell a player's. However many games match, every one
+//! is replayed up to `index_depth` (and only while it can still reach the position by then), on
 //! every core, from the replay index (`games_replay`: a game's moves and what a filter checks,
 //! a tenth of its row):
 //!
@@ -32,7 +36,7 @@ use shakmaty::variant::VariantPosition;
 use shakmaty::{Bitboard, Board, Color, Move, Position as _, Rank, Role};
 
 use super::tree::{self, Stats, TreeMove};
-use super::{schema, search};
+use super::{deep, schema, search};
 use crate::store::sql::Sql as _;
 use crate::tasks::lock;
 use kchess_contracts::error::{CoreError, Result};
@@ -127,24 +131,40 @@ impl Reachable {
     }
 }
 
-/// The position a filtered lookup looks for, as each replayed move is checked against it: the
-/// side to move and the board first, which most positions fail, and its key (castling, en
-/// passant) only when they match.
+/// The position a replay looks for, as each replayed move is checked against it: the side to
+/// move and the board first, which most positions fail, and its key (castling, en passant) only
+/// when they match. Only a game's plies `from..until` count: the tree counts the first
+/// `index_depth`, the position index the rest.
 struct Target {
     key: u64,
     board: Board,
     turn: Color,
     reachable: Reachable,
+    from: usize,
+    until: usize,
 }
 
 impl Target {
-    fn of(pos: &VariantPosition) -> Target {
+    fn of(pos: &VariantPosition, from: usize, until: usize) -> Target {
         Target {
             key: gamedb::position_key(pos),
             board: pos.board().clone(),
             turn: pos.turn(),
             reachable: Reachable::of(pos),
+            from,
+            until,
         }
+    }
+
+    /// Whether a game at `pos` on ply `ply` can still reach the position on a ply that counts:
+    /// one capture a ply at best.
+    fn in_time(&self, pos: &VariantPosition, ply: usize) -> bool {
+        let captures = pos
+            .board()
+            .occupied()
+            .count()
+            .saturating_sub(self.reachable.pieces);
+        ply.saturating_add(captures) < self.until
     }
 
     fn is(&self, pos: &VariantPosition) -> bool {
@@ -183,8 +203,8 @@ struct Step {
 }
 
 impl Step {
-    fn at(pos: VariantPosition, target: &Target) -> Step {
-        let reachable = target.reachable.from(&pos);
+    fn at(pos: VariantPosition, ply: usize, target: &Target) -> Step {
+        let reachable = target.reachable.from(&pos) && target.in_time(&pos, ply);
         Step {
             hit: reachable && target.is(&pos),
             reachable,
@@ -197,9 +217,13 @@ impl Step {
 /// Replays `code` along `path`, the plies of the line replayed before it from the same start,
 /// adding to `played` each move it made from the target. The plies the two lines share are
 /// read from `path` rather than played again; from the first that differs, `path` becomes this
-/// line's. It stops where the position can no longer come, or at a damaged move.
+/// line's. It stops where the position can no longer come, past the plies that count, or at a
+/// damaged move.
 fn follow(path: &mut Vec<Step>, code: &[u8], played: &mut Vec<u16>, target: &Target) {
     for (ply, &byte) in code.iter().enumerate() {
+        if ply >= target.until {
+            return;
+        }
         let step = &mut path[ply];
         if !step.reachable {
             return;
@@ -215,13 +239,13 @@ fn follow(path: &mut Vec<Step>, code: &[u8], played: &mut Vec<u16>, target: &Tar
                 m
             }
         };
-        if path[ply].hit {
+        if path[ply].hit && ply >= target.from {
             played.push(gamedb::pack_move(&m));
         }
         if path.len() == ply + 1 {
             let mut next = path[ply].pos.clone();
             next.play_unchecked(m);
-            path.push(Step::at(next, target));
+            path.push(Step::at(next, ply + 1, target));
         }
     }
 }
@@ -246,7 +270,7 @@ fn replay(batch: &Batch, target: &Target) -> HashMap<u16, Stats> {
             let Some(start) = gamedb::start_of(game.fen.as_deref()) else {
                 continue;
             };
-            path.push(Step::at(start, target));
+            path.push(Step::at(start, 0, target));
         }
         played.clear();
         follow(&mut path, line(game), &mut played, target);
@@ -290,7 +314,10 @@ fn read_game(row: &rusqlite::Row<'_>, batch: &mut Batch) -> Result<()> {
 
 /// Whether the games `query` matches are better read in file order than by their index: no
 /// player or event narrows them, and a rating, if any, is one most games have.
-fn broad(db: &Connection, query: &GameDbQuery) -> Result<bool> {
+fn broad(db: &Connection, query: Option<&GameDbQuery>) -> Result<bool> {
+    let Some(query) = query else {
+        return Ok(true);
+    };
     if query.player.is_some() || query.event.is_some() {
         return Ok(false);
     }
@@ -312,9 +339,9 @@ fn broad(db: &Connection, query: &GameDbQuery) -> Result<bool> {
     Ok(passing as f64 > games as f64 * BROAD_SHARE)
 }
 
-/// A filtered lookup's SQL, on the games as `g`. `narrow` picks the games out by the index of a
-/// header (a player, a rating few games have), as ids alone; `kept` is checked on the columns the
-/// replay index has; `from` reads the games through that index when the file has it.
+/// A replay's SQL, on the games as `g`. `narrow` picks the games out by an index (the position
+/// index's games, a player, a rating few games have), as ids alone; `kept` is checked on the
+/// columns the replay index has; `from` reads the games through that index when the file has it.
 struct Filters {
     narrow: Option<String>,
     kept: String,
@@ -323,20 +350,33 @@ struct Filters {
 }
 
 impl Filters {
-    fn of(db: &Connection, query: &GameDbQuery, broad: bool) -> Result<Filters> {
+    /// The games `query` matches (every finished game without one), among `ids` if given.
+    fn of(
+        db: &Connection,
+        query: Option<&GameDbQuery>,
+        ids: Option<&[i64]>,
+        broad: bool,
+    ) -> Result<Filters> {
+        let empty = GameDbQuery::default();
+        let query = query.unwrap_or(&empty);
         let mut args = vec![SqlValue::Integer(search::visible(db)?)];
         // An unfinished game counts in no result: the tree leaves it out, and so does this.
         let mut kept = vec![
             "g.import_id <= ?1".to_string(),
             "g.result IS NOT NULL".to_string(),
         ];
-        let mut narrow = None;
+        let mut narrow = Vec::new();
+        if let Some(ids) = ids {
+            // Integers alone: nothing in them can reach the SQL as anything but a number.
+            let listed: Vec<String> = ids.iter().map(i64::to_string).collect();
+            narrow.push(format!("id IN ({})", listed.join(",")));
+        }
         if let Some(player) = &query.player {
             let ids = search::names("players", player, search::worded(db)?, &mut args);
-            narrow = Some(match query.side.unwrap_or(GameDbSide::Either) {
+            narrow.push(match query.side.unwrap_or(GameDbSide::Either) {
                 GameDbSide::White => format!("white IN ({ids})"),
                 GameDbSide::Black => format!("black IN ({ids})"),
-                GameDbSide::Either => format!("white IN ({ids}) OR black IN ({ids})"),
+                GameDbSide::Either => format!("(white IN ({ids}) OR black IN ({ids}))"),
             });
         }
         for (year, test) in [(query.year_from, ">="), (query.year_to, "<=")] {
@@ -349,8 +389,8 @@ impl Filters {
             args.push(SqlValue::Integer(i64::from(elo)));
             let n = args.len();
             kept.push(format!("g.low_elo >= ?{n}"));
-            if !broad && narrow.is_none() {
-                narrow = Some(format!("low_elo >= ?{n}"));
+            if !broad && narrow.is_empty() {
+                narrow.push(format!("low_elo >= ?{n}"));
             }
         }
         let indexed: bool = db
@@ -362,7 +402,7 @@ impl Filters {
             )
             .sql()?;
         Ok(Filters {
-            narrow,
+            narrow: (!narrow.is_empty()).then(|| narrow.join(" AND ")),
             kept: kept.join(" AND "),
             args,
             from: match (indexed, broad) {
@@ -519,26 +559,30 @@ fn in_file_order(
     })
 }
 
-/// The moves played from the position `target` in the games `query` matches, counted as the
-/// tree counts them: each time a game reached it, the game's result once. `stop` ends it early.
+/// The moves played from `target` on the plies it counts in the games `query` matches (every
+/// finished game without one), among `ids` if given, counted as the tree counts them: each time
+/// a game reached it, the game's result once. `stop` ends it early.
 fn replayed(
     db: &Connection,
-    query: &GameDbQuery,
-    target: &VariantPosition,
+    query: Option<&GameDbQuery>,
+    ids: Option<&[i64]>,
+    target: &Target,
     stop: &AtomicBool,
-) -> Result<Vec<TreeMove>> {
-    let target = Target::of(target);
+) -> Result<HashMap<u16, Stats>> {
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
     let file = db
         .path()
         .filter(|path| !path.is_empty())
         .map(std::path::PathBuf::from);
     let mut counted = match file {
-        Some(file) if broad(db, query)? => {
-            let filters = Filters::of(db, query, true)?;
-            in_file_order(db, &file, &filters, &target, stop, workers)?
+        Some(file) if ids.is_none() && broad(db, query)? => {
+            let filters = Filters::of(db, query, None, true)?;
+            in_file_order(db, &file, &filters, target, stop, workers)?
         }
-        _ => by_index(db, &Filters::of(db, query, false)?, &target, stop, workers)?,
+        _ => {
+            let filters = Filters::of(db, query, ids, false)?;
+            by_index(db, &filters, target, stop, workers)?
+        }
     };
     if stop.load(Ordering::Relaxed) {
         return Err(CoreError::aborted(STOPPED));
@@ -547,6 +591,47 @@ fn replayed(
     let mut moves: HashMap<u16, Stats> = HashMap::new();
     for (_, part) in counted {
         for (mv, stats) in part {
+            moves
+                .entry(mv)
+                .and_modify(|sum| sum.add(&stats))
+                .or_insert(stats);
+        }
+    }
+    Ok(moves)
+}
+
+/// The moves played from `pos` in the games `query` matches (every finished game without one),
+/// at any depth: the first `index_depth` plies from the tree, or replayed when filtered; the
+/// rest replayed from the games the position index says passed through its structure.
+fn found(
+    db: &Connection,
+    query: Option<&GameDbQuery>,
+    pos: &VariantPosition,
+    stop: &AtomicBool,
+) -> Result<Vec<TreeMove>> {
+    let depth: i64 = db
+        .query_row("SELECT index_depth FROM meta WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .sql()?;
+    let depth = usize::try_from(depth).unwrap_or(0);
+    let tree = tree::moves(db, gamedb::position_key(pos))?;
+    let mut moves: HashMap<u16, Stats> = match query {
+        None => tree.into_iter().map(|m| (m.mv, m.stats)).collect(),
+        // No game of the file reached it on the tree's plies (a position past the opening, most
+        // often): none of those the filters keep did either, so nothing there needs replaying.
+        Some(_) if tree.is_empty() => HashMap::new(),
+        Some(_) => replayed(db, query, None, &Target::of(pos, 0, depth), stop)?,
+    };
+    // A file whose index is not built yet has every game replayed instead: slower, alike.
+    let ids = if deep::built(db)? {
+        Some(deep::games(db, gamedb::structure_key(pos))?)
+    } else {
+        None
+    };
+    if ids.as_ref().is_none_or(|ids| !ids.is_empty()) {
+        let later = Target::of(pos, depth, usize::MAX);
+        for (mv, stats) in replayed(db, query, ids.as_deref(), &later, stop)? {
             moves
                 .entry(mv)
                 .and_modify(|sum| sum.add(&stats))
@@ -607,10 +692,7 @@ pub fn lookup(
     let Some(pos) = rules::standard_from_fen(fen) else {
         return Err(CoreError::new("That position is not legal."));
     };
-    let found = match query(database, options) {
-        Some(query) => replayed(db, &query, &pos, stop)?,
-        None => tree::moves(db, gamedb::position_key(&pos))?,
-    };
+    let found = found(db, query(database, options).as_ref(), &pos, stop)?;
     let played: Vec<(Stats, Move, String)> = found
         .into_iter()
         .filter_map(|entry| {

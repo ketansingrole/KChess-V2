@@ -5,6 +5,7 @@
 //! through its own read-only lane, so they go on while an import writes. One import runs at a
 //! time; its progress reaches every window as `gamedb:progress`.
 
+pub mod deep;
 pub mod explore;
 pub mod import;
 pub mod schema;

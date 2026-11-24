@@ -11,6 +11,7 @@ use std::path::Path;
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension as _};
 
+use super::deep;
 use crate::store::sql::{Sql as _, transaction};
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{DatabaseInfo, DatabaseSource};
@@ -123,6 +124,11 @@ const MIGRATIONS: &[&str] = &[
     FROM split WHERE rest <> ''
   )
   INSERT OR IGNORE INTO event_words (word, id) SELECT word, id FROM split WHERE word <> '';"#,
+    // The structures each finished game passes through past the opening tree, by bucket
+    // (`deep`). The games a file already has are indexed by `deep::ensure` once it opens, which
+    // sets `deep_built`; until then a lookup past the tree replays every game.
+    "CREATE TABLE deep (bucket INTEGER PRIMARY KEY, entries BLOB NOT NULL);
+     ALTER TABLE meta ADD COLUMN deep_built INTEGER NOT NULL DEFAULT 0;",
 ];
 
 /// The games' indexes, built after a new database's games are in: building them once is much
@@ -186,19 +192,23 @@ pub fn open_read(path: &Path) -> Result<Connection> {
 /// Brings a file an older release wrote up to this one's schema, so that what its readers
 /// expect is there; a file already current is only read.
 pub fn upgrade(path: &Path) -> Result<()> {
-    let version: i64 = opened(
+    let db = opened(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?
-    .query_row("PRAGMA user_version", [], |row| row.get(0))
-    .sql()?;
-    if usize::try_from(version).is_ok_and(|version| version < MIGRATIONS.len()) {
+    )?;
+    let version: i64 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .sql()?;
+    let current = usize::try_from(version).is_ok_and(|version| version >= MIGRATIONS.len());
+    if !current || !deep::built(&db)? {
+        drop(db);
         open_write(path)?;
     }
     Ok(())
 }
 
-/// An existing file to add games to, migrated first; WAL, so searches go on meanwhile.
+/// An existing file to add games to, migrated and its position index built first (`deep`); WAL,
+/// so searches go on meanwhile.
 pub fn open_write(path: &Path) -> Result<Connection> {
     let db = opened(
         path,
@@ -207,6 +217,7 @@ pub fn open_write(path: &Path) -> Result<Connection> {
     db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")
         .sql()?;
     migrate(&db)?;
+    deep::ensure(&db, path)?;
     Ok(db)
 }
 
@@ -225,8 +236,9 @@ pub fn create(path: &Path, name: &str, source: DatabaseSource, now: i64) -> Resu
     .sql()?;
     migrate(&db)?;
     db.execute(
-        "INSERT INTO meta (id, name, source, created_at, updated_at, index_depth, attribution)
-         VALUES (1, ?1, ?2, ?3, ?3, ?4, NULL)",
+        "INSERT INTO meta (id, name, source, created_at, updated_at, index_depth, attribution,
+            deep_built)
+         VALUES (1, ?1, ?2, ?3, ?3, ?4, NULL, 1)",
         rusqlite::params![name, source_text(source), now, INDEX_DEPTH],
     )
     .sql()?;
