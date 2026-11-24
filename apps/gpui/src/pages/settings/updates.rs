@@ -413,20 +413,7 @@ impl SettingsPage {
                         .child(notes()),
                 )
                 .when(phase == Phase::Downloading, |block| {
-                    block.child(
-                        div()
-                            .h(px(6.))
-                            .w_full()
-                            .rounded_full()
-                            .bg(palette.accented)
-                            .child(
-                                div()
-                                    .h_full()
-                                    .rounded_full()
-                                    .bg(palette.primary)
-                                    .w(relative(percent.unwrap_or(0.05))),
-                            ),
-                    )
+                    block.child(widgets::progress_bar(percent, palette))
                 })
         });
         let about = h_flex()

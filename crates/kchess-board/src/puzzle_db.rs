@@ -238,20 +238,10 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
             .map(|total| (received / total).min(1.));
         v_flex()
             .gap(px(8.))
-            .child(
-                div()
-                    .h(px(8.))
-                    .w_full()
-                    .rounded_full()
-                    .bg(palette.accented)
-                    .child(
-                        div()
-                            .h_full()
-                            .rounded_full()
-                            .bg(palette.primary)
-                            .w(relative(share.unwrap_or(0.1) as f32)),
-                    ),
-            )
+            .child(widgets::progress_bar(
+                share.map(|share| share as f32),
+                palette,
+            ))
             .child(hint(if kept > 0. {
                 format!(
                     "{text} · {} picked so far",

@@ -740,20 +740,7 @@ impl PuzzleRush {
                                     .child(state.combo.to_string()),
                             ),
                     )
-                    .child(
-                        div()
-                            .h(px(8.))
-                            .w_full()
-                            .rounded_full()
-                            .bg(palette.accented)
-                            .child(
-                                div()
-                                    .h_full()
-                                    .rounded_full()
-                                    .bg(palette.primary)
-                                    .w(relative(progress as f32)),
-                            ),
-                    )
+                    .child(widgets::progress_bar(Some(progress as f32), palette))
             });
             let strikes = config
                 .and_then(|config| config.strikes)

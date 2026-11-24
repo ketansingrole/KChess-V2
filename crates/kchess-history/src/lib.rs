@@ -11,7 +11,7 @@
 use kchess_hack as _;
 
 use kchess_app::{accounts, core, loading, network, played, reviews, settings};
-use kchess_board::{board, export, game, notation, widgets};
+use kchess_board::{export, game, widgets};
 use kchess_ui::{dates, quick_pick, theme};
 
 use crate::loading::Loading;
@@ -34,12 +34,11 @@ use shakmaty::Color;
 use crate::played::{PlayedGames, PlayedHandle};
 use kchess_nav::page::Page;
 use kchess_nav::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
+use kchess_nav::replay::GameReplay;
 use kchess_ui::icon;
-use replay::GameReplay;
 
 pub mod lichess;
 mod list;
-mod replay;
 use crate::theme::Palette;
 use crate::widgets::Pressable as _;
 use crate::widgets::{KeyboardFocus as _, Look, Pill};

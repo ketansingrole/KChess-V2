@@ -12,6 +12,25 @@ pub fn spinner(size: Pixels) -> gpui_kit::component::spinner::Spinner {
         .ease(|delta| delta)
 }
 
+/// How far a download, an import or a streak has come: an 8px track filled to `share` (0 to 1).
+/// With no share known yet, a sliver shows the work has started. It draws only; the text beside it
+/// says the progress to a screen reader.
+pub fn progress_bar(share: Option<f32>, palette: &Palette) -> Div {
+    let filled = share.map_or(0.1, |share| share.clamp(0., 1.));
+    div()
+        .h(px(8.))
+        .w_full()
+        .rounded_full()
+        .bg(palette.accented)
+        .child(
+            div()
+                .h_full()
+                .rounded_full()
+                .bg(palette.primary)
+                .w(relative(filled)),
+        )
+}
+
 /// Escape with no modifier, which takes a detail view (a game, an event, a line) back to its list.
 pub fn is_escape(event: &KeyDownEvent) -> bool {
     event.keystroke.key == "escape" && !event.keystroke.modifiers.modified()
