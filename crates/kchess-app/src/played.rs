@@ -9,7 +9,7 @@ use futures::channel::mpsc;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use kchess_contracts::Level;
 use kchess_contracts::calls;
-use kchess_contracts::check::{ArchivedGame, LibraryId, SessionObject};
+use kchess_contracts::check::{ArchivedGame, LibraryId, SessionBase, SessionObject};
 use kchess_contracts::types::{Library, PlayedGame, ProfileArea, SessionDocument, SessionKind};
 
 use crate::core::{Answer, AppCore, Reads};
@@ -21,6 +21,10 @@ enum Write {
     Remove(String),
     /// A page's session, or its place in history, kept with the games it names.
     Session(SessionKind, SessionDocument),
+    /// The page read the profile's session of this kind (inside, none when there was none): its
+    /// saves from now on are made over it, and refused once it changed elsewhere. `None` when
+    /// the read failed: the player's own new game is saved over whatever the profile has.
+    Read(SessionKind, Option<Option<SessionDocument>>),
 }
 
 impl Write {
@@ -29,7 +33,7 @@ impl Write {
         match self {
             Self::Game(game) => format!("game:{}", game.id),
             Self::Remove(id) => format!("game:{id}"),
-            Self::Session(kind, _) => format!("session:{}", kind.as_str()),
+            Self::Session(kind, _) | Self::Read(kind, _) => format!("session:{}", kind.as_str()),
         }
     }
 }
@@ -61,6 +65,7 @@ pub fn init(library: &Library, cx: &mut App) {
         refused: Vec::new(),
         failing: false,
         outcomes,
+        read: std::collections::BTreeMap::new(),
     };
     let writes = Writer::start(saving, "The game history is closed", cx);
     let entity = cx.new(|_| PlayedGames {
@@ -108,6 +113,10 @@ struct Saving {
     /// Whether the last write failed.
     failing: bool,
     outcomes: mpsc::UnboundedSender<Option<String>>,
+    /// Each session kind a page read, as the profile holds it as far as this app knows: as read,
+    /// then as last saved. A save that failed leaves it, so the next is made over what the
+    /// profile still has; one refused as stale stays refused until the page reads again.
+    read: std::collections::BTreeMap<&'static str, Option<SessionDocument>>,
 }
 
 impl Saving {
@@ -115,7 +124,26 @@ impl Saving {
     /// the same game or session) and reported; the first success after a failure clears the
     /// page's error.
     async fn send(&mut self, write: Write) {
-        let result = send(&self.core, &write).await;
+        let based_on = match &write {
+            Write::Read(kind, read) => {
+                match read {
+                    Some(session) => self.read.insert(kind.as_str(), session.clone()),
+                    None => self.read.remove(kind.as_str()),
+                };
+                return;
+            }
+            Write::Session(kind, _) => self
+                .read
+                .get(kind.as_str())
+                .map(|session| SessionBase::of(session.as_ref())),
+            _ => None,
+        };
+        let result = send(&self.core, &write, based_on).await;
+        if let (Ok(()), Write::Session(kind, session)) = (&result, &write)
+            && let Some(read) = self.read.get_mut(kind.as_str())
+        {
+            *read = Some(session.clone());
+        }
         let key = write.key();
         self.refused.retain(|(kept, _)| kept.key() != key);
         match result {
@@ -160,7 +188,11 @@ impl Store for Saving {
 }
 
 /// Sends a write; what the core answers is not read, only whether it went through.
-async fn send(core: &AppCore, write: &Write) -> Result<(), kchess_contracts::CoreError> {
+async fn send(
+    core: &AppCore,
+    write: &Write,
+    based_on: Option<SessionBase>,
+) -> Result<(), kchess_contracts::CoreError> {
     match write {
         Write::Game(game) => core
             .request(calls::SaveArchivedGame {
@@ -178,9 +210,11 @@ async fn send(core: &AppCore, write: &Write) -> Result<(), kchess_contracts::Cor
             core.request(calls::SaveSession {
                 kind: *kind,
                 session: SessionObject::of(session),
+                based_on,
             })
             .await
         }
+        Write::Read(..) => Ok(()),
     }
 }
 
@@ -232,6 +266,12 @@ impl PlayedGames {
     /// Keep a page's session after the game writes sent before it.
     pub fn save_session(&self, kind: SessionKind, session: SessionDocument) {
         self.writes.send(Write::Session(kind, session));
+    }
+
+    /// A page read the profile's session of `kind` (`None` when the read failed): its saves are
+    /// made over it from now on.
+    pub fn read_session(&self, kind: SessionKind, read: Option<Option<SessionDocument>>) {
+        self.writes.send(Write::Read(kind, read));
     }
 
     /// Wait for every write sent so far, trying refused ones again: with why one still failed.

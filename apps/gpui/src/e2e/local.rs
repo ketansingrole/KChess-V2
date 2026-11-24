@@ -296,6 +296,78 @@ fn a_game_in_progress_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
     assert_eq!(app.status(), "Black to move");
 }
 
+/// 2026-11-24: an idle Over the board saved its game again when the app quit, over the moves the
+/// command line had played on since. The quit now saves only a page changed since it was read,
+/// and the core refuses a save over a session continued elsewhere.
+#[gpui_kit::test]
+fn quitting_an_idle_board_keeps_a_game_continued_elsewhere(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_contracts::calls;
+    use kchess_contracts::check::{SessionBase, SessionObject};
+    use kchess_contracts::types::{SessionDocument, SessionKind};
+    let mut app = board(cx);
+    // `kchess-cli local`: reads the game, plays on, and saves over what it read.
+    let read = app.request(calls::Session {
+        kind: SessionKind::Local,
+    });
+    let mut game = kchess_domain::games::local::LocalGame::resume(None, 0.).expect("a new game");
+    game.play("e2e4", 1.);
+    game.play("e7e5", 2.);
+    let continued = SessionDocument::Local(game.session(3.));
+    app.request(calls::SaveSession {
+        kind: SessionKind::Local,
+        session: SessionObject::of(&continued),
+        based_on: Some(SessionBase::of(read.as_ref())),
+    });
+
+    // The window saves nothing over it: quitting asks nothing ("Some changes could not be
+    // saved" when it tried).
+    let saved = std::rc::Rc::new(std::cell::Cell::new(false));
+    app.cx.update({
+        let saved = saved.clone();
+        |cx| crate::quit::prepare_quit(cx, "Quit anyway", move |_| saved.set(true), |_| {})
+    });
+    app.wait_for("the quit's saves to succeed", |_, _| saved.get());
+    assert!(!app.cx.has_pending_prompt());
+
+    let mut app = app.restart();
+    app.open("Over the board");
+    app.wait_for_moves(&["e4", "e5"]);
+}
+
+/// A save from a window that read the game before the command line continued it is refused:
+/// the profile keeps the continued game, and the page says its game could not be saved.
+#[gpui_kit::test]
+fn a_move_over_a_game_continued_elsewhere_is_refused(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_contracts::calls;
+    use kchess_contracts::check::{SessionBase, SessionObject};
+    use kchess_contracts::types::{SessionDocument, SessionKind};
+    let mut app = board(cx);
+    let read = app.request(calls::Session {
+        kind: SessionKind::Local,
+    });
+    let mut game = kchess_domain::games::local::LocalGame::resume(None, 0.).expect("a new game");
+    game.play("d2d4", 1.);
+    let continued = SessionDocument::Local(game.session(2.));
+    app.request(calls::SaveSession {
+        kind: SessionKind::Local,
+        session: SessionObject::of(&continued),
+        based_on: Some(SessionBase::of(read.as_ref())),
+    });
+
+    type_moves(&mut app, &["e4"]);
+    app.wait_for("the stale save to be refused", |_, cx| {
+        cx.global::<crate::played::PlayedHandle>()
+            .0
+            .read(cx)
+            .error
+            .is_some()
+    });
+    let kept = app.request(calls::Session {
+        kind: SessionKind::Local,
+    });
+    assert_eq!(kept, Some(continued));
+}
+
 /// A moment after the window shows, Over the board and the analysis board are made ahead of
 /// being opened (`shell::prewarm`, which tests call themselves): the page then opened is the one
 /// made, resuming its game, and neither is shown until it is chosen.

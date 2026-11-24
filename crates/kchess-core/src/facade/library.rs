@@ -2,7 +2,7 @@
 
 use kchess_contracts::check::{
     ArchivedGame, LibraryId, MissCounts, NotificationId, Position, RepertoireKey, RepertoireLine,
-    ReviewKey, SessionObject, Side, ViewPreferenceKey,
+    ReviewKey, SessionBase, SessionObject, Side, ViewPreferenceKey,
 };
 use kchess_contracts::core_api::LibraryApi;
 use kchess_contracts::types::{
@@ -82,12 +82,20 @@ impl LibraryApi for Core {
             .await
     }
 
-    async fn save_session(&self, kind: SessionKind, session: SessionObject) -> Result<()> {
+    async fn save_session(
+        &self,
+        kind: SessionKind,
+        session: SessionObject,
+        based_on: Option<SessionBase>,
+    ) -> Result<()> {
         let checked =
             documents::assert_session(vec![J::Str(kind.as_str().into()), J::from(&session.0)]);
         let value = checked.map(J::into_value).map_err(CoreError::new)?;
+        let based_on = based_on.map(|base| base.session.map(|session| session.0));
         self.database
-            .write_async(move |ctx| library::save_session(ctx.db, kind, value))
+            .write_async(move |ctx| {
+                library::save_session_over(ctx.host, ctx.db, kind, value, based_on)
+            })
             .await
     }
 

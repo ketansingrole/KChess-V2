@@ -57,6 +57,36 @@ impl Validate for SessionObject {
     }
 }
 
+/// The session a save replaces, as the frontend last read or saved it (`session`, null when the
+/// profile had none): the core refuses a save over a session changed elsewhere since.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct SessionBase {
+    pub session: Option<SessionObject>,
+}
+
+impl SessionBase {
+    /// The session last read or saved, to send.
+    pub fn of(session: Option<&crate::types::SessionDocument>) -> SessionBase {
+        SessionBase {
+            session: session.map(SessionObject::of),
+        }
+    }
+}
+
+impl Validate for SessionBase {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        ensure(value.is_object(), None, "", || "an object".into())?;
+        let session = match value.get("session") {
+            None | Some(J::Null | J::Undef) => None,
+            Some(session) if session.is_object() => {
+                Some(SessionObject(session.clone().into_value()))
+            }
+            Some(_) => return Err("session must be an object or null".into()),
+        };
+        Ok(SessionBase { session })
+    }
+}
+
 /// A played game to save: an object, whose fields the core checks.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(transparent)]

@@ -65,6 +65,9 @@ pub struct SessionSaver<V> {
     save: Option<Task<()>>,
     /// Work that needs the saved session, run once it is read.
     waiting: Vec<Waiting<V>>,
+    /// The session as the page showed it once read, then as last saved: quitting saves only a
+    /// page changed since, so an idle window never replaces a game continued elsewhere.
+    saved: Option<SessionDocument>,
 }
 
 impl<V: Resumes> SessionSaver<V> {
@@ -86,8 +89,17 @@ impl<V: Resumes> SessionSaver<V> {
             })
             .collect();
         cx.spawn_in(window, async move |this, cx| {
-            let read = resumed(futures::future::join_all(reads).await);
+            let reads = futures::future::join_all(reads).await;
+            let own = reads
+                .iter()
+                .find(|(read, _)| *read == kind)
+                .and_then(|(_, read)| read.as_ref().ok().cloned());
+            let read = resumed(reads);
             let _ = this.update_in(cx, |this, window, cx| {
+                cx.global::<PlayedHandle>()
+                    .0
+                    .read(cx)
+                    .read_session(kind, read.is_ok().then_some(own).flatten());
                 let saved = match read {
                     Ok(saved) => {
                         this.saver().state = Resume::Ready;
@@ -104,6 +116,10 @@ impl<V: Resumes> SessionSaver<V> {
                     }
                 };
                 this.resume(saved, window, cx);
+                if this.saver().loaded() {
+                    let shown = this.snapshot(cx);
+                    this.saver().saved = Some(shown);
+                }
                 Self::run_waiting(this, window, cx);
             });
         })
@@ -118,6 +134,7 @@ impl<V: Resumes> SessionSaver<V> {
             state: Resume::Reading,
             save: None,
             waiting: Vec::new(),
+            saved: None,
         }
     }
 
@@ -210,7 +227,7 @@ impl<V: Resumes> SessionSaver<V> {
     /// the app quit first (2026-11-20). One whose read failed saves nothing over the profile's.
     fn save_before_quit(this: &mut V, cx: &mut Context<V>) -> crate::quit::BoxedSave {
         if this.saver().state != Resume::Reading {
-            Self::write_now(this, cx);
+            Self::write_if_changed(this, cx);
             return cx.global::<PlayedHandle>().0.read(cx).flushed();
         }
         let (done, read) = futures::channel::oneshot::channel();
@@ -234,9 +251,26 @@ impl<V: Resumes> SessionSaver<V> {
         if !this.saver().loaded() {
             return;
         }
-        this.saver().save = None;
-        let kind = this.saver().kind;
         let snapshot = this.snapshot(cx);
+        Self::send(this, snapshot, cx);
+    }
+
+    /// Save the page if it changed since it was read or last saved.
+    fn write_if_changed(this: &mut V, cx: &mut Context<V>) {
+        if !this.saver().loaded() {
+            return;
+        }
+        let snapshot = this.snapshot(cx);
+        if this.saver().save.is_none() && this.saver().saved.as_ref() == Some(&snapshot) {
+            return;
+        }
+        Self::send(this, snapshot, cx);
+    }
+
+    fn send(this: &mut V, snapshot: SessionDocument, cx: &mut Context<V>) {
+        this.saver().save = None;
+        this.saver().saved = Some(snapshot.clone());
+        let kind = this.saver().kind;
         cx.global::<PlayedHandle>()
             .0
             .read(cx)

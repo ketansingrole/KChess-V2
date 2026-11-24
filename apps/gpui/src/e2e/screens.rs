@@ -714,6 +714,7 @@ fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
                 .request(kchess_contracts::calls::SaveSession {
                     kind: kchess_contracts::types::SessionKind::Computer,
                     session: kchess_contracts::check::SessionObject::of(&session),
+                    based_on: None,
                 })
         });
         cx.foreground_executor()

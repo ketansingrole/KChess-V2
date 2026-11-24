@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use super::sql::Sql as _;
 use crate::host::{Host, Level};
 use crate::lichess::watch::alerts;
-use kchess_contracts::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, ErrorKind, Result};
 use kchess_domain::js::{self, utf16_len};
 use kchess_domain::library::{MAX_ARCHIVED_GAMES, MAX_MISTAKES};
 use kchess_domain::misc::MAX_DOCUMENT;
@@ -69,6 +69,40 @@ pub fn remove_archived_game(db: &Connection, id: &str) -> Result<()> {
     db.execute("DELETE FROM archived_games WHERE id = ?1", params![id])
         .sql()?;
     Ok(())
+}
+
+/// A session save refused because the profile's session changed since the frontend read it.
+pub const STALE_SESSION: &str =
+    "This game was continued elsewhere. Open it again to see the latest moves.";
+
+/// Saves a page's unfinished session over `based_on`, the session as the frontend last read or
+/// saved it (`None` inside when the profile had none), and refuses it when the profile's session
+/// has changed since: 2026-11-24, closing an idle window replaced a game the command line had
+/// continued. Both are compared as this release reads them, so a session stored by an earlier
+/// version is the one read from it. Without `based_on` the session is replaced.
+pub fn save_session_over(
+    host: &dyn Host,
+    db: &Connection,
+    kind: SessionKind,
+    value: Value,
+    based_on: Option<Option<Value>>,
+) -> Result<()> {
+    if let Some(base) = based_on {
+        let read = |raw: &Value| SessionDocument::decode(kind, &J::from(raw));
+        let expected = base.and_then(|base| read(&encode_session(kind.as_str(), &base)));
+        let stored = read_session(host, db, kind)?;
+        if as_value(stored.as_ref()) != as_value(expected.as_ref()) {
+            return Err(CoreError::new(STALE_SESSION).with_kind(ErrorKind::Conflict));
+        }
+    }
+    save_session(db, kind, value)
+}
+
+/// A session as JSON, for comparing two (a float that is not a number compares as null).
+fn as_value(session: Option<&SessionDocument>) -> Value {
+    session
+        .and_then(|session| serde_json::to_value(session).ok())
+        .unwrap_or(Value::Null)
 }
 
 /// Saves a page's unfinished session (`value`, already validated for `kind`).
@@ -808,6 +842,44 @@ mod tests {
         // The event ending forgets every account's place.
         forget(None);
         assert!(accounts().is_empty());
+    }
+
+    /// A save names the session it replaces: one made over a session continued elsewhere since
+    /// (or over none, when one was saved since) is refused, and the profile keeps the newer.
+    #[test]
+    fn a_session_save_over_one_changed_since_is_refused() {
+        use kchess_domain::games::local::LocalGame;
+        let db = study_db();
+        let session = |moves: &[&str]| -> Value {
+            let mut game = LocalGame::resume(None, 0.).expect("a new game");
+            for (at, uci) in moves.iter().enumerate() {
+                game.play(uci, at as f64 + 1.);
+            }
+            serde_json::to_value(SessionDocument::Local(game.session(9.))).expect("as JSON")
+        };
+        let save = |value: Value, based_on: Option<Option<Value>>| {
+            save_session_over(&QUIET, &db, SessionKind::Local, value, based_on)
+        };
+        let stored = || {
+            read_session(&QUIET, &db, SessionKind::Local)
+                .expect("read")
+                .map(|session| serde_json::to_value(session).expect("as JSON"))
+        };
+        let first = session(&["e2e4"]);
+        save(first.clone(), Some(None)).expect("over none");
+        let stale = save(session(&["d2d4"]), Some(None)).expect_err("one was saved since");
+        assert_eq!(stale.message, STALE_SESSION);
+        assert_eq!(stale.kind, Some(ErrorKind::Conflict));
+        assert_eq!(stored(), Some(first.clone()));
+
+        let second = session(&["e2e4", "e7e5"]);
+        save(second.clone(), Some(Some(first.clone()))).expect("over the first");
+        save(session(&["c2c4"]), Some(Some(first))).expect_err("over the first again");
+        assert_eq!(stored(), Some(second));
+
+        let replaced = session(&["g1f3"]);
+        save(replaced.clone(), None).expect("without a base, replaced");
+        assert_eq!(stored(), Some(replaced));
     }
 
     fn study_db() -> Connection {
