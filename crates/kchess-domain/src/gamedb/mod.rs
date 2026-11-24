@@ -10,7 +10,7 @@
 
 use shakmaty::variant::{Variant, VariantPosition};
 use shakmaty::zobrist::Zobrist64;
-use shakmaty::{EnPassantMode, Move, MoveList, Position};
+use shakmaty::{Color, EnPassantMode, Move, MoveList, Position, Role};
 
 use crate::pgn::{self, Game};
 use crate::position;
@@ -39,6 +39,39 @@ pub fn position_key(pos: &VariantPosition) -> u64 {
     pos.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0
 }
 
+/// What only a capture, a pawn move or a promotion changes in a position, in 32 bits: where each
+/// side's pawns stand and how many knights, bishops, rooks and queens each has. A game keeps it
+/// for many moves at a time, so a database indexes the few a game passes through rather than
+/// every position, and a position can only be in the games that passed through its structure.
+/// Stored: computed from bitboards (a1 = bit 0) and fixed constants alone, never from anything a
+/// shakmaty upgrade could change.
+pub fn structure_key(pos: &VariantPosition) -> u32 {
+    let board = pos.board();
+    let pawns = board.by_role(Role::Pawn);
+    let mut counts = 0u64;
+    for color in [Color::White, Color::Black] {
+        for role in [Role::Knight, Role::Bishop, Role::Rook, Role::Queen] {
+            let count = (board.by_color(color) & board.by_role(role)).count() as u64;
+            counts = counts << 4 | count.min(15);
+        }
+    }
+    let mix = |value: u64, by: u64| {
+        let mixed = value.wrapping_mul(by);
+        mixed ^ (mixed >> 29)
+    };
+    let hash = mix(
+        (pawns & board.by_color(Color::White)).0,
+        0x9E37_79B9_7F4A_7C15,
+    ) ^ mix(
+        (pawns & board.by_color(Color::Black)).0,
+        0xC2B2_AE3D_27D4_EB4F,
+    )
+    .rotate_left(21)
+        ^ mix(counts, 0x1656_67B1_9E37_79F9).rotate_left(42);
+    let hash = mix(hash, 0xFF51_AFD7_ED55_8CCD);
+    (hash >> 32) as u32
+}
+
 /// A move in 16 bits: from (6), to (6), promotion role (3) and whether it castles (1). Positions
 /// castle king-takes-rook (`rules`), so a castle's `to` is its rook's square.
 pub fn pack_move(m: &Move) -> u16 {
@@ -61,6 +94,18 @@ fn ordered_moves(pos: &VariantPosition) -> MoveList {
     let mut moves = pos.legal_moves();
     moves.sort_unstable_by_key(order_key);
     moves
+}
+
+/// The move an encoded line's `byte` names in `pos`: the one at that place in `ordered_moves`,
+/// found without sorting them all (no two moves share a place). None when there is no such move.
+pub fn coded_move(pos: &VariantPosition, byte: u8) -> Option<Move> {
+    let mut moves = pos.legal_moves();
+    let index = usize::from(byte);
+    if index >= moves.len() {
+        return None;
+    }
+    moves.select_nth_unstable_by_key(index, order_key);
+    Some(moves[index])
 }
 
 fn order_key(m: &Move) -> (u8, u8, u8) {
@@ -91,14 +136,13 @@ pub fn walk_line(
 ) -> bool {
     let mut pos = start.clone();
     for &byte in code {
-        let moves = ordered_moves(&pos);
-        let Some(m) = moves.get(usize::from(byte)) else {
+        let Some(m) = coded_move(&pos, byte) else {
             return false;
         };
-        if !visit(&pos, m) {
+        if !visit(&pos, &m) {
             return true;
         }
-        pos.play_unchecked(*m);
+        pos.play_unchecked(m);
     }
     true
 }

@@ -21,38 +21,69 @@ pub(super) fn visible(db: &Connection) -> Result<i64> {
     .sql()
 }
 
-/// The SQL that keeps the ids of `table` whose name has, for each of the words searched, a word
-/// starting with it, in any order ("magnus c" finds "Carlsen, Magnus"); and its arguments.
-fn names(table: &str, words: &str, args: &mut Vec<SqlValue>) -> String {
-    // Folded names hold only letters, digits and spaces: no `LIKE` wildcard can reach a pattern.
+/// Whether the file indexes its names' words (`player_words`, `event_words`); an older file that
+/// could not be upgraded is searched name by name instead, alike but slower.
+pub(super) fn worded(db: &Connection) -> Result<bool> {
+    db.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'player_words')",
+        [],
+        |row| row.get(0),
+    )
+    .sql()
+}
+
+/// The SQL that keeps the ids of `table` (`players` or `events`) whose name has, for each of the
+/// words searched, a word starting with it, in any order ("magnus c" finds "Carlsen, Magnus");
+/// and its arguments. `worded`: by the words' index, in a millisecond rather than a scan of every
+/// name.
+pub(super) fn names(table: &str, words: &str, worded: bool, args: &mut Vec<SqlValue>) -> String {
     let folded = gamedb::fold_name(words);
-    let mut clauses = Vec::new();
-    for word in folded.split(' ').filter(|word| !word.is_empty()) {
-        args.push(SqlValue::Text(format!("{word}%")));
-        args.push(SqlValue::Text(format!("% {word}%")));
-        let (a, b) = (args.len() - 1, args.len());
-        clauses.push(format!("(norm LIKE ?{a} OR norm LIKE ?{b})"));
-    }
-    if clauses.is_empty() {
+    let words: Vec<&str> = folded.split(' ').filter(|word| !word.is_empty()).collect();
+    if words.is_empty() {
         // Nothing a name can hold (only punctuation): no name matches.
-        clauses.push("0".to_string());
+        return format!("SELECT id FROM {table} WHERE 0");
     }
+    if worded {
+        let index = if table == "players" {
+            "player_words"
+        } else {
+            "event_words"
+        };
+        // The words that start with one: from it up to it followed by the last character.
+        let starting = words.iter().map(|word| {
+            args.push(SqlValue::Text((*word).to_string()));
+            args.push(SqlValue::Text(format!("{word}{}", char::MAX)));
+            let (a, b) = (args.len() - 1, args.len());
+            format!("SELECT id FROM {index} WHERE word >= ?{a} AND word < ?{b}")
+        });
+        return starting.collect::<Vec<_>>().join(" INTERSECT ");
+    }
+    // Folded names hold only letters, digits and spaces: no `LIKE` wildcard can reach a pattern.
+    let clauses: Vec<String> = words
+        .iter()
+        .map(|word| {
+            args.push(SqlValue::Text(format!("{word}%")));
+            args.push(SqlValue::Text(format!("% {word}%")));
+            let (a, b) = (args.len() - 1, args.len());
+            format!("(norm LIKE ?{a} OR norm LIKE ?{b})")
+        })
+        .collect();
     format!("SELECT id FROM {table} WHERE {}", clauses.join(" AND "))
 }
 
 /// The `WHERE` clause of a search, and its arguments.
-pub(super) fn filters(query: &GameDbQuery, visible: i64) -> (String, Vec<SqlValue>) {
+fn filters(query: &GameDbQuery, visible: i64, worded: bool) -> (String, Vec<SqlValue>) {
     let mut args = vec![SqlValue::Integer(visible)];
     let mut clauses = vec!["g.import_id <= ?1".to_string()];
     if let Some(player) = &query.player {
-        let ids = names("players", player, &mut args);
+        let ids = names("players", player, worded, &mut args);
         clauses.push(match query.side.unwrap_or(GameDbSide::Either) {
             GameDbSide::White => format!("g.white IN ({ids})"),
             GameDbSide::Black => format!("g.black IN ({ids})"),
             GameDbSide::Either => format!("(g.white IN ({ids}) OR g.black IN ({ids}))"),
         });
         if let Some(opponent) = &query.opponent {
-            let others = names("players", opponent, &mut args);
+            let others = names("players", opponent, worded, &mut args);
             clauses.push(match query.side.unwrap_or(GameDbSide::Either) {
                 GameDbSide::White => format!("g.black IN ({others})"),
                 GameDbSide::Black => format!("g.white IN ({others})"),
@@ -63,11 +94,11 @@ pub(super) fn filters(query: &GameDbQuery, visible: i64) -> (String, Vec<SqlValu
             });
         }
     } else if let Some(opponent) = &query.opponent {
-        let others = names("players", opponent, &mut args);
+        let others = names("players", opponent, worded, &mut args);
         clauses.push(format!("(g.white IN ({others}) OR g.black IN ({others}))"));
     }
     if let Some(event) = &query.event {
-        let ids = names("events", event, &mut args);
+        let ids = names("events", event, worded, &mut args);
         clauses.push(format!("g.event IN ({ids})"));
     }
     if let Some(year) = query.year_from {
@@ -128,7 +159,7 @@ pub(super) const JOINS: &str = "JOIN players w ON w.id = g.white JOIN players b 
 
 /// One page of the games `query` matches, and how many it matches.
 pub fn games(db: &Connection, query: &GameDbQuery) -> Result<GameDbPage> {
-    let (clauses, mut args) = filters(query, visible(db)?);
+    let (clauses, mut args) = filters(query, visible(db)?, worded(db)?);
     let total: i64 = db
         .query_row(
             &format!("SELECT COUNT(*) FROM games g WHERE {clauses}"),

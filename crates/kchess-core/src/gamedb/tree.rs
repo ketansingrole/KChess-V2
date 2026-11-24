@@ -27,7 +27,8 @@ pub struct Stats {
     pub black: u32,
     pub elo_sum: u64,
     pub elo_n: u32,
-    /// The game with the highest average rating through this move, and that rating.
+    /// The game with the highest average rating through this move, and that rating; of games
+    /// rated alike, the first (the lowest id), whatever order they were counted in.
     pub best_game: i64,
     pub best_elo: u16,
     /// The latest game through this move, and its date (`YYYYMMDD`).
@@ -63,7 +64,7 @@ impl Stats {
         self.black += other.black;
         self.elo_sum += other.elo_sum;
         self.elo_n += other.elo_n;
-        if other.best_elo > self.best_elo {
+        if (other.best_elo, Reverse(other.best_game)) > (self.best_elo, Reverse(self.best_game)) {
             self.best_elo = other.best_elo;
             self.best_game = other.best_game;
         }

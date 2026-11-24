@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 
+use super::deep::{self, DeepBuilder};
 use super::schema;
 use super::tree::{Stats, TreeBuilder};
 use crate::store::sql::{Sql as _, transaction};
@@ -116,16 +117,19 @@ impl Source {
     }
 }
 
-/// Names (players, events) by id, added to their table the first time a game names them.
+/// Names (players, events) by id, added to their table the first time a game names them, with
+/// each of their words (`words`).
 struct Names {
     table: &'static str,
+    words: &'static str,
     ids: HashMap<String, i64>,
 }
 
 impl Names {
-    fn new(table: &'static str) -> Names {
+    fn new(table: &'static str, words: &'static str) -> Names {
         Names {
             table,
+            words,
             ids: HashMap::new(),
         }
     }
@@ -134,18 +138,30 @@ impl Names {
         if let Some(&id) = self.ids.get(name) {
             return Ok(id);
         }
-        let table = self.table;
-        db.prepare_cached(&format!(
-            "INSERT INTO {table} (name, norm) VALUES (?1, ?2) ON CONFLICT (name) DO NOTHING"
-        ))
-        .sql()?
-        .execute(params![name, gamedb::fold_name(name)])
-        .sql()?;
+        let (table, words) = (self.table, self.words);
+        let folded = gamedb::fold_name(name);
+        let added = db
+            .prepare_cached(&format!(
+                "INSERT INTO {table} (name, norm) VALUES (?1, ?2) ON CONFLICT (name) DO NOTHING"
+            ))
+            .sql()?
+            .execute(params![name, folded])
+            .sql()?;
         let id: i64 = db
             .prepare_cached(&format!("SELECT id FROM {table} WHERE name = ?1"))
             .sql()?
             .query_row([name], |row| row.get(0))
             .sql()?;
+        if added > 0 {
+            let mut add = db
+                .prepare_cached(&format!(
+                    "INSERT OR IGNORE INTO {words} (word, id) VALUES (?1, ?2)"
+                ))
+                .sql()?;
+            for word in folded.split(' ').filter(|word| !word.is_empty()) {
+                add.execute(params![word, id]).sql()?;
+            }
+        }
         // Bounded: a file with millions of distinct names reads them from the table instead.
         if self.ids.len() < 1_000_000 {
             self.ids.insert(name.to_string(), id);
@@ -227,9 +243,16 @@ fn insert_game(
     Ok(db.last_insert_rowid())
 }
 
-/// The tree rows of one finished game: each of its first `depth` positions and the move played
-/// there.
-fn add_to_tree(tree: &mut TreeBuilder, id: i64, stored: &Stored, depth: u32) -> Result<()> {
+/// What one finished game adds to the indexes, in one pass over its moves: each of its first
+/// `depth` positions and the move played there to the tree, and the structures of the rest to
+/// the position index.
+fn index_game(
+    tree: &mut TreeBuilder,
+    deep: &mut DeepBuilder,
+    id: i64,
+    stored: &Stored,
+    depth: u32,
+) -> Result<()> {
     // An unfinished game counts in no result, so the tree leaves it out, as Lichess's does.
     if stored.outcome == Outcome::Unknown {
         return Ok(());
@@ -240,12 +263,22 @@ fn add_to_tree(tree: &mut TreeBuilder, id: i64, stored: &Stored, depth: u32) -> 
     let stats = Stats::of(id, stored.outcome, rating(stored), date_key(stored));
     let mut ply = 0;
     let mut failed = None;
+    let mut structure = None;
     gamedb::walk_line(&start, &stored.moves, |pos, m| {
-        if ply >= depth {
-            return false;
-        }
+        let added = if ply < depth {
+            tree.add(gamedb::position_key(pos), gamedb::pack_move(m), &stats)
+        } else {
+            // A structure lasts until a capture or a pawn move, and never comes back.
+            let key = gamedb::structure_key(pos);
+            if structure == Some(key) {
+                Ok(())
+            } else {
+                structure = Some(key);
+                deep.add(key, id)
+            }
+        };
         ply += 1;
-        match tree.add(gamedb::position_key(pos), gamedb::pack_move(m), &stats) {
+        match added {
             Ok(()) => true,
             Err(error) => {
                 failed = Some(error);
@@ -365,7 +398,7 @@ pub fn run(
         };
         Ok::<_, CoreError>((import, count))
     })();
-    let (import, (count, tree)) = match result {
+    let (import, (count, tree, deep)) = match result {
         Ok(done) => done,
         Err(error) => {
             undo(db, target);
@@ -381,6 +414,7 @@ pub fn run(
             let finish =
                 || {
                     tree.write(&db, adding, &|| watch.cancelled())?;
+                    deep.write(&db, &|| watch.cancelled())?;
                     db.execute(
                 "UPDATE imports SET finished_at = ?2, games = ?3, skipped = ?4 WHERE id = ?1",
                 params![import, crate::time::now_ms(), count.games as i64, count.skipped as i64],
@@ -429,10 +463,11 @@ fn read_games(
     read: &AtomicU64,
     total_bytes: u64,
     watch: &mut dyn Watch,
-) -> Result<(Count, TreeBuilder)> {
+) -> Result<(Count, TreeBuilder, DeepBuilder)> {
     let mut tree = TreeBuilder::new(dir, capacity)?;
-    let mut players = Names::new("players");
-    let mut events = Names::new("events");
+    let mut deep = DeepBuilder::new(dir, deep::CAPACITY)?;
+    let mut players = Names::new("players", "player_words");
+    let mut events = Names::new("events", "event_words");
     let mut count = Count {
         total_bytes,
         ..Count::default()
@@ -454,7 +489,7 @@ fn read_games(
                 open = true;
             }
             let id = insert_game(db, import, &stored, &mut players, &mut events)?;
-            add_to_tree(&mut tree, id, &stored, depth)?;
+            index_game(&mut tree, &mut deep, id, &stored, depth)?;
             count.games += 1;
             if (count.games + count.skipped).is_multiple_of(1_000) {
                 if watch.cancelled() {
@@ -482,7 +517,7 @@ fn read_games(
     }
     count.bytes = read.load(Ordering::Relaxed);
     watch.reading(count);
-    Ok((count, tree))
+    Ok((count, tree, deep))
 }
 
 /// The files of a database: the file itself and SQLite's journal beside it.

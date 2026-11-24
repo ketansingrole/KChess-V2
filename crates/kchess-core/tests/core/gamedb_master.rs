@@ -16,13 +16,32 @@ use crate::support;
 
 const ARCHIVE: &str = "/database/broadcast/";
 
-/// A month's file: two games, packed as the archive packs them.
+/// Plies of `long_line`: past the opening tree (40), so its games reach the position index.
+const LONG_PLIES: usize = 44;
+
+/// Knights out and back, `LONG_PLIES` plies: the start's pawns and pieces throughout.
+fn long_line() -> String {
+    (0..LONG_PLIES / 2)
+        .map(|n| {
+            let (white, black) = if n % 2 == 0 {
+                ("Nf3", "Nf6")
+            } else {
+                ("Ng1", "Ng8")
+            };
+            format!("{}. {white} {black}", n + 1)
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A month's file: two games, the first one long, packed as the archive packs them.
 fn month_file(month: &str) -> Vec<u8> {
     let date = month.replace('-', ".");
+    let long = long_line();
     let pgn = format!(
         "[Event \"Open {month}\"]\n[Date \"{date}.01\"]\n[White \"Ana {month}\"]\n\
          [Black \"Ben\"]\n[Result \"1-0\"]\n[WhiteElo \"2700\"]\n[BlackElo \"2650\"]\n\n\
-         1. e4 e5 2. Nf3 1-0\n\n\
+         {long} 1-0\n\n\
          [Event \"Open {month}\"]\n[Date \"{date}.02\"]\n[White \"Ben\"]\n\
          [Black \"Ana {month}\"]\n[Result \"1/2-1/2\"]\n\n1. d4 d5 1/2-1/2\n"
     );
@@ -140,6 +159,21 @@ fn phases(host: &support::Recording) -> Vec<(String, Option<String>)> {
         .collect()
 }
 
+/// The games the master database's position index lists past the tree for the start's
+/// structure, where only the long games stay.
+fn deep_games(profile: &Path) -> usize {
+    use shakmaty::variant::{Variant, VariantPosition};
+    let db = rusqlite::Connection::open_with_flags(
+        profile.join("databases/master.kdb"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("opens the database");
+    let start = VariantPosition::new(Variant::Chess);
+    kchess_core::gamedb::deep::games(&db, kchess_domain::gamedb::structure_key(&start))
+        .expect("reads the index")
+        .len()
+}
+
 async fn master_games(core: &Core) -> u64 {
     let status = core.call("gameDbStatus", vec![]).await.expect("status");
     status["databases"]
@@ -227,6 +261,9 @@ async fn the_master_games_install_by_month_and_a_later_call_brings_only_new_mont
         ["2026-08", "2026-09", "2026-10"].map(|m| month_requests(&fixture, m)),
         [1, 1, 1]
     );
+    // The added month reaches the position index past the tree, as an import's games do: each
+    // month's long game is there.
+    assert_eq!(deep_games(profile.path()), 3);
     // Nothing new: nothing downloaded, the database as it was.
     let again = core
         .call("gameDbMasterInstall", vec![json!(2)])

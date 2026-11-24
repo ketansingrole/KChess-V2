@@ -44,6 +44,7 @@ mod facade_online_play;
 mod facade_puzzles;
 mod facade_sync_play_time;
 mod facade_tournaments;
+mod gamedb_explore_scale;
 mod gamedb_master;
 mod gamedb_scale;
 mod lichess_accounts;

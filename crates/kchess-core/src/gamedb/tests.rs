@@ -686,13 +686,16 @@ async fn filtered_lookups_count_only_the_games_that_match() {
     assert_eq!(look(&met, carlsen).await, ["Bb5 1/0/0", "d4 0/1/0"]);
 }
 
+/// A filter every game matches replays them all on every core, by an index or in file order, and
+/// must count what the tree counted while importing them, best games included.
 #[test]
 fn a_filter_every_game_matches_finds_what_the_tree_finds() {
-    random::check(5, |rng| {
+    random::check(3, |rng| {
         let profile = tempfile::tempdir().unwrap();
         let mut pgn = String::new();
         let mut lines = Vec::new();
-        for game in 0..40 {
+        // More than two batches (`explore::BATCH`), so their counts are summed.
+        for game in 0..2_100 {
             let mut pos = rules::default_position(Variant::Chess);
             let mut sans = Vec::new();
             let mut fens = vec![rules::make_fen(&pos)];
@@ -706,6 +709,7 @@ fn a_filter_every_game_matches_finds_what_the_tree_finds() {
                 fens.push(rules::make_fen(&pos));
             }
             let result = ["1-0", "0-1", "1/2-1/2"][game % 3];
+            let elo = 2000 + rng.below(800);
             // The moves alone: `pgn_from_san` writes headers of its own, which would replace these.
             let moves: Vec<String> = sans
                 .iter()
@@ -716,7 +720,8 @@ fn a_filter_every_game_matches_finds_what_the_tree_finds() {
                 })
                 .collect();
             pgn.push_str(&format!(
-                "[White \"P{game}\"]\n[Black \"Q\"]\n[Result \"{result}\"]\n\n{} {result}\n\n",
+                "[White \"P{game}\"]\n[Black \"Q\"]\n[Result \"{result}\"]\n\
+                 [WhiteElo \"{elo}\"]\n[BlackElo \"{elo}\"]\n\n{} {result}\n\n",
                 moves.join(" ")
             ));
             lines.push(fens);
@@ -728,13 +733,319 @@ fn a_filter_every_game_matches_finds_what_the_tree_finds() {
             player: Some("Q".into()),
             ..in_database(&id)
         };
-        for fens in &lines {
-            for fen in fens.iter().take(8) {
-                let tree = explore::lookup(&db, &id, fen, &in_database(&id), 0).unwrap();
-                let replayed = explore::lookup(&db, &id, fen, &everyone, 0).unwrap();
+        let rated = LookupOptions {
+            min_elo: Some(1),
+            ..in_database(&id)
+        };
+        let go = AtomicBool::new(false);
+        for _ in 0..30 {
+            let fens = &lines[rng.below(lines.len())];
+            let fen = &fens[rng.below(fens.len().min(8))];
+            let tree = explore::lookup(&db, &id, fen, &in_database(&id), 0, &go).unwrap();
+            // By the player index, and in file order: every game is rated, so the rating is broad.
+            for filter in [&everyone, &rated] {
+                let replayed = explore::lookup(&db, &id, fen, filter, 0, &go).unwrap();
                 assert_eq!(replayed.moves, tree.moves, "{fen}");
                 assert_eq!(replayed.total, tree.total, "{fen}");
+                assert_eq!(replayed.games, tree.games, "{fen}");
             }
         }
     });
+}
+
+/// A position at any depth is found in every game that reached it, as replaying every game in
+/// full counts it: the tree's plies and those past it (the position index) together, with
+/// filters or without, the same position early in one game and late in another. A file whose
+/// index is gone answers alike by replaying every game, and opening it to write builds the index
+/// an import builds.
+#[test]
+fn a_position_past_the_tree_is_found_in_every_game_that_reached_it() {
+    random::check(3, |rng| {
+        let profile = tempfile::tempdir().unwrap();
+        let depth = schema::INDEX_DEPTH as usize;
+        // Long lines the games follow for a while, so that many share positions past the tree.
+        let mut bases: Vec<Vec<shakmaty::Move>> = Vec::new();
+        while bases.len() < 3 {
+            let mut pos = rules::default_position(Variant::Chess);
+            let mut line = Vec::new();
+            for _ in 0..depth + 40 {
+                let legal = pos.legal_moves();
+                let Some(m) = rng.pick(&legal).copied() else {
+                    break;
+                };
+                pos.play_unchecked(m);
+                line.push(m);
+            }
+            if line.len() > depth + 10 {
+                bases.push(line);
+            }
+        }
+        let shuffle = ["Nf3", "Nf6", "Ng1", "Ng8"];
+        let mut pgn = String::new();
+        let mut games: Vec<(Vec<shakmaty::Move>, &str)> = Vec::new();
+        for game in 0..300 {
+            let mut pos = rules::default_position(Variant::Chess);
+            let mut moves = Vec::new();
+            // Knights out and back first, so a base's positions come on later plies in some
+            // games than in others, on both sides of the tree's depth.
+            for _ in 0..rng.below(4) {
+                for san in shuffle {
+                    let m = rules::parse_san(&pos, san).unwrap();
+                    pos.play_unchecked(m);
+                    moves.push(m);
+                }
+            }
+            let base = &bases[rng.below(bases.len())];
+            for &m in &base[..10 + rng.below(base.len() - 10)] {
+                pos.play_unchecked(m);
+                moves.push(m);
+            }
+            for _ in 0..rng.below(20) {
+                let legal = pos.legal_moves();
+                let Some(m) = rng.pick(&legal).copied() else {
+                    break;
+                };
+                pos.play_unchecked(m);
+                moves.push(m);
+            }
+            let result = ["1-0", "0-1", "1/2-1/2"][rng.below(3)];
+            let mut replay = rules::default_position(Variant::Chess);
+            let text: Vec<String> = moves
+                .iter()
+                .enumerate()
+                .map(|(ply, m)| {
+                    let san = rules::san_and_play(&mut replay, *m);
+                    match ply % 2 {
+                        0 => format!("{}. {san}", ply / 2 + 1),
+                        _ => san,
+                    }
+                })
+                .collect();
+            let elo = 2000 + rng.below(800);
+            pgn.push_str(&format!(
+                "[White \"P{game}\"]\n[Black \"Q\"]\n[Result \"{result}\"]\n\
+                 [WhiteElo \"{elo}\"]\n[BlackElo \"{elo}\"]\n\n{} {result}\n\n",
+                text.join(" ")
+            ));
+            games.push((moves, result));
+        }
+        // Every move each game played from each position, by the position's key and the move.
+        let mut every: HashMap<(u64, String), [i64; 3]> = HashMap::new();
+        for (moves, result) in &games {
+            let mut pos = rules::default_position(Variant::Chess);
+            for m in moves {
+                let counts = every
+                    .entry((gamedb_key(&pos), rules::make_uci(m)))
+                    .or_default();
+                counts[match *result {
+                    "1-0" => 0,
+                    "1/2-1/2" => 1,
+                    _ => 2,
+                }] += 1;
+                pos.play_unchecked(*m);
+            }
+        }
+        let id = write_database(profile.path(), "Deep", &pgn).unwrap();
+        let path = profile.path().join("databases").join(format!("{id}.kdb"));
+        let everyone = LookupOptions {
+            player: Some("Q".into()),
+            ..in_database(&id)
+        };
+        let rated = LookupOptions {
+            min_elo: Some(1),
+            ..in_database(&id)
+        };
+        let go = AtomicBool::new(false);
+        // Positions on every ply of the bases, past the tree most of them.
+        let mut fens = Vec::new();
+        for _ in 0..25 {
+            let base = &bases[rng.below(bases.len())];
+            let mut pos = rules::default_position(Variant::Chess);
+            for &m in &base[..rng.below(base.len())] {
+                pos.play_unchecked(m);
+            }
+            fens.push((rules::make_fen(&pos), gamedb_key(&pos)));
+        }
+        let answers = || {
+            let db = schema::open_read(&path).unwrap();
+            fens.iter()
+                .map(|(fen, key)| {
+                    let all = explore::lookup(&db, &id, fen, &in_database(&id), 0, &go).unwrap();
+                    let mut expected: Vec<(String, i64, i64, i64)> = every
+                        .iter()
+                        .filter(|((at, _), _)| at == key)
+                        .map(|((_, uci), c)| (uci.clone(), c[0], c[1], c[2]))
+                        .collect();
+                    expected.sort();
+                    let mut got: Vec<(String, i64, i64, i64)> = all
+                        .moves
+                        .iter()
+                        .map(|m| {
+                            (
+                                m.uci.clone(),
+                                m.white.unwrap_or(0),
+                                m.draws.unwrap_or(0),
+                                m.black.unwrap_or(0),
+                            )
+                        })
+                        .collect();
+                    got.sort();
+                    assert_eq!(got, expected, "{fen}");
+                    for filter in [&everyone, &rated] {
+                        let filtered = explore::lookup(&db, &id, fen, filter, 0, &go).unwrap();
+                        assert_eq!(filtered.moves, all.moves, "{fen}");
+                        assert_eq!(filtered.total, all.total, "{fen}");
+                        assert_eq!(filtered.games, all.games, "{fen}");
+                    }
+                    all
+                })
+                .collect::<Vec<_>>()
+        };
+        let indexed = answers();
+        assert!(
+            indexed.iter().any(|found| !found.moves.is_empty()),
+            "some position was found"
+        );
+        let buckets = || -> Vec<(i64, Vec<u8>)> {
+            let db = schema::open_read(&path).unwrap();
+            let mut select = db
+                .prepare("SELECT bucket, entries FROM deep ORDER BY bucket")
+                .unwrap();
+            select
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .map(|row| row.unwrap())
+                .collect()
+        };
+        let imported = buckets();
+        assert!(!imported.is_empty());
+        {
+            let db = rusqlite::Connection::open(&path).unwrap();
+            db.execute_batch("DELETE FROM deep; UPDATE meta SET deep_built = 0;")
+                .unwrap();
+        }
+        assert_eq!(answers(), indexed, "replaying every game answers alike");
+        schema::upgrade(&path).unwrap();
+        assert_eq!(buckets(), imported, "built as the import built it");
+        assert_eq!(answers(), indexed);
+    });
+}
+
+fn gamedb_key(pos: &shakmaty::variant::VariantPosition) -> u64 {
+    kchess_domain::gamedb::position_key(pos)
+}
+
+/// A lookup its caller dropped stops replaying and says so, as a cancellation, not a failure.
+#[test]
+fn a_stopped_lookup_ends_as_cancelled() {
+    let profile = tempfile::tempdir().unwrap();
+    let id = write_database(profile.path(), "S", GAMES).unwrap();
+    let db =
+        schema::open_read(&profile.path().join("databases").join(format!("{id}.kdb"))).unwrap();
+    let carlsen = LookupOptions {
+        player: Some("carlsen".into()),
+        ..in_database(&id)
+    };
+    let stopped = AtomicBool::new(true);
+    let error = explore::lookup(&db, &id, START, &carlsen, 0, &stopped).unwrap_err();
+    assert!(error.aborted, "{error:?}");
+    let go = AtomicBool::new(false);
+    assert!(explore::lookup(&db, &id, START, &carlsen, 0, &go).is_ok());
+}
+
+/// A file an older release wrote has no replay index and no index of its names' words: lookups
+/// and searches read the games' rows and every name instead, and answer alike; reading it
+/// through the service adds both, the words split as an import splits them.
+#[tokio::test]
+async fn an_older_file_answers_alike_and_gains_the_replay_and_word_indexes() {
+    let profile = tempfile::tempdir().unwrap();
+    let id = write_database(profile.path(), "Old", GAMES).unwrap();
+    let path = profile.path().join("databases").join(format!("{id}.kdb"));
+    let filters = [
+        LookupOptions {
+            player: Some("carlsen".into()),
+            ..in_database(&id)
+        },
+        LookupOptions {
+            min_elo: Some(1),
+            ..in_database(&id)
+        },
+        LookupOptions {
+            since: Some("1900".into()),
+            ..in_database(&id)
+        },
+    ];
+    let go = AtomicBool::new(false);
+    let searches = ["carlsen", "magnus c", "gukesh", "zz"].map(|player| GameDbQuery {
+        database: id.clone(),
+        player: Some(player.into()),
+        limit: 50,
+        ..GameDbQuery::default()
+    });
+    let answers = || {
+        let db = schema::open_read(&path).unwrap();
+        let looked: Vec<_> = filters
+            .iter()
+            .map(|options| {
+                let found = explore::lookup(&db, &id, START, options, 0, &go).unwrap();
+                (found.moves, found.games)
+            })
+            .collect();
+        let searched: Vec<_> = searches
+            .iter()
+            .map(|query| search::games(&db, query).unwrap().games)
+            .collect();
+        (looked, searched)
+    };
+    let words = |db: &rusqlite::Connection| -> Vec<(String, i64)> {
+        let mut rows = Vec::new();
+        for table in ["player_words", "event_words"] {
+            let mut select = db
+                .prepare(&format!("SELECT word, id FROM {table} ORDER BY word, id"))
+                .unwrap();
+            let found = select
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap();
+            rows.extend(found.map(|row| row.unwrap()));
+        }
+        rows
+    };
+    let indexed = answers();
+    assert!(indexed.0.iter().all(|(moves, _)| !moves.is_empty()));
+    assert!(indexed.1[..3].iter().all(|rows| !rows.is_empty()));
+    assert!(indexed.1[3].is_empty());
+    let imported = words(&schema::open_read(&path).unwrap());
+    assert!(
+        imported.contains(&("magnus".to_string(), 1)),
+        "{imported:?}"
+    );
+    let replay_index = |db: &rusqlite::Connection| -> bool {
+        db.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'games_replay')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(
+            "DROP INDEX games_replay; DROP TABLE player_words; DROP TABLE event_words;
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+    }
+    assert_eq!(answers(), indexed);
+
+    let (games, _) = service(profile.path());
+    games
+        .lookup(START.into(), filters[0].clone())
+        .await
+        .unwrap();
+    let db = schema::open_read(&path).unwrap();
+    assert!(replay_index(&db));
+    assert_eq!(words(&db), imported);
+    drop(db);
+    assert_eq!(answers(), indexed);
+    games.close().await;
 }
