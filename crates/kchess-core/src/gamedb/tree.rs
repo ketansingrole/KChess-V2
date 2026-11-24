@@ -439,7 +439,7 @@ mod tests {
     use kchess_testkit::random;
 
     fn database(dir: &std::path::Path) -> Connection {
-        schema::create(&dir.join("t.kdb"), "T", DatabaseSource::Imported, 0).unwrap()
+        schema::create(&dir.join("t.kdb"), "T", DatabaseSource::Imported, None, 0).unwrap()
     }
 
     fn all(db: &Connection) -> HashMap<(u64, u16), Stats> {
