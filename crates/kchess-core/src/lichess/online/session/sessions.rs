@@ -30,8 +30,21 @@ impl OnlineSession {
     }
 
     fn end_session(&self, report_unverified: bool) {
+        self.end_session_if(report_unverified, |_| true);
+    }
+
+    /// `end_session`, when `commit` (run first, under the same lock) says so: a recovery
+    /// applies what it found and checks that no game took the board meanwhile in one step.
+    fn end_session_if(
+        &self,
+        report_unverified: bool,
+        commit: impl FnOnce(&mut crate::lichess::online::state::State) -> bool,
+    ) -> bool {
         let (phase_report, cancel_pending) = {
             let mut st = self.st();
+            if !commit(&mut st) {
+                return false;
+            }
             st.attach_generation += 1;
             st.attaching_account.clear();
             let leaving_correspondence = st
@@ -98,6 +111,7 @@ impl OnlineSession {
                 }
             });
         }
+        true
     }
 
     /// `cancel()`: end the session's streams and its pending challenge. The idle lobby stream
@@ -301,21 +315,26 @@ impl OnlineSession {
         if let Some(error) = first_error {
             return Err(error);
         }
-        {
-            let mut st = self.st();
+        let elsewhere = std::mem::take(&mut checking.elsewhere);
+        let committed = self.end_session_if(true, |st| {
+            // A game that took the board meanwhile (a seek's, from its event stream) is newer
+            // than this check: it stays. Checked apart from the end, the end cancelled its
+            // streams and lent help while it was played.
+            if attempt != st.resume_attempt {
+                return false;
+            }
             // Every account was checked: this is what is played elsewhere now, and a finish
             // missed while the stream was down no longer keeps assistance locked. Kept before
             // the flags clear and the session ends (which reports the lock): kept after, help
             // was lent meanwhile during a game recovery had just found.
-            st.found_elsewhere(
-                std::mem::take(&mut checking.elsewhere),
-                checking.began,
-                true,
-            );
+            st.found_elsewhere(elsewhere, checking.began, true);
             st.recovery_unverified = false;
             st.accounts_unchecked = false;
+            true
+        });
+        if !committed {
+            return Err(CoreError::aborted("Recovery cancelled."));
         }
-        self.cancel_inner();
         let (session, account) = {
             let mut st = self.st();
             st.protected_game.clear();

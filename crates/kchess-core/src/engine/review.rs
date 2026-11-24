@@ -1077,6 +1077,9 @@ async fn run(s: &Arc<Shared>, job: Arc<Job>) {
                         cause.message.clone()
                     },
                 });
+                // Said now, before the next job can fail in its place: the status holds one
+                // failure, and the one replaced unsaid left `kchess-cli review` waiting.
+                send_status(s);
             }
             close_engine(s);
             if review.evals.iter().any(Option::is_some)
@@ -1192,9 +1195,21 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
         .all(|eval| eval.as_ref().is_some_and(|eval| has_score(Some(eval))));
     publish(s, job, review.clone()).await?;
     if !review.complete {
-        lock(&s.state)
+        let mut state = lock(&s.state);
+        state
             .skipped
             .insert(job.game_id.clone().unwrap_or_else(|| job.key.clone()));
+        // Someone waits for this review (`kchess-cli review`): the engine left positions
+        // without a score, so it never completes. Kept partial, it is said failed; unsaid,
+        // the wait never ended.
+        if !job.background.load(Ordering::SeqCst) {
+            state.failed = Some(ReviewFailure {
+                key: job.key.clone(),
+                message: "The engine gave no score for some positions.".to_string(),
+            });
+            drop(state);
+            send_status(s);
+        }
     }
     Ok(())
 }

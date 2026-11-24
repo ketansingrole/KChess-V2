@@ -631,3 +631,86 @@ async fn a_leave_answered_after_a_rejoin_keeps_the_membership() {
     assert_eq!(joined.as_array().map(Vec::len), Some(1), "{joined}");
     core.close().await;
 }
+
+/// A lookup that answers "withdrawn" while a join is under way leaves the join's place: the
+/// lookup's forget counted as a change, and the join that Lichess took kept nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lookup_answered_during_a_join_keeps_the_join() {
+    let (release, gate) = tokio::sync::watch::channel(false);
+    let held = Arc::new(tokio::sync::Notify::new());
+    let entered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let streams: Arc<Mutex<Vec<tokio::sync::mpsc::UnboundedSender<String>>>> = Arc::default();
+    let fixture = serve({
+        let (held, entered, streams) = (
+            Arc::clone(&held),
+            Arc::clone(&entered),
+            Arc::clone(&streams),
+        );
+        move |seen| match (seen.method.as_str(), seen.path()) {
+            (_, "/api/stream/event") => {
+                let (sender, events) = tokio::sync::mpsc::unbounded_channel();
+                streams.lock().unwrap().push(sender);
+                Reply::Stream(events)
+            }
+            ("GET", "/api/tournament/Abcd1234") => {
+                let me = entered.load(std::sync::atomic::Ordering::SeqCst);
+                Reply::Json(200, detail(me, false).to_string())
+            }
+            ("POST", "/api/tournament/Abcd1234/join") => {
+                held.notify_one();
+                let answer = Reply::Json(200, json!({ "ok": true }).to_string());
+                Reply::Gated(gate.clone(), Box::new(answer))
+            }
+            _ => Reply::Json(404, "{}".into()),
+        }
+    })
+    .await;
+    let profile = signed_in::open(&fixture.base).await;
+    let core = Arc::new(profile.core.clone());
+    // Kept from before: Alice left on Lichess since.
+    let now = kchess_core::time::now_ms() as f64;
+    core.database_for_tests()
+        .write(|c| {
+            let entry: kchess_contracts::types::JoinedTournament = serde_json::from_value(json!({
+                "system": "arena", "id": "Abcd1234", "account": "Alice", "name": "Hourly Rapid",
+                "until": now + 86_400_000.0,
+            }))
+            .expect("a joined tournament");
+            kchess_core::store::library::remember_tournament(c.host, c.db, &entry, now)
+        })
+        .unwrap();
+    let join = tokio::spawn({
+        let core = Arc::clone(&core);
+        async move {
+            core.call(
+                "joinTournament",
+                vec![
+                    json!("arena"),
+                    json!("Abcd1234"),
+                    json!("Alice"),
+                    Value::Null,
+                ],
+            )
+            .await
+        }
+    });
+    held.notified().await;
+    core.call(
+        "tournament",
+        vec![json!("arena"), json!("Abcd1234"), json!("Alice"), json!(1)],
+    )
+    .await
+    .expect("the lookup");
+    let joined = core.call("joinedTournaments", vec![]).await.unwrap();
+    assert_eq!(
+        joined.as_array().map(Vec::len),
+        Some(0),
+        "withdrawn: {joined}"
+    );
+    entered.store(true, std::sync::atomic::Ordering::SeqCst);
+    let _ = release.send(true);
+    assert_eq!(join.await.unwrap().unwrap(), json!(true));
+    let joined = core.call("joinedTournaments", vec![]).await.unwrap();
+    assert_eq!(joined.as_array().map(Vec::len), Some(1), "{joined}");
+    core.close().await;
+}

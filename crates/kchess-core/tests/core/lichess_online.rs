@@ -2234,6 +2234,51 @@ async fn a_game_started_while_a_check_runs_stays_locked_after_it() {
     online.close();
 }
 
+/// A seek's game that starts while a check for games runs stays on the board: the check's
+/// answer, asked before the pairing, ended the session as it applied, closing the new game's
+/// streams and lending help while it was played.
+#[tokio::test]
+async fn a_seeks_game_starting_during_a_check_stays_on_the_board() {
+    use kchess_contracts::types::Assistance;
+    let streams: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
+        Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&streams);
+    let (release, gate) = watch::channel(false);
+    let fixture = serve(move |seen| match (seen.method.as_str(), seen.path()) {
+        (_, "/api/stream/event") => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            *slot.lock().unwrap() = Some(tx);
+            Reply::Stream(rx)
+        }
+        ("GET", "/api/account/playing") => Reply::Gated(
+            gate.clone(),
+            Box::new(Reply::Json(200, json!({ "nowPlaying": [] }).to_string())),
+        ),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let seeking = online.clone();
+    let seek = tokio::spawn(async move { seeking.start(&seek_options(None)).await });
+    fixture.requested("/api/board/seek", 1).await;
+    fixture.requested("/api/stream/event", 1).await;
+    let sender = streams.lock().unwrap().clone().unwrap();
+    let checking = online.clone();
+    let check = tokio::spawn(async move { checking.resume().await });
+    fixture.requested("/api/account/playing", 1).await;
+    let start = json!({ "type": "gameStart", "game": { "gameId": "Seek1234", "speed": "rapid" } });
+    sender.send(format!("{start}\n")).unwrap();
+    until("the seek's game opens", || online.playing()).await;
+    let _ = release.send(true);
+    let checked = check.await.unwrap();
+    assert!(checked.is_err(), "{checked:?}");
+    assert!(online.playing(), "the game stays on the board");
+    assert_eq!(online.assistance(), Assistance::LiveGame);
+    online.close();
+    let _ = seek.await;
+}
+
 /// The engines follow the newest answer to whether help is blocked. A game's finish read "not
 /// blocked" and its hook stalled; a check for games then began, which blocks help, and its hook
 /// said so; the stalled hook finished last and lent the engines to reviews while help was blocked.

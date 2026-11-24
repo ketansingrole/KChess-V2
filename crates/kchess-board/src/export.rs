@@ -461,7 +461,11 @@ pub fn choose_game_file<V: 'static>(
         let Some(path) = paths.first() else {
             return;
         };
-        let text = read_game_file(path);
+        // Read off the main thread: a file on a stalled network folder froze every window.
+        let path = path.clone();
+        let text = cx
+            .background_spawn(async move { read_game_file(&path) })
+            .await;
         let _ = this.update_in(cx, |this, window, cx| read(this, text, window, cx));
     })
     .detach();
@@ -476,6 +480,10 @@ pub fn read_game_file(path: &std::path::Path) -> Option<String> {
             ["pgn", "fen", "txt"].contains(&extension.to_ascii_lowercase().as_str())
         });
     if !readable {
+        return None;
+    }
+    // A FIFO named `.pgn` is refused before it is opened: opening one waits for a writer.
+    if !std::fs::metadata(path).ok()?.is_file() {
         return None;
     }
     // The opened file itself must be a regular file (a symlink to `/dev/zero` or a FIFO named
@@ -600,6 +608,29 @@ mod tests {
         assert_eq!(read_game_file(&path).as_deref(), Some("1. e4 e5 *"));
         std::fs::write(&path, vec![b'a'; DROPPED_MAX as usize + 1]).unwrap();
         assert_eq!(read_game_file(&path), None);
+    }
+
+    /// A FIFO named `.pgn` is refused at once: opening it waited for a writer that never came.
+    #[cfg(unix)]
+    #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test's own thread waits for mkfifo, which ends at once"
+    )]
+    fn a_fifo_named_like_a_game_is_refused_without_waiting() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("game.pgn");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .expect("mkfifo runs");
+        assert!(made.success());
+        let (answer, answered) = std::sync::mpsc::channel();
+        std::thread::spawn(move || answer.send(read_game_file(&path)).ok());
+        let read = answered
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the read answers without waiting for a writer");
+        assert_eq!(read, None);
     }
 
     /// A `.pgn` symlink to `/dev/zero` reported a length of 0 and was read until memory ran out.

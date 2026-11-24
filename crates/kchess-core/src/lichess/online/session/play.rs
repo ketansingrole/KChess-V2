@@ -64,6 +64,8 @@ impl OnlineSession {
             // On the board now, the board's game locks help: kept as played elsewhere too, its
             // finish on the board alone would leave help locked.
             st.elsewhere.remove(id);
+            // A recovery checking meanwhile is older than this game: it applies nothing.
+            st.resume_attempt += 1;
             (handle, st.current_account.clone(), st.epoch)
         };
         let finished = Arc::new(AtomicBool::new(false));

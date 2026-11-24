@@ -317,12 +317,14 @@ fn imported_all(imported: &Value, games: usize) -> CoreResult<()> {
     Ok(())
 }
 
-/// The lock one study's uploads take turns on, by account and study; kept while one is held.
-fn upload_turn(account: &str, study: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+/// The lock one study's uploads take turns on, whichever account uploads; kept while one is
+/// held. Keyed by account too, two collaborators' uploads of one study both found the baseline,
+/// and the later replaced the first's edit while both said they succeeded.
+fn upload_turn(study: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
     static TURNS: std::sync::Mutex<
         std::collections::BTreeMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>,
     > = std::sync::Mutex::new(std::collections::BTreeMap::new());
-    let key = format!("{}/{study}", account.to_lowercase());
+    let key = study.to_string();
     let mut turns = TURNS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -347,7 +349,7 @@ pub async fn sync_lichess_study(
     // One upload of a study at a time, from its check of the cloud copy to the copy it answers:
     // two windows' uploads both found the copy they started from and the later one replaced the
     // first, which also said it succeeded.
-    let turn = upload_turn(&request.account, &request.study_id);
+    let turn = upload_turn(&request.study_id);
     let _turn = turn.lock().await;
     let before = valid_chapters(&request.baseline)?;
     let after = valid_chapters(&request.pgn)?;

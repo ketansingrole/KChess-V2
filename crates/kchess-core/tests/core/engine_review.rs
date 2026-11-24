@@ -1060,6 +1060,68 @@ async fn a_review_whose_store_fails_as_it_starts_is_reported_failed() {
     rig.reviews.stop_reviews().await;
 }
 
+/// Two requested reviews that both fail before the queue reports are each said failed, by
+/// key: the status held one failure, and the second replaced the first unsaid, so whoever
+/// waited for the first (`kchess-cli review`) waited for good.
+#[tokio::test]
+async fn each_failed_review_is_said_failed() {
+    let rig = rig("review", "each-failed", false, "off", true);
+    rig.host.settings.lock().expect("settings").engine_path = "/no/such/engine".into();
+    *rig.host.busy.lock().expect("busy") = Some(Pause::Online);
+    let second = ["d2d4", "d7d5"];
+    for line in [&SCHOLARS[..], &second[..]] {
+        rig.reviews
+            .request_review(request(line))
+            .await
+            .expect("the request");
+    }
+    wait_until(WAIT, "both reviews queued", || {
+        (rig.reviews.review_status().waiting == 2).then_some(())
+    })
+    .await;
+    *rig.host.busy.lock().expect("busy") = None;
+    rig.reviews.reviews_changed();
+    let failed = || -> Vec<String> {
+        let mut keys: Vec<String> = Vec::new();
+        for status in rig.host.statuses.lock().expect("statuses").iter() {
+            if let Some(failed) = &status.failed
+                && !keys.contains(&failed.key)
+            {
+                keys.push(failed.key.clone());
+            }
+        }
+        keys
+    };
+    wait_until(WAIT, "the second failure", || {
+        failed().contains(&key_of(START, &second)).then_some(())
+    })
+    .await;
+    assert!(
+        failed().contains(&key_of(START, &SCHOLARS)),
+        "{:?}",
+        failed()
+    );
+    rig.reviews.stop_reviews().await;
+}
+
+/// A requested review the engine leaves without scores is said failed, by key, and what it
+/// found is kept: it was only skipped, so `kchess-cli review` waited for good.
+#[tokio::test]
+async fn a_review_left_without_scores_is_said_failed() {
+    let rig = rig("scoreless", "scoreless", false, "off", true);
+    rig.reviews
+        .request_review(request(&["e2e4", "e7e5"]))
+        .await
+        .expect("the request");
+    let failed = wait_until(WAIT, "the failed review", || rig.host.last_status()?.failed).await;
+    assert_eq!(failed.key, key_of(START, &["e2e4", "e7e5"]));
+    assert!(
+        rig.host.complete_updates().is_empty(),
+        "nothing complete without scores"
+    );
+    rig.reviews.stop_reviews().await;
+}
+
 /// Offline, the automatic reviews mark the games looked up and review them here at once.
 #[tokio::test]
 async fn automatic_reviews_review_locally_when_lichess_cannot_be_reached() {

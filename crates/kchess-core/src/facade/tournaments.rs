@@ -65,12 +65,16 @@ impl MembershipChanges {
 impl Core {
     /// Forgets one account's membership of a tournament, or every account's without one; with
     /// `unchanged_since`, only when its memberships did not change after that count was read.
+    /// A `Change` counts as one (a leave, the event finished): a join under way then keeps
+    /// nothing. A lookup's forget does not: its answer is never newer than a join's success,
+    /// and counted, it made a join under way keep nothing although Lichess had it entered.
     async fn forget_tournament(
         &self,
         system: TournamentSystem,
         id: &str,
         account: Option<&str>,
         unchanged_since: Option<u64>,
+        counted: Forget,
     ) -> Result<()> {
         let id = id.to_owned();
         let account = account.map(str::to_owned);
@@ -78,7 +82,7 @@ impl Core {
         self.database
             .write_async(move |ctx| {
                 let unchanged = |seen| {
-                    // Only an account's own lookup asks: its count is that account's.
+                    // Only an account's own lookup or leave asks: its count is that account's.
                     let account = account.as_deref().unwrap_or_default();
                     memberships.unchanged(system, &id, account, seen)
                 };
@@ -86,11 +90,20 @@ impl Core {
                     return Ok(());
                 }
                 library::forget_tournament(ctx.host, ctx.db, system, &id, account.as_deref())?;
-                memberships.changed(system, &id, account.as_deref());
+                if counted == Forget::Change {
+                    memberships.changed(system, &id, account.as_deref());
+                }
                 Ok(())
             })
             .await
     }
+}
+
+/// Whether a forget is a change a join under way must yield to (`forget_tournament`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Forget {
+    Change,
+    Lookup,
 }
 
 /// A call's `Reply<()>` as the facade answers it: `true` once done.
@@ -140,15 +153,22 @@ impl TournamentsApi for Core {
         if system == TournamentSystem::Arena {
             // An arena that is over is over for every account.
             if detail.summary.status == TournamentStatus::Finished {
-                self.forget_tournament(system, &id.0, None, None).await?;
+                self.forget_tournament(system, &id.0, None, None, Forget::Change)
+                    .await?;
             } else if was_kept
                 // An anonymous answer (the login unreadable) has no place for anyone.
                 && signed
                 && detail.me.as_ref().is_none_or(|me| me.withdraw)
             {
                 // `me` is the looked-up account's place only: another account's stays.
-                self.forget_tournament(system, &id.0, Some(&account.0), Some(changes))
-                    .await?;
+                self.forget_tournament(
+                    system,
+                    &id.0,
+                    Some(&account.0),
+                    Some(changes),
+                    Forget::Lookup,
+                )
+                .await?;
             }
         }
         Ok(detail)
@@ -234,8 +254,14 @@ impl TournamentsApi for Core {
         let left = tournaments::leave_tournament(lichess, system, &id.0, &account.0).await;
         let result = done(left)?;
         if result == Reply::Done(true) {
-            self.forget_tournament(system, &id.0, Some(&account.0), Some(changes))
-                .await?;
+            self.forget_tournament(
+                system,
+                &id.0,
+                Some(&account.0),
+                Some(changes),
+                Forget::Change,
+            )
+            .await?;
         }
         Ok(result)
     }

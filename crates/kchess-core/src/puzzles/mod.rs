@@ -282,9 +282,17 @@ impl PuzzleService {
             self.inner
                 .with_db(|db| {
                     queries::clear_stored(db)?;
-                    queries::read_status(db, false)
+                    let compacted = queries::compact(db);
+                    Ok((queries::read_status(db, false)?, compacted))
                 })
                 .await
+                .map(|(status, compacted)| {
+                    // The puzzles are gone either way: a compaction that failed is only logged.
+                    if let Err(error) = &compacted {
+                        self.inner.failed("delete (compacting)", error);
+                    }
+                    status
+                })
         };
         self.logged("delete", result)
     }
