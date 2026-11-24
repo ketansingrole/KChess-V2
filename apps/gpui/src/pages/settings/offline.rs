@@ -157,19 +157,7 @@ impl SettingsPage {
             )
             .when(busy, |card| {
                 card.child(
-                    div()
-                        .mt(px(6.))
-                        .h(px(8.))
-                        .w_full()
-                        .rounded_full()
-                        .bg(palette.accented)
-                        .child(
-                            div()
-                                .h_full()
-                                .rounded_full()
-                                .bg(palette.primary)
-                                .w(relative(share.unwrap_or(0.1) as f32)),
-                        ),
+                    widgets::progress_bar(share.map(|share| share as f32), palette).mt(px(6.)),
                 )
                 .child(widgets::hint(progress_text, palette))
             })
