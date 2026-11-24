@@ -356,13 +356,10 @@ impl OnlineSession {
                 },
             )
             .await;
-        let full = match full {
-            Some(full) => full,
-            None => {
-                return Err(read
-                    .err()
-                    .unwrap_or_else(|| CoreError::new("The game could not be read.")));
-            }
+        let Some(full) = full else {
+            return Err(read
+                .err()
+                .unwrap_or_else(|| CoreError::new("The game could not be read.")));
         };
         let state = &full["state"];
         if full["type"] != "gameFull" || state["status"] != "started" {
