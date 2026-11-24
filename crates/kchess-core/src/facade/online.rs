@@ -40,16 +40,27 @@ impl OnlineApi for Core {
         self.services.online().move_uci(&id.0, &r#move.0).await
     }
 
+    async fn correspondence_turn(
+        &self,
+        account: Username,
+        id: GameId,
+        fen: FullFen,
+    ) -> Result<u32> {
+        let online = self.services.online();
+        online.correspondence_turn(&account.0, &id.0, &fen.0).await
+    }
+
     async fn play_correspondence(
         &self,
         account: Username,
         id: GameId,
         fen: FullFen,
+        plies: u32,
         r#move: Uci,
     ) -> Result<()> {
         let online = self.services.online();
         online
-            .move_correspondence(&account.0, &id.0, &fen.0, &r#move.0)
+            .move_correspondence(&account.0, &id.0, &fen.0, plies, &r#move.0)
             .await
     }
 

@@ -412,13 +412,26 @@ impl Harness {
     pub fn wait_for_notification(
         &mut self,
         what: &str,
+        matches: impl FnMut(&gpui_kit::SystemNotification) -> bool,
+    ) -> gpui_kit::SystemNotification {
+        self.wait_for_notification_after(what, 0, matches)
+    }
+
+    /// `wait_for_notification` among those shown after the first `seen`: one shown again after
+    /// an action, not its earlier showing.
+    #[cfg(any(windows, target_os = "linux"))]
+    pub fn wait_for_notification_after(
+        &mut self,
+        what: &str,
+        seen: usize,
         mut matches: impl FnMut(&gpui_kit::SystemNotification) -> bool,
     ) -> gpui_kit::SystemNotification {
         let started = Instant::now();
         loop {
             self.cx.run_until_parked();
             let shown = self.cx.shown_system_notifications();
-            if let Some(found) = shown.into_iter().rev().find(|shown| matches(shown)) {
+            let mut fresh = shown.into_iter().skip(seen).rev();
+            if let Some(found) = fresh.find(|shown| matches(shown)) {
                 return found;
             }
             if started.elapsed() > TIMEOUT {

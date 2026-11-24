@@ -281,21 +281,13 @@ fn answer_move(game: &str, action: Option<&str>, cx: &mut App) {
     };
     match move_reply::read(&listed, text) {
         Some(reply) => {
-            let tag = format!("{CONFIRM_TAG}{game}");
-            let (title, body) = (
-                format!("Play {} against {}?", reply.san, reply.opponent),
-                format!("Correspondence game · @{}", reply.account),
-            );
-            let play = button("play", &format!("Play {}", reply.san));
-            move_reply::hold(&tag, reply, cx);
-            post_tagged(
-                tag,
-                &title,
-                &body,
-                vec![play, button("cancel", "Cancel")],
-                false,
-                cx,
-            );
+            let turn = move_reply::turn(&reply, cx);
+            let game = game.to_string();
+            cx.spawn(async move |cx| {
+                let turn = turn.await;
+                cx.update(|cx| confirm_reply(&game, reply, turn, cx));
+            })
+            .detach();
         }
         None => post_tagged(
             format!("{MOVE_TAG}{game}"),
@@ -306,6 +298,45 @@ fn answer_move(game: &str, action: Option<&str>, cx: &mut App) {
             cx,
         ),
     }
+}
+
+/// A typed move offered back to confirm (Play or Cancel) for the game's turn `turn`, or, once the
+/// game has moved on, the reason it cannot be.
+fn confirm_reply(
+    game: &str,
+    mut reply: move_reply::Reply,
+    turn: Result<u32, String>,
+    cx: &mut App,
+) {
+    let plies = match turn {
+        Ok(plies) => plies,
+        Err(why) => {
+            return post_tagged(
+                format!("{MOVE_TAG}{game}"),
+                &format!("{} was not played", reply.san),
+                &why,
+                vec![button("open", "Go to board")],
+                false,
+                cx,
+            );
+        }
+    };
+    reply.plies = plies;
+    let tag = format!("{CONFIRM_TAG}{game}");
+    let (title, body) = (
+        format!("Play {} against {}?", reply.san, reply.opponent),
+        format!("Correspondence game · @{}", reply.account),
+    );
+    let play = button("play", &format!("Play {}", reply.san));
+    move_reply::hold(&tag, reply, cx);
+    post_tagged(
+        tag,
+        &title,
+        &body,
+        vec![play, button("cancel", "Cancel")],
+        false,
+        cx,
+    );
 }
 
 /// The confirmation of a typed move answered: Play sends it once, then says whether it was

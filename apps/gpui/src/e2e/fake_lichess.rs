@@ -49,6 +49,8 @@ pub struct Session {
     /// leaves it there (a correspondence game opens only when picked), among the games in
     /// progress.
     pub correspondence_turn: bool,
+    /// The moves played so far in that game, as its board stream opens with them.
+    pub correspondence_moves: String,
     /// The game was started where the Board API cannot play it (`compat.board` false): its
     /// board stream answers 400, as Lichess does.
     pub elsewhere: bool,
@@ -636,6 +638,20 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
                 playing.push(game);
             }
             reply(out, &json!({ "nowPlaying": playing }))
+        }
+        ("GET", p) if p == format!("/api/board/game/stream/{CORRESPONDENCE_GAME}") => {
+            let moves = session.lock().correspondence_moves.clone();
+            ndjson_lines(
+                out,
+                &[json!({
+                    "type": "gameFull",
+                    "id": CORRESPONDENCE_GAME,
+                    "white": {},
+                    "black": {},
+                    "speed": "correspondence",
+                    "state": { "type": "gameState", "moves": moves, "status": "started" },
+                })],
+            )
         }
         ("GET", "/api/stream/event") => {
             let (start, elsewhere, variant) = {

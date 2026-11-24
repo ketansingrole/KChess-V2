@@ -816,7 +816,8 @@ fn a_challenge_is_answered_from_its_notification(cx: &mut gpui_kit::TestAppConte
 
 /// A correspondence game's "your move" notification takes a typed move: one not legal there is
 /// asked for again, a legal one comes back to confirm, and only Play sends it, once. A game no
-/// longer on your move when Play is pressed is not played.
+/// longer on your move when Play is pressed is not played, nor one that came back to the same
+/// position on your move a turn later.
 #[cfg(any(windows, target_os = "linux"))]
 #[gpui_kit::test]
 fn a_correspondence_move_is_played_from_its_notification(cx: &mut gpui_kit::TestAppContext) {
@@ -872,22 +873,42 @@ fn a_correspondence_move_is_played_from_its_notification(cx: &mut gpui_kit::Test
     );
     answer(&mut app, "move:Tester/E2eCorr1", "input:move\nKe2");
     assert_eq!(last(&mut app).title.as_ref(), "Ke2 is not a legal move");
-    answer(&mut app, "move:Tester/E2eCorr1", "input:move\ne4");
-    let confirm = last(&mut app);
-    assert_eq!(confirm.tag.as_ref(), "confirm:Tester/E2eCorr1");
+    // A typed move comes back to confirm once the core has read the game's turn.
+    let confirmed = |app: &mut Harness, typed: &str| {
+        let seen = app.cx.shown_system_notifications().len();
+        answer(app, "move:Tester/E2eCorr1", &format!("input:move\n{typed}"));
+        app.wait_for_notification_after("the confirmation", seen, |shown| {
+            shown.tag.as_ref() == "confirm:Tester/E2eCorr1"
+        })
+    };
+    let refused = |app: &mut Harness, why: &str| {
+        let seen = app.cx.shown_system_notifications().len();
+        answer(app, "confirm:Tester/E2eCorr1", "play");
+        let shown = app.wait_for_notification_after("the move refused", seen, |shown| {
+            shown.title.as_ref() == "e4 was not played"
+        });
+        assert_eq!(shown.body.as_ref(), why);
+    };
+    let confirm = confirmed(&mut app, "e4");
     assert_eq!(confirm.title.as_ref(), "Play e4 against Opponent?");
     assert!(writes(&lichess).is_empty(), "{:?}", writes(&lichess));
     // The game moved on before Play: nothing is sent.
     lichess.lock().correspondence_turn = false;
-    answer(&mut app, "confirm:Tester/E2eCorr1", "play");
-    app.wait_for_notification("the move refused", |shown| {
-        shown.title.as_ref() == "e4 was not played"
-    });
+    refused(&mut app, "This game is no longer in progress.");
     assert!(writes(&lichess).is_empty(), "{:?}", writes(&lichess));
-    // On your move again: typed, confirmed and played once.
+    // On your move again, at the same position a turn later: the confirmation from before that
+    // turn is not played on this one.
     lichess.lock().correspondence_turn = true;
-    answer(&mut app, "move:Tester/E2eCorr1", "input:move\ne2e4");
-    assert_eq!(last(&mut app).title.as_ref(), "Play e4 against Opponent?");
+    confirmed(&mut app, "e4");
+    lichess.lock().correspondence_moves = "g1f3 g8f6 f3g1 f6g8".to_string();
+    refused(
+        &mut app,
+        "The game has moved on. Open it to see where it stands.",
+    );
+    assert!(writes(&lichess).is_empty(), "{:?}", writes(&lichess));
+    // Typed, confirmed and played once.
+    let confirm = confirmed(&mut app, "e2e4");
+    assert_eq!(confirm.title.as_ref(), "Play e4 against Opponent?");
     answer(&mut app, "confirm:Tester/E2eCorr1", "play");
     app.wait_for("the move to reach Lichess", |_, _| {
         writes(&lichess) == ["POST /api/board/game/E2eCorr1/move/e2e4"]

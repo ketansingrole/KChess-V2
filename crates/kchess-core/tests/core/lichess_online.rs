@@ -3360,3 +3360,73 @@ async fn a_game_finished_on_the_account_stream_ends_the_live_game() {
     online.cancel();
     online.close();
 }
+
+/// A correspondence reply is bound to the game's turn when it was confirmed: once the game has
+/// moved on, even round to the same position on the account's move again (Nf3 Nf6 Ng1 Ng8), the
+/// reply is refused, not played on the later turn. The reply for the turn the game is at goes,
+/// once.
+#[tokio::test]
+async fn a_correspondence_reply_is_refused_once_its_turn_has_passed() {
+    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    let moves = Arc::new(Mutex::new(String::new()));
+    let played = Arc::clone(&moves);
+    let fixture = serve(move |seen| match (seen.method.as_str(), seen.path()) {
+        ("GET", "/api/account/playing") => Reply::Json(
+            200,
+            json!({ "nowPlaying": [{
+                "gameId": "Corr1234",
+                "fen": START.split(' ').next().unwrap(),
+                "isMyTurn": true,
+                "speed": "correspondence",
+            }] })
+            .to_string(),
+        ),
+        ("GET", "/api/board/game/stream/Corr1234") => {
+            let full = json!({
+                "type": "gameFull",
+                "id": "Corr1234",
+                "white": {},
+                "black": {},
+                "speed": "correspondence",
+                "state": {
+                    "type": "gameState",
+                    "moves": played.lock().unwrap().clone(),
+                    "status": "started",
+                },
+            });
+            Reply::Json(200, format!("{full}\n"))
+        }
+        ("POST", _) => Reply::Json(200, json!({ "ok": true }).to_string()),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let plies = online
+        .correspondence_turn("Alice", "Corr1234", START)
+        .await
+        .expect("the game is on Alice's move");
+    assert_eq!(plies, 0);
+    *moves.lock().unwrap() = "g1f3 g8f6 f3g1 f6g8".to_string();
+    let refused = online
+        .move_correspondence("Alice", "Corr1234", START, plies, "e2e4")
+        .await
+        .expect_err("a reply to a turn that has passed");
+    assert_eq!(
+        refused.message,
+        "The game has moved on. Open it to see where it stands."
+    );
+    let sent = "/api/board/game/Corr1234/move/e2e4";
+    assert!(fixture.to(sent).is_empty());
+    let plies = online
+        .correspondence_turn("Alice", "Corr1234", START)
+        .await
+        .expect("on Alice's move again");
+    assert_eq!(plies, 4);
+    online
+        .move_correspondence("Alice", "Corr1234", START, plies, "e2e4")
+        .await
+        .expect("the reply for this turn");
+    assert_eq!(fixture.to(sent).len(), 1);
+    online.close();
+}

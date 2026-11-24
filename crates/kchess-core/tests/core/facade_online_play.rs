@@ -68,6 +68,7 @@ async fn a_live_games_calls_reach_lichess_until_it_is_left() {
                 json!("Alice"),
                 json!("Gone1234"),
                 json!(START),
+                json!(0),
                 json!("e2e4"),
             ],
         )
