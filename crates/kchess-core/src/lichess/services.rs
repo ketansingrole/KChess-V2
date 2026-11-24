@@ -52,9 +52,7 @@ impl Services {
             stops: game_stops,
             busy,
         } = live;
-        let http = http_client_builder()
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let http = http_client_builder().build().unwrap_or_default();
         let meter: Arc<dyn crate::usage::Meter> = usage.clone();
         let policy = Policy::new(Arc::clone(&host), meter, http.clone(), lifetime.clone());
         // A test origin replaces Lichess for every request (`origin` is only set by the tests).

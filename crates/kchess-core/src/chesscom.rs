@@ -106,12 +106,12 @@ impl Chesscom {
         origin: Option<String>,
         lifetime: CancellationToken,
     ) -> Chesscom {
-        let http = reqwest::Client::builder()
+        let http = kchess_host::http::client()
             .user_agent(format!("{} (game sync)", crate::USER_AGENT))
             .connect_timeout(Duration::from_secs(15))
             .timeout(REQUEST_TIMEOUT)
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .unwrap_or_default();
         Chesscom {
             http,
             base: origin.unwrap_or_else(|| BASE_URL.to_string()),

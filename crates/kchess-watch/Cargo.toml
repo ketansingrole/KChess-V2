@@ -14,6 +14,8 @@ test-support = ["kchess-board/test-support"]
 kchess-app.workspace = true
 kchess-board.workspace = true
 kchess-contracts.workspace = true
+# Lichess pictures build their HTTP client there (`kchess_host::http`).
+kchess-host.workspace = true
 kchess-domain.workspace = true
 kchess-games.workspace = true
 kchess-nav.workspace = true
@@ -25,7 +27,7 @@ serde_json.workspace = true
 shakmaty.workspace = true
 # Pictures Lichess serves (`src/remote_image.rs`): the one request a frontend makes of its own
 # but the updater's, on a runtime of its own; both already in Cargo.lock through the core.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "http2", "gzip"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream", "json", "http2", "gzip"] }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "fs", "io-util"] }
 kchess-hack = { version = "0.1", path = "../kchess-hack" }
 

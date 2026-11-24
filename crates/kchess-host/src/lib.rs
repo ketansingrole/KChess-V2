@@ -9,6 +9,7 @@ use kchess_hack as _;
 
 pub mod config;
 pub mod env;
+pub mod http;
 mod redact;
 
 pub use redact::redact;

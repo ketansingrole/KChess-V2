@@ -318,7 +318,7 @@ async fn release_metadata_of_a_few_megabytes_is_read() {
         )]
     })
     .await;
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let client = kchess_host::http::client().no_proxy().build().unwrap();
     let release = fetch_release(
         &Unmetered,
         &client,

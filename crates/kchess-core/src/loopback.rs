@@ -57,7 +57,7 @@ mod tests {
                 });
             }
         });
-        let client = reqwest::Client::new();
+        let client = kchess_host::http::client().build().unwrap();
         for _ in 0..200 {
             let response = client.get(&url).send().await.unwrap();
             assert_eq!(response.text().await.unwrap(), "ok");
