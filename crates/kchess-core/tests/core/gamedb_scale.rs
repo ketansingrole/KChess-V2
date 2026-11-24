@@ -318,6 +318,13 @@ async fn gamedb_scale() {
             },
         ),
         (
+            "both 2450+",
+            LookupOptions {
+                min_elo: Some(2450),
+                ..LookupOptions::default()
+            },
+        ),
+        (
             "since 2025",
             LookupOptions {
                 since: Some("2025".into()),

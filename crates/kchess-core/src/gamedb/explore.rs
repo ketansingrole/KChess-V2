@@ -30,6 +30,19 @@ pub const REPLAY_MAX: i64 = 100_000;
 /// The best-rated games a lookup lists.
 const TOP_GAMES: usize = 8;
 
+/// A count as people read it: 119,350.
+fn grouped(count: i64) -> String {
+    let digits = count.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) && digit.is_ascii_digit() {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
 /// The search a lookup's filters make, or None when it has none and the tree answers. The side
 /// is the player's, so it filters nothing without one.
 fn query(database: &str, options: &LookupOptions) -> Option<GameDbQuery> {
@@ -113,7 +126,9 @@ fn replayed(
         .sql()?;
     if matching > REPLAY_MAX {
         return Err(CoreError::new(format!(
-            "{matching} games match these filters. Narrow them to {REPLAY_MAX} or fewer."
+            "{} games match these filters. Narrow them to {} or fewer.",
+            grouped(matching),
+            grouped(REPLAY_MAX)
         )));
     }
     let key = gamedb::position_key(target);
@@ -292,6 +307,14 @@ mod tests {
         assert_eq!(made.side, Some(GameDbSide::Black));
         assert_eq!((made.year_from, made.year_to), (Some(2019), Some(2024)));
         assert_eq!(made.min_elo, Some(2600));
+    }
+
+    #[test]
+    fn counts_are_grouped_in_thousands() {
+        assert_eq!(grouped(7), "7");
+        assert_eq!(grouped(1_000), "1,000");
+        assert_eq!(grouped(119_350), "119,350");
+        assert_eq!(grouped(1_294_471), "1,294,471");
     }
 
     #[test]
