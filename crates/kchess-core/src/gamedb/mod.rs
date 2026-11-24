@@ -6,6 +6,7 @@
 //! time; its progress reaches every window as `gamedb:progress`. One database, "Your games", is
 //! kept in step with the player's own games (`own`).
 
+pub mod deep;
 pub mod explore;
 pub mod import;
 pub mod own;
@@ -15,6 +16,7 @@ pub mod tree;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -37,6 +39,15 @@ use kchess_domain::gamedb;
 const TREE_ROWS: usize = 1_835_008;
 /// How often an import reports its progress.
 const REPORT_EVERY: Duration = Duration::from_millis(250);
+
+/// Sets its flag when dropped: a lookup's caller holds it, so the replay it stops ends with it.
+struct StopOnDrop(Arc<AtomicBool>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
 
 /// The running import: cancelled through the token.
 struct Running {
@@ -212,7 +223,18 @@ impl Inner {
                 stopped: "Game database stopped. Retry the operation.",
             },
             Arc::clone(&self.host),
-            move |_| schema::open_read(&path),
+            move |host| {
+                // A file an older release wrote gains what lookups and searches read (the
+                // replay index, its names' words); one that cannot is still read, more slowly.
+                if let Err(error) = schema::upgrade(&path) {
+                    host.log(
+                        Level::Warn,
+                        "gamedb",
+                        &format!("Could not upgrade a game database: {}", error.message),
+                    );
+                }
+                schema::open_read(&path)
+            },
         ));
         readers.insert(id.to_string(), Arc::clone(&lane));
         Ok(lane)
@@ -241,7 +263,7 @@ impl Inner {
         result
     }
 
-    /// What an earlier run left when it was stopped mid-import: partial files and tree runs.
+    /// What an earlier run left when it was stopped mid-import: partial files and run files.
     /// Only while nothing writes a database: the slot's lock is held, so none starts meanwhile.
     fn sweep(&self) {
         let running = lock(&self.running);
@@ -254,7 +276,8 @@ impl Inner {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = entry.path();
-            if name.starts_with(".tree-") {
+            // The run files of the opening tree and of the position index.
+            if name.starts_with(".tree-") || name.starts_with(".deep-") {
                 std::fs::remove_dir_all(&path).ok();
             } else if name.ends_with(".partial") {
                 import::remove_files(&path);
@@ -552,13 +575,20 @@ impl GameDbService {
         let Some(id) = options.database.clone() else {
             return Err(CoreError::new("Choose a game database."));
         };
+        // A caller that drops the lookup (a newer one replaced it) stops its replay, which would
+        // otherwise run on, holding the file's reader, for nobody.
+        let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
+        let stopped = Arc::clone(&stop.0);
         let result = match self.inner.reader(&id) {
             Ok(lane) => {
-                lane.run(move |db| explore::lookup(db, &id, &fen, &options, crate::time::now_ms()))
-                    .await
+                lane.run(move |db| {
+                    explore::lookup(db, &id, &fen, &options, crate::time::now_ms(), &stopped)
+                })
+                .await
             }
             Err(error) => Err(error),
         };
+        drop(stop);
         let saved = self.inner.logged("lookup", result)?;
         Ok(PositionLookup {
             saved,
