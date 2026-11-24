@@ -499,7 +499,7 @@ fn in_file_order(
             };
             while let Some(row) = rows.next().sql()? {
                 read_game(row, &mut batch)?;
-                if batch.games.len() % BATCH == 0 && stop.load(Ordering::Relaxed) {
+                if batch.games.len().is_multiple_of(BATCH) && stop.load(Ordering::Relaxed) {
                     return Ok(counted);
                 }
             }
