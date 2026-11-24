@@ -24,7 +24,6 @@ updates:
       - { dependency-name: aho-corasick, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: arrayvec, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: bitflags, update-types: [version-update:semver-major, version-update:semver-minor] }
-      - { dependency-name: bytemuck, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: byteorder, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: crc32fast, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: crossbeam-utils, update-types: [version-update:semver-major, version-update:semver-minor] }
@@ -48,7 +47,6 @@ updates:
       - { dependency-name: litemap, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: log, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: mio, update-types: [version-update:semver-major, version-update:semver-minor] }
-      - { dependency-name: num-complex, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: num-rational, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: num-traits, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: once_cell, update-types: [version-update:semver-major, version-update:semver-minor] }

@@ -25,6 +25,7 @@ platforms = [
 [final-excludes]
 third-party = [
     { name = "arraydeque" },
+    { name = "bytemuck" },
     { name = "gpui-base" },
     { name = "gpui-component" },
     { name = "gpui-kit" },
