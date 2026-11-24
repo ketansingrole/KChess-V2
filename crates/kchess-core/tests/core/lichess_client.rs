@@ -604,3 +604,40 @@ async fn an_ndjson_body_outlives_the_ordinary_deadline() {
     let (text, ()) = tokio::join!(reading, writing);
     assert_eq!(text.unwrap(), "{\"id\":\"a\"}\n{\"id\":\"b\"}\n");
 }
+
+/// A test that waited for a request sees what its handler did. The fixture once recorded a
+/// request before running its handler, so a test on a multi-thread runtime read a stream's sender
+/// before the handler stored it (`a_stalled_assistance_update_never_overrides_a_newer_one`, CI
+/// 2026-11-24). This handler is slow on purpose, so a wait that returns early sees it unfinished.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_waited_for_request_has_been_handled() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::io::AsyncWriteExt;
+
+    let handled = Arc::new(AtomicBool::new(false));
+    let done = Arc::clone(&handled);
+    let (_never, slow) = std::sync::mpsc::channel::<()>();
+    let slow = std::sync::Mutex::new(slow);
+    let fixture = serve(move |_| {
+        let _ = slow
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_millis(300));
+        done.store(true, Ordering::SeqCst);
+        Reply::Json(200, "{}".into())
+    })
+    .await;
+    let address = fixture.base.trim_start_matches("http://").to_string();
+    let mut socket = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("connect");
+    socket
+        .write_all(b"GET /slow HTTP/1.1\r\nHost: fixture\r\n\r\n")
+        .await
+        .expect("send the request");
+    fixture.requested("/slow", 1).await;
+    assert!(
+        handled.load(Ordering::SeqCst),
+        "returned before the handler ran"
+    );
+}
