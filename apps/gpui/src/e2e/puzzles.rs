@@ -862,6 +862,13 @@ fn a_download_that_ended_elsewhere_stops_showing_here(cx: &mut gpui_kit::TestApp
     use crate::puzzle_db::PuzzleDbHandle;
     let mut app = Harness::start(cx);
     app.open("Puzzles");
+    // The page's own status reads are answered and adopted first: one still on its way when the
+    // download was faked below replaced it with the core's "not busy", and the test waited for a
+    // download it never saw (Linux CI, 2026-11-24).
+    app.wait_for("the page's reads answered", |_, cx| {
+        cx.global::<AppCore>().bridge.waiting() == 0
+    });
+    app.cx.run_until_parked();
     // Another window's download, read here as running.
     app.cx.update(|cx| {
         let db = cx.global::<PuzzleDbHandle>().0.clone();
