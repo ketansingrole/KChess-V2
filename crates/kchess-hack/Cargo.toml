@@ -64,6 +64,7 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-onepass", "hybrid", "meta", "nfa", "perf", "std", "unicode"] }
 regex-syntax = { version = "0.8" }
+reqwest = { version = "0.13", default-features = false, features = ["form", "gzip", "http2", "json", "rustls-no-provider", "stream"] }
 serde = { version = "1", features = ["alloc", "derive", "rc"] }
 serde_core = { version = "1", features = ["alloc", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order", "raw_value", "unbounded_depth"] }
@@ -78,6 +79,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 writeable = { version = "0.6", default-features = false, features = ["alloc"] }
 yoke = { version = "0.8", features = ["derive"] }
 zerofrom = { version = "0.1", default-features = false, features = ["alloc", "derive"] }
+zeroize = { version = "1", features = ["derive"] }
 zerotrie = { version = "0.2", default-features = false, features = ["alloc", "yoke", "zerofrom"] }
 zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
 zlib-rs = { version = "0.6", default-features = false, features = ["std"] }
@@ -112,15 +114,22 @@ syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-trai
 bitflags = { version = "2", default-features = false, features = ["std"] }
 errno = { version = "0.3" }
 futures-channel = { version = "0.3", features = ["sink"] }
+futures-task = { version = "0.3", default-features = false, features = ["std"] }
+hyper = { version = "1", features = ["client", "http1", "http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "tls12"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "http1", "http2"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 nix = { version = "0.32", default-features = false, features = ["fs", "resource"] }
 objc2-app-kit = { version = "0.3", features = ["objc2-uniform-type-identifiers"] }
 objc2-foundation = { version = "0.3" }
 percent-encoding = { version = "2" }
 rustix = { version = "1", features = ["event", "fs", "net", "pipe", "process", "time"] }
+rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
+slab = { version = "0.4" }
 tokio-util = { version = "0.7", features = ["codec", "io", "rt"] }
+tower-http = { version = "0.6", default-features = false, features = ["decompression-gzip", "follow-redirect"] }
 tracing = { version = "0.1" }
-zeroize = { version = "1", features = ["derive"] }
 
 [target.aarch64-apple-darwin.build-dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
@@ -134,21 +143,28 @@ bitflags = { version = "2", default-features = false, features = ["std"] }
 digest = { version = "0.11", default-features = false, features = ["mac"] }
 fastrand = { version = "2" }
 futures-channel = { version = "0.3", features = ["sink"] }
+futures-task = { version = "0.3", default-features = false, features = ["std"] }
 hashbrown = { version = "0.17", default-features = false, features = ["inline-more"] }
+hyper = { version = "1", features = ["client", "http1", "http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "tls12"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "http1", "http2"] }
 libc = { version = "0.2" }
 linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 num-rational = { version = "0.4", features = ["num-bigint-std"] }
 percent-encoding = { version = "2" }
 rustix = { version = "1", features = ["event", "net", "pipe", "process", "shm", "system", "time"] }
+rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
+slab = { version = "0.4" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 socket2 = { version = "0.6", default-features = false, features = ["all"] }
 subtle = { version = "2" }
 tokio-util = { version = "0.7", features = ["codec", "io", "rt"] }
+tower-http = { version = "0.6", default-features = false, features = ["decompression-gzip", "follow-redirect"] }
 tracing = { version = "0.1", features = ["log"] }
 uuid = { version = "1", default-features = false, features = ["v5"] }
 zbus = { version = "5" }
-zeroize = { version = "1", features = ["derive"] }
 zvariant = { version = "5", features = ["enumflags2", "gvariant", "serde_bytes"] }
 zvariant_utils = { version = "4", features = ["gvariant"] }
 
@@ -167,16 +183,23 @@ zvariant_utils = { version = "4", features = ["gvariant"] }
 [target.x86_64-pc-windows-msvc.dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
 futures-channel = { version = "0.3", features = ["sink"] }
+futures-task = { version = "0.3", default-features = false, features = ["std"] }
+hyper = { version = "1", features = ["client", "http1", "http2"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "tls12"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "http1", "http2"] }
 percent-encoding = { version = "2" }
+rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
+slab = { version = "0.4" }
 tokio-util = { version = "0.7", features = ["codec", "io", "rt"] }
+tower-http = { version = "0.6", default-features = false, features = ["decompression-gzip", "follow-redirect"] }
 tracing = { version = "0.1" }
 uuid = { version = "1", default-features = false, features = ["v5"] }
 windows-core = { version = "0.62" }
 windows-numerics = { version = "0.3" }
-windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
-zeroize = { version = "1", features = ["derive"] }
+windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target.x86_64-pc-windows-msvc.build-dependencies]
-windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 ### END HAKARI SECTION

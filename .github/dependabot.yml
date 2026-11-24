@@ -38,7 +38,11 @@ updates:
       - { dependency-name: futures-core, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: futures-io, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: futures-sink, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: futures-task, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: hashbrown, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: hyper, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: hyper-rustls, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: hyper-util, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: icu_locale_core, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: icu_provider, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: indexmap, update-types: [version-update:semver-major, version-update:semver-minor] }
@@ -53,6 +57,7 @@ updates:
       - { dependency-name: percent-encoding, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: potential_utf, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: regex-automata, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: rustls-webpki, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: serde_core, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: simd-adler32, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: slab, update-types: [version-update:semver-major, version-update:semver-minor] }
@@ -62,6 +67,7 @@ updates:
       - { dependency-name: subtle, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: tinystr, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: toml_datetime, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: tower-http, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: tracing, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: windows-core, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: windows-numerics, update-types: [version-update:semver-major, version-update:semver-minor] }

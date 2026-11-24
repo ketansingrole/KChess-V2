@@ -26,7 +26,7 @@ pub const BASE_URL: &str = "https://lichess.org";
 /// and chunk feeds wait until the body ends or is cancelled.
 /// Every request names the app: Lichess answers one that names no program with a 403 page.
 pub fn http_client_builder() -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
+    kchess_host::http::client()
         .user_agent(crate::USER_AGENT)
         .connect_timeout(super::policy::REQUEST_TIMEOUT)
 }
@@ -658,7 +658,13 @@ mod body_tests {
 
     async fn body(answer: &str, max: usize) -> Result<String> {
         let url = serve(answer.as_bytes().to_vec()).await;
-        let response = reqwest::get(url).await.unwrap();
+        let response = kchess_host::http::client()
+            .build()
+            .unwrap()
+            .get(url)
+            .send()
+            .await
+            .unwrap();
         read_body(response, &CancellationToken::new(), (max, LARGE_BODY), None).await
     }
 

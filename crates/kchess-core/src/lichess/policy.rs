@@ -693,7 +693,9 @@ mod tests {
             .and_then(|listener| listener.local_addr())
             .map(|address| address.port())
             .expect("a free port");
-        let cause = reqwest::Client::new()
+        let cause = kchess_host::http::client()
+            .build()
+            .unwrap()
             .get(format!("http://127.0.0.1:{port}/"))
             .send()
             .await
@@ -748,7 +750,7 @@ mod tests {
         Policy::new(
             TestHost::quiet(),
             Arc::new(Unmetered),
-            reqwest::Client::new(),
+            kchess_host::http::client().build().unwrap(),
             CancellationToken::new(),
         )
     }

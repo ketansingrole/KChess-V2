@@ -14,6 +14,9 @@ dirs = "7"
 url = "2"
 # The core's configuration crosses to the service as JSON (`config.rs`).
 serde.workspace = true
+# Every HTTP client starts in `http.rs`, with ring as rustls's cryptography (its reason there).
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 kchess-hack = { version = "0.1", path = "../kchess-hack" }
 
 [dev-dependencies]

@@ -94,7 +94,7 @@ fn format_of(bytes: &[u8]) -> Option<ImageFormat> {
 }
 
 fn client_builder() -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
+    kchess_host::http::client()
         .user_agent(kchess_contracts::USER_AGENT)
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(20))

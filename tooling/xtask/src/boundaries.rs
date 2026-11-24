@@ -124,6 +124,40 @@ fn check_in(repo: &Path) -> Result {
     }
 }
 
+/// Where an HTTP client starts: reqwest takes its TLS cryptography from the process's rustls
+/// provider, which `kchess_host::http::client` installs, so a client built any other way panics
+/// when it first needs TLS. Tests too, since they build clients the same way.
+const HTTP_CLIENT: &str = "crates/kchess-host/src/http.rs";
+
+/// The ways to build a reqwest client without `kchess_host::http::client`.
+const UNPROVIDED_CLIENTS: [&str; 5] = [
+    "reqwest::get(",
+    "reqwest::Client::new(",
+    "reqwest::Client::builder(",
+    "reqwest::Client::default(",
+    "reqwest::ClientBuilder::new(",
+];
+
+/// Each client built outside `kchess_host::http`, as `path:line: …`, tests included.
+fn unprovided_clients(files: &[(String, String)]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (path, text) in files {
+        if path == HTTP_CLIENT {
+            continue;
+        }
+        for (index, line) in text.lines().enumerate() {
+            if let Some(call) = UNPROVIDED_CLIENTS.iter().find(|call| line.contains(*call)) {
+                found.push(format!(
+                    "{path}:{}: `{call}…)` skips the TLS provider; start with \
+                     `kchess_host::http::client()` ({HTTP_CLIENT})",
+                    index + 1
+                ));
+            }
+        }
+    }
+    found
+}
+
 /// The files that call the core by a method's name as text: its plumbing, which sends what a
 /// typed call (`kchess_contracts::calls`) names.
 const NAMED_CALLS: [&str; 2] = ["apps/gpui/src/core.rs", "apps/cli/src/core.rs"];
@@ -238,6 +272,38 @@ fn the_frontends_keep_their_boundaries() {
     if let Err(failure) = check_in(&root()) {
         panic!("{failure}");
     }
+}
+
+#[test]
+fn every_http_client_starts_in_kchess_host() {
+    let mut files = Vec::new();
+    for dir in ["crates", "apps"] {
+        sources_under(&root(), dir, &mut files).unwrap();
+    }
+    let found = unprovided_clients(&files);
+    assert!(found.is_empty(), "{}", found.join("\n"));
+}
+
+#[test]
+fn a_client_built_elsewhere_is_named_with_its_line() {
+    let files = [
+        file(HTTP_CLIENT, "    reqwest::Client::builder()\n"),
+        file(
+            "crates/kchess-core/src/x.rs",
+            "fn a() {}\nlet c = reqwest::Client::new();\n",
+        ),
+        file(
+            "apps/gpui/src/y.rs",
+            "let c = kchess_host::http::client().build();\n",
+        ),
+    ];
+    assert_eq!(
+        unprovided_clients(&files),
+        [format!(
+            "crates/kchess-core/src/x.rs:2: `reqwest::Client::new(…)` skips the TLS provider; \
+             start with `kchess_host::http::client()` ({HTTP_CLIENT})"
+        )]
+    );
 }
 
 #[test]

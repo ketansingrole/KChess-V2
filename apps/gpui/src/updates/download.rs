@@ -45,7 +45,7 @@ pub(super) fn on_runtime<T: Send + 'static>(
 }
 
 pub(super) fn http() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+    kchess_host::http::client()
         .user_agent(kchess_contracts::USER_AGENT)
         .connect_timeout(Duration::from_secs(20))
         // A server that stops sending ends the download instead of holding it forever.

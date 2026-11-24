@@ -33,7 +33,7 @@ pub use crate::tasks::ABORTED;
 /// length is the progress total, digests are of the published file and a body can resume.
 /// `silence`, when given, ends a download whose server stops sending for that long.
 pub fn client(silence: Option<Duration>) -> Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder()
+    let mut builder = kchess_host::http::client()
         .user_agent(crate::USER_AGENT)
         .connect_timeout(CONNECT_TIMEOUT)
         .no_gzip();
@@ -496,7 +496,7 @@ mod tests {
     }
 
     async fn read_all(fixture: &Fixture) -> (reqwest::Result<Vec<u8>>, usize) {
-        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let client = kchess_host::http::client().no_proxy().build().unwrap();
         let response = client.get(&fixture.url).send().await.unwrap();
         let mut body = Resumable::new(&client, response, None);
         let mut bytes = Vec::new();
@@ -605,7 +605,7 @@ mod tests {
     }
 
     fn client() -> reqwest::Client {
-        reqwest::Client::builder().no_proxy().build().unwrap()
+        kchess_host::http::client().no_proxy().build().unwrap()
     }
 
     fn later() -> Option<Instant> {
@@ -671,7 +671,7 @@ mod tests {
     #[tokio::test]
     async fn a_timeout_or_a_bad_request_is_not_sent_again() {
         let (url, connections) = answering(vec![HANG]).await;
-        let impatient = reqwest::Client::builder()
+        let impatient = kchess_host::http::client()
             .no_proxy()
             .timeout(Duration::from_millis(100))
             .build()
