@@ -52,6 +52,11 @@ pub fn init(cx: &mut App) {
                     this.changes += 1;
                 }
                 this.progress = Some(progress.clone());
+                // The event and the import's answer come apart, in either order: a read the
+                // answer started is overtaken here, so one that starts now lists the database.
+                if progress.phase == GameDbPhase::Done {
+                    this.refresh(cx);
+                }
                 cx.notify();
             }
         }),
@@ -259,7 +264,9 @@ pub fn import_card(cx: &App, palette: &Palette) -> impl IntoElement + use<> {
 #[cfg(test)]
 mod tests {
     use super::GameDbHandle;
+    use crate::core::{AppCore, ClientEvent, CoreEvent};
     use crate::testing::Started;
+    use kchess_contracts::types::{GameDbPhase, GameDbProgress, GameDbStatus};
 
     /// An import lists its database; a refused one shows why, which the list read after it
     /// leaves on screen.
@@ -286,6 +293,31 @@ mod tests {
             app.with_window(|_, cx| db.read(cx).databases()[0].name.clone()),
             "club"
         );
+
+        // The import's answer landed first and read the list; its end came after the read began
+        // (Windows and Linux CI, PR 415). The list still shows the database.
+        app.with_window(|_, cx| {
+            db.update(cx, |db, cx| {
+                db.status = GameDbStatus::default();
+                db.refresh(cx);
+            });
+            let done = GameDbProgress {
+                phase: GameDbPhase::Done,
+                database: "club".into(),
+                games: 1,
+                skipped: 0,
+                bytes: 0,
+                total_bytes: None,
+                message: None,
+            };
+            let events = cx.global::<AppCore>().events.clone();
+            events.update(cx, |_, cx| {
+                cx.emit(ClientEvent::Event(CoreEvent::GameDbProgress(done)))
+            });
+        });
+        app.wait_for("the database listed after its late end", |_, cx| {
+            db.read(cx).databases().len() == 1
+        });
 
         let refused = files.path().join("notes.txt");
         app.with_window(|_, cx| db.update(cx, |db, cx| db.import(refused, cx)));
