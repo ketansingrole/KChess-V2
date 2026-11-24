@@ -1,12 +1,7 @@
 //! How the game database holds up at scale: import time, file size, tree lookups and searches on
-//! a real file. Ignored by default; run with a file of games:
-//!
-//! ```text
-//! KCHESS_GAMEDB_SCALE=/path/games.pgn.zst cargo test --release -p kchess-core --test core \
-//!   gamedb_scale -- --ignored --nocapture
-//! ```
-//!
-//! (Monthly `.pgn.zst` files concatenate into one: zstd frames follow each other.)
+//! a real file. Ignored by default; set `KCHESS_GAMEDB_SCALE` to a `.pgn` or `.pgn.zst` file and
+//! run `cargo test --release -p kchess-core --test core gamedb_scale -- --ignored --nocapture`.
+//! Monthly `.pgn.zst` files concatenate into one: zstd frames follow each other.
 
 use std::time::{Duration, Instant};
 
