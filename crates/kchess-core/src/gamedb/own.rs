@@ -399,8 +399,9 @@ async fn remove(inner: &Inner) {
     changed(inner);
 }
 
-/// Every window reads the list of databases again.
+/// Every window reads the list of databases again; a position search finds its games again.
 fn changed(inner: &Inner) {
+    inner.listed.forget();
     inner.host.emit(CoreEvent::ProfileChanged(ProfileChange {
         areas: vec![ProfileArea::GameDb],
         origin: crate::connection::NOBODY,

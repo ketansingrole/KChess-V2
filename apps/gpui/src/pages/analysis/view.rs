@@ -134,6 +134,14 @@ impl AnalysisPage {
         let on_variation = !self.path.is_empty() && !self.root.on_mainline(&self.path);
         // A finished game cannot be played on from its last position.
         let over = game_over(self.position().as_ref()).is_some();
+        // Game databases hold ordinary chess; the item shows once there is one.
+        let searchable = self.standard_rules()
+            && !cx
+                .global::<crate::game_db::GameDbHandle>()
+                .0
+                .read(cx)
+                .databases()
+                .is_empty();
         let page = cx.entity().downgrade();
         let step = |id: &'static str, glyph: &'static str, label: &'static str, disabled: bool| {
             Button::new(id)
@@ -300,6 +308,15 @@ impl AnalysisPage {
                                     )
                                 })),
                         )
+                        .when(searchable, |menu| {
+                            menu.item(
+                                PopupMenuItem::new("Games with this position")
+                                    .icon(icon("database"))
+                                    .on_click(play(|setup, window, cx| {
+                                        crate::pages::database::games_at(setup.fen, window, cx)
+                                    })),
+                            )
+                        })
                         .item(
                             PopupMenuItem::new("Play Stockfish from here")
                                 .icon(icon("cpu"))
