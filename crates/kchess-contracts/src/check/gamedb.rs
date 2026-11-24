@@ -97,6 +97,20 @@ impl Validate for PgnFilePath {
     }
 }
 
+/// How many of the master games archive's newest months to keep to: 1 to 600 (fifty years).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[serde(transparent)]
+pub struct MasterMonths(pub u32);
+
+impl Validate for MasterMonths {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const MONTHS: &str = "Invalid number of months.";
+        let months: u64 = decode(value, |_| Some(MONTHS))?;
+        within(months, 1, 600, Some(MONTHS), "")?;
+        Ok(MasterMonths(u32::try_from(months).unwrap_or(600)))
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(expecting = "an object", rename_all = "camelCase", deny_unknown_fields)]
 struct SentQuery {
@@ -207,6 +221,21 @@ mod tests {
         assert!(check::<PgnFilePath>(sent(json!(zst))).unwrap().compressed());
         for bad in ["games/twic.pgn", "/games/twic.txt", ""] {
             assert!(check::<PgnFilePath>(sent(json!(bad))).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn master_months_are_bounded() {
+        assert_eq!(
+            check::<MasterMonths>(sent(json!(12))).unwrap(),
+            MasterMonths(12)
+        );
+        for bad in [json!(0), json!(601), json!("12"), json!(1.5)] {
+            assert_eq!(
+                check::<MasterMonths>(sent(bad.clone())).unwrap_err(),
+                "Invalid number of months.",
+                "{bad}"
+            );
         }
     }
 

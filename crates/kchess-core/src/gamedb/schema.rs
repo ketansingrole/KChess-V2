@@ -223,7 +223,13 @@ pub fn open_write(path: &Path) -> Result<Connection> {
 
 /// A new file, written alone until it is renamed into place: nothing reads it, and a failure
 /// throws it away, so it needs no journal.
-pub fn create(path: &Path, name: &str, source: DatabaseSource, now: i64) -> Result<Connection> {
+pub fn create(
+    path: &Path,
+    name: &str,
+    source: DatabaseSource,
+    attribution: Option<&str>,
+    now: i64,
+) -> Result<Connection> {
     let db = opened(
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -238,8 +244,8 @@ pub fn create(path: &Path, name: &str, source: DatabaseSource, now: i64) -> Resu
     db.execute(
         "INSERT INTO meta (id, name, source, created_at, updated_at, index_depth, attribution,
             deep_built)
-         VALUES (1, ?1, ?2, ?3, ?3, ?4, NULL, 1)",
-        rusqlite::params![name, source_text(source), now, INDEX_DEPTH],
+         VALUES (1, ?1, ?2, ?3, ?3, ?4, ?5, 1)",
+        rusqlite::params![name, source_text(source), now, INDEX_DEPTH, attribution],
     )
     .sql()?;
     Ok(db)
@@ -319,7 +325,7 @@ mod tests {
     fn a_new_file_is_migrated_and_listed() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.kdb");
-        let db = create(&path, "Mine", DatabaseSource::Imported, 5).unwrap();
+        let db = create(&path, "Mine", DatabaseSource::Imported, None, 5).unwrap();
         finish(&db).unwrap();
         drop(db);
         let db = open_read(&path).unwrap();
@@ -338,7 +344,7 @@ mod tests {
     fn a_file_from_a_newer_release_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.kdb");
-        create(&path, "Mine", DatabaseSource::Imported, 5).unwrap();
+        create(&path, "Mine", DatabaseSource::Imported, None, 5).unwrap();
         Connection::open(&path)
             .unwrap()
             .execute_batch("PRAGMA user_version = 99")

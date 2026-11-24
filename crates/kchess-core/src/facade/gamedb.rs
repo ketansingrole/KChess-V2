@@ -1,6 +1,6 @@
 //! The local game databases.
 
-use kchess_contracts::check::{DatabaseId, DatabaseName, GameDbGameId, PgnFilePath};
+use kchess_contracts::check::{DatabaseId, DatabaseName, GameDbGameId, MasterMonths, PgnFilePath};
 use kchess_contracts::core_api::GameDbApi;
 use kchess_contracts::error::Result;
 use kchess_contracts::types::{
@@ -55,5 +55,15 @@ impl GameDbApi for Core {
 
     async fn game_db_game(&self, database: DatabaseId, game: GameDbGameId) -> Result<String> {
         self.gamedb.game(&database.0, game.0).await
+    }
+
+    async fn game_db_master_install(&self, months: Option<MasterMonths>) -> Result<GameDbImported> {
+        self.gamedb
+            .master_install(
+                &self.master_games_url,
+                months.map(|months| months.0),
+                &*self.usage,
+            )
+            .await
     }
 }

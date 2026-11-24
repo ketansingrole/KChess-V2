@@ -2,12 +2,14 @@
 //!
 //! Each database is one SQLite file: removing a database removes its file, and an import that
 //! fails or is cancelled leaves every database as it was (`import`). Searches read each file
-//! through its own read-only lane, so they go on while an import writes. One import runs at a
-//! time; its progress reaches every window as `gamedb:progress`.
+//! through its own read-only lane, so they go on while an import writes. One import (or the
+//! master games download, `master`) runs at a time; its progress reaches every window as
+//! `gamedb:progress`.
 
 pub mod deep;
 pub mod explore;
 pub mod import;
+pub mod master;
 pub mod schema;
 pub mod search;
 pub mod tree;
@@ -103,19 +105,39 @@ struct Reporter {
     database: String,
     cancel: CancellationToken,
     last: Option<Instant>,
+    /// What the same run added before this file: the master games' earlier months.
+    earlier: import::Count,
+    /// The month of the master games being brought in, as the progress names it.
+    month: Option<String>,
 }
 
 impl Reporter {
+    fn new(host: &Arc<dyn Host>, database: &str, cancel: &CancellationToken) -> Reporter {
+        Reporter {
+            host: Arc::clone(host),
+            database: database.to_string(),
+            cancel: cancel.clone(),
+            last: None,
+            earlier: import::Count::default(),
+            month: None,
+        }
+    }
+
     fn send(&mut self, phase: Phase, count: import::Count, force: bool) {
         if !force && self.last.is_some_and(|last| last.elapsed() < REPORT_EVERY) {
             return;
         }
         self.last = Some(Instant::now());
+        let count = import::Count {
+            games: self.earlier.games + count.games,
+            skipped: self.earlier.skipped + count.skipped,
+            ..count
+        };
         self.host.emit(CoreEvent::GameDbProgress(progress(
             phase,
             &self.database,
             count,
-            None,
+            self.month.clone(),
         )));
     }
 }
@@ -297,6 +319,63 @@ impl Inner {
         let id = id.to_string();
         lane.run(move |db| schema::info(db, &id, bytes)).await
     }
+
+    /// Where an import writes the new database `id`: a `.partial` file renamed into place.
+    fn new_target(
+        &self,
+        id: &str,
+        name: String,
+        source: DatabaseSource,
+        attribution: Option<String>,
+    ) -> import::Target {
+        import::Target::New {
+            partial: self.dir.join(format!("{id}.{}.partial", schema::EXTENSION)),
+            file: self.file(id),
+            name,
+            source,
+            attribution,
+        }
+    }
+
+    /// Runs one import on a blocking thread: the file `open` gives into `target`. A new
+    /// database's file is made private once it is in place.
+    async fn run_import(
+        &self,
+        target: import::Target,
+        compressed: bool,
+        mut reporter: Reporter,
+        open: impl FnOnce() -> Result<import::Source> + Send + 'static,
+    ) -> Result<import::Count> {
+        let dir = self.dir.clone();
+        tokio::task::spawn_blocking(move || {
+            let result = open().and_then(|source| {
+                import::run(source, compressed, &target, &dir, TREE_ROWS, &mut reporter)
+            });
+            if let import::Target::New { file, .. } = &target
+                && result.is_ok()
+            {
+                crate::store::restrict_database(file, reporter.host.as_ref(), "gamedb");
+            }
+            result
+        })
+        .await
+        .map_err(|_| CoreError::new("The import stopped. Try again."))?
+    }
+}
+
+/// The last report of a run that ended in `error`: cancelled when it was asked to stop.
+fn failed(running: &Running, database: &str, error: &CoreError) -> GameDbProgress {
+    let phase = if running.cancel.is_cancelled() {
+        Phase::Cancelled
+    } else {
+        Phase::Failed
+    };
+    progress(
+        phase,
+        database,
+        import::Count::default(),
+        (phase == Phase::Failed).then(|| error.message.clone()),
+    )
 }
 
 impl GameDbService {
@@ -332,6 +411,27 @@ impl GameDbService {
         Ok(GameDbStatus { databases, busy })
     }
 
+    /// The one run (an import or the master games download) that may write, claimed for the
+    /// database `id`; refused while another runs.
+    fn claim(&self, id: &str) -> Result<Importing<'_>> {
+        let running = Arc::new(Running {
+            cancel: CancellationToken::new(),
+            database: id.to_string(),
+        });
+        let mut slot = lock(&self.inner.running);
+        if slot.is_some() {
+            return Err(CoreError::new(
+                "Another import is running. Wait for it or cancel it first.",
+            ));
+        }
+        *slot = Some(Arc::clone(&running));
+        Ok(Importing {
+            inner: &self.inner,
+            running,
+            end: None,
+        })
+    }
+
     /// Reads the PGN file at `path` into the database `into`, or a new one named `name`.
     pub async fn import(
         &self,
@@ -365,81 +465,32 @@ impl GameDbService {
             }
             None => new_id(name.as_deref().unwrap_or(&file_stem(&path))),
         };
-        let running = Arc::new(Running {
-            cancel: CancellationToken::new(),
-            database: id.clone(),
-        });
-        {
-            let mut slot = lock(&self.inner.running);
-            if slot.is_some() {
-                return Err(CoreError::new(
-                    "Another import is running. Wait for it or cancel it first.",
-                ));
-            }
-            *slot = Some(Arc::clone(&running));
-        }
-        let mut guard = Importing {
-            inner: &self.inner,
-            running: Arc::clone(&running),
-            end: None,
-        };
+        let mut guard = self.claim(&id)?;
+        let running = Arc::clone(&guard.running);
         std::fs::create_dir_all(&self.inner.dir)
             .map_err(|e| CoreError::wrap("Could not create the databases folder", e))?;
-        let file = self.inner.file(&id);
         let target = match into {
-            Some(_) => import::Target::Existing { file },
-            None => import::Target::New {
-                partial: self
-                    .inner
-                    .dir
-                    .join(format!("{id}.{}.partial", schema::EXTENSION)),
-                file,
-                name: name.unwrap_or_else(|| file_stem(&path)),
-                source,
+            Some(_) => import::Target::Existing {
+                file: self.inner.file(&id),
             },
+            None => {
+                self.inner
+                    .new_target(&id, name.unwrap_or_else(|| file_stem(&path)), source, None)
+            }
         };
-        let mut reporter = Reporter {
-            host: Arc::clone(&self.inner.host),
-            database: id.clone(),
-            cancel: running.cancel.clone(),
-            last: None,
-        };
+        let mut reporter = Reporter::new(&self.inner.host, &id, &running.cancel);
         reporter.send(Phase::Reading, import::Count::default(), true);
         let profile = self.inner.profile.clone();
-        let dir = self.inner.dir.clone();
-        let outcome = tokio::task::spawn_blocking(move || {
-            let result = import::run(
-                &path,
-                compressed,
-                &profile,
-                &target,
-                &dir,
-                TREE_ROWS,
-                &mut reporter,
-            );
-            if let import::Target::New { file, .. } = &target
-                && result.is_ok()
-            {
-                crate::store::restrict_database(file, reporter.host.as_ref(), "gamedb");
-            }
-            result
-        })
-        .await
-        .map_err(|_| CoreError::new("The import stopped. Try again."))?;
+        let outcome = self
+            .inner
+            .run_import(target, compressed, reporter, move || {
+                import::Source::chosen(&path, &profile)
+            })
+            .await;
         let count = match outcome {
             Ok(count) => count,
             Err(error) => {
-                let phase = if running.cancel.is_cancelled() {
-                    Phase::Cancelled
-                } else {
-                    Phase::Failed
-                };
-                guard.end = Some(progress(
-                    phase,
-                    &id,
-                    import::Count::default(),
-                    (phase == Phase::Failed).then(|| error.message.clone()),
-                ));
+                guard.end = Some(failed(&running, &id, &error));
                 return Err(error);
             }
         };
@@ -586,8 +637,10 @@ pub fn write_database(data_dir: &Path, name: &str, pgn: &str) -> Result<String> 
         file,
         name: name.to_string(),
         source: DatabaseSource::Imported,
+        attribution: None,
     };
-    import::run(&path, false, data_dir, &target, &dir, TREE_ROWS, &mut Quiet)?;
+    let source = import::Source::chosen(&path, data_dir)?;
+    import::run(source, false, &target, &dir, TREE_ROWS, &mut Quiet)?;
     Ok(id)
 }
 
