@@ -37,6 +37,8 @@ pub enum Target {
         partial: PathBuf,
         name: String,
         source: DatabaseSource,
+        /// Whose games they are and on what terms, when the source asks for it to be shown.
+        attribution: Option<String>,
     },
     /// An existing database's file, added to.
     Existing { file: PathBuf },
@@ -90,21 +92,42 @@ fn cancelled_error() -> CoreError {
     CoreError::new("Import cancelled.")
 }
 
-/// The source file, opened: a regular file outside the profile, so an import can never read the
-/// profile's own files (its logins, its databases).
-fn open_source(path: &Path, profile: &Path) -> Result<File> {
-    let unreadable = |e| CoreError::wrap("Could not read that file", e);
-    let real = std::fs::canonicalize(path).map_err(unreadable)?;
-    if let Ok(profile) = std::fs::canonicalize(profile)
-        && real.starts_with(&profile)
-    {
-        return Err(CoreError::new("Choose a file outside KChess's own folder."));
+/// The file an import reads, opened, and the name its import records (`imports.file`).
+pub struct Source {
+    file: File,
+    name: Option<String>,
+}
+
+impl Source {
+    /// A file the user chose: a regular file outside the profile, so an import can never read
+    /// the profile's own files (its logins, its databases).
+    pub fn chosen(path: &Path, profile: &Path) -> Result<Source> {
+        let unreadable = |e| CoreError::wrap("Could not read that file", e);
+        let real = std::fs::canonicalize(path).map_err(unreadable)?;
+        if let Ok(profile) = std::fs::canonicalize(profile)
+            && real.starts_with(&profile)
+        {
+            return Err(CoreError::new("Choose a file outside KChess's own folder."));
+        }
+        let file = File::open(&real).map_err(unreadable)?;
+        if !file.metadata().map_err(unreadable)?.is_file() {
+            return Err(CoreError::new("Choose a .pgn or .pgn.zst file."));
+        }
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        Ok(Source { file, name })
     }
-    let file = File::open(&real).map_err(unreadable)?;
-    if !file.metadata().map_err(unreadable)?.is_file() {
-        return Err(CoreError::new("Choose a .pgn or .pgn.zst file."));
+
+    /// A file the core downloaded itself (`master`), recorded as the file `name` it came as.
+    pub fn downloaded(path: &Path, name: &str) -> Result<Source> {
+        let file =
+            File::open(path).map_err(|e| CoreError::wrap("Could not read the download", e))?;
+        Ok(Source {
+            file,
+            name: Some(name.to_string()),
+        })
     }
-    Ok(file)
 }
 
 /// Names (players, events) by id, added to their table the first time a game names them, with
@@ -279,31 +302,32 @@ fn index_game(
     failed.map_or(Ok(()), Err)
 }
 
-/// The games of the file at `path` into `target`. `dir` holds the tree's run files; `capacity`
-/// bounds the tree rows held in memory.
+/// The games of `source` into `target`. `dir` holds the tree's run files; `capacity` bounds the
+/// tree rows held in memory.
 pub fn run(
-    path: &Path,
+    source: Source,
     compressed: bool,
-    profile: &Path,
     target: &Target,
     dir: &Path,
     capacity: usize,
     watch: &mut dyn Watch,
 ) -> Result<Count> {
-    let file = open_source(path, profile)?;
+    let Source {
+        file,
+        name: file_name,
+    } = source;
     let total_bytes = file.metadata().map(|m| m.len()).unwrap_or(0);
     let input = Input {
         reader: file,
         total_bytes,
         compressed,
-        label: path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned()),
+        label: file_name,
     };
     read_into(input, target, dir, capacity, watch)
 }
 
-/// The games `input` reads into `target`, as `run` reads a file's.
+/// The games `input` reads into `target`, as `run` reads a file's: for games the core holds
+/// itself rather than in a file ("Your games", `own`).
 pub fn read_into<R: Read + Send + 'static>(
     input: Input<R>,
     target: &Target,
@@ -328,10 +352,12 @@ pub fn read_into<R: Read + Send + 'static>(
             partial,
             name,
             source,
+            attribution,
             ..
         } => {
             remove_files(partial);
-            (schema::create(partial, name, *source, now)?, false, false)
+            let db = schema::create(partial, name, *source, attribution.as_deref(), now)?;
+            (db, false, false)
         }
         Target::Existing { file } => (schema::open_write(file)?, true, false),
         Target::Replace { file } => (schema::open_write(file)?, true, true),

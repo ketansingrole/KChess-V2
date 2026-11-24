@@ -29,7 +29,7 @@ use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::{Inner, import, schema};
+use super::{Inner, import};
 use crate::host::Level;
 use crate::store::Database;
 use crate::store::own_games::{self, OwnGames};
@@ -331,18 +331,12 @@ async fn build(
             self.0.is_cancelled()
         }
     }
-    let file = inner.file(OWN_ID);
     let target = if existing {
-        import::Target::Replace { file }
-    } else {
-        import::Target::New {
-            partial: inner
-                .dir
-                .join(format!("{OWN_ID}.{}.partial", schema::EXTENSION)),
-            file,
-            name: OWN_NAME.to_string(),
-            source: DatabaseSource::Own,
+        import::Target::Replace {
+            file: inner.file(OWN_ID),
         }
+    } else {
+        inner.new_target(OWN_ID, OWN_NAME.to_string(), DatabaseSource::Own, None)
     };
     let input = import::Input {
         reader: Cursor::new(Arc::clone(pgn)),
