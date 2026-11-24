@@ -244,6 +244,43 @@ fn check_again_follows_only_a_failed_check(cx: &mut gpui_kit::TestAppContext) {
     );
 }
 
+/// A retry that came due while the core was still checking was dropped, and with that check
+/// failing too nothing asked again: engine help stayed locked (macOS CI, 2026-11-24,
+/// `e2e::assistance::a_failed_check_is_retried_on_its_own`). It is made once that check fails.
+#[gpui_kit::test]
+fn a_retry_due_during_a_check_is_made_once_it_fails(cx: &mut gpui_kit::TestAppContext) {
+    use super::{Pause, Phase};
+    use kchess_contracts::events::CoreEvent;
+    use kchess_contracts::types::Assistance;
+    let mut app = started(cx, None);
+    let online = settled(&mut app);
+    let before = app.with_window(|_, cx| {
+        online.update(cx, |state, _| {
+            state.phase = Phase::Idle;
+            state.assistance = Assistance::Unverified;
+            state.model.online_connection = Some(connection("game", "checking"));
+            state.resumes
+        })
+    });
+    // The retry timer fires while the core's check is underway.
+    let during = app.with_window(|_, cx| {
+        super::check_again(cx);
+        let state = online.read(cx);
+        (state.resumes - before, state.pause())
+    });
+    assert_eq!(during, (0, Some(Pause::Checking)));
+    // That check fails as well.
+    app.with_window(|_, cx| {
+        online.update(cx, |state, cx| {
+            let failed = CoreEvent::OnlineState(connection("game", "disconnected"));
+            state.receive(&failed, cx);
+        })
+    });
+    app.cx().run_until_parked();
+    let after = app.with_window(|_, cx| online.read(cx).resumes - before);
+    assert_eq!(after, 1, "the retry is made once the check has failed");
+}
+
 /// Signing out while the games in progress loaded kept that request current: its answer
 /// brought the account's games back, and an earlier failure stayed on the empty list.
 #[gpui_kit::test]
