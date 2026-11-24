@@ -399,12 +399,10 @@ impl OnlineSession {
                 let found = checking.elsewhere.clone();
                 self.st().found_elsewhere(found, checking.began, false);
             }
-            {
-                let mut st = self.st();
-                st.recovery_unverified = false;
-                st.accounts_unchecked = checking.others_unchecked;
-            }
-            self.cancel_inner();
+            // Still unverified as the old session ends, so help stays locked until the game is
+            // on the board: verified first, the end of the old session lent it in between.
+            // Ended as a start does, it is not reported as a game to reconnect to.
+            self.cancel_for_start();
             {
                 let mut st = self.st();
                 st.current_account = account.to_string();
@@ -417,6 +415,11 @@ impl OnlineSession {
             };
             self.start_event_stream(auth.clone(), handle);
             self.begin_game(&id, &auth);
+            {
+                let mut st = self.st();
+                st.recovery_unverified = false;
+                st.accounts_unchecked = checking.others_unchecked;
+            }
             Ok(Some(Resumed {
                 id,
                 account: account.to_string(),

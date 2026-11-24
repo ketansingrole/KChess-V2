@@ -631,6 +631,15 @@ pub(super) async fn fetch_update(
     .await
 }
 
+/// `use_file` with the downloaded file, its folder still held: the patch is read after its
+/// download, and another KChess's cleanup once removed it in between, so the rebuild failed and
+/// the whole package was downloaded instead.
+pub(super) fn while_held<T>(downloaded: Downloaded, use_file: impl FnOnce(&Path) -> T) -> T {
+    let answer = use_file(&downloaded.path);
+    drop(downloaded);
+    answer
+}
+
 /// `fetch` by the update patch `delta` from `current`: download it into the kept `folder`,
 /// rebuild the new release from the installed files into `work`, and check what it made as a
 /// whole package's download is checked.
@@ -648,21 +657,21 @@ pub(super) async fn fetch_patch(
 ) -> Result<PathBuf, String> {
     let version = release.tag_name.trim_start_matches('v').to_string();
     let deb = asset_name(&version, package).unwrap_or_default();
-    let file = download_signed(release, delta, folder, progress, key)
-        .await?
-        .path;
-    let staged = patch::rebuild(
-        &patch::Patch {
-            delta: &file,
-            package,
-            install: &install.path,
-            root: Path::new("/"),
-            current: &current,
-            version: &version,
-            deb: &deb,
-        },
-        &work,
-    )?;
+    let downloaded = download_signed(release, delta, folder, progress, key).await?;
+    let staged = while_held(downloaded, |file| {
+        patch::rebuild(
+            &patch::Patch {
+                delta: file,
+                package,
+                install: &install.path,
+                root: Path::new("/"),
+                current: &current,
+                version: &version,
+                deb: &deb,
+            },
+            &work,
+        )
+    })?;
     signed_as_running(package, &install, &staged)?;
     Ok(staged)
 }

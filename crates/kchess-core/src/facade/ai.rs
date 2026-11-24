@@ -184,12 +184,13 @@ impl Core {
         // On its own task, holding the lock until it is saved: OpenAI rotates the refresh token
         // as it answers, so a caller that went away before the save (a closed window) left the
         // profile the used-up token, and the next access ended the sign-in.
-        self.ai
-            .renewals
-            .spawn(async move {
-                let _renewing = renewing;
-                renewal.run(connection, tokens, client_id, now).await
-            })
+        let Some(renewing) = self.ai.renew(async move {
+            let _renewing = renewing;
+            renewal.run(connection, tokens, client_id, now).await
+        }) else {
+            return Err(unavailable("closing"));
+        };
+        renewing
             .await
             .unwrap_or_else(|_| Err(unavailable("stopped")))
     }

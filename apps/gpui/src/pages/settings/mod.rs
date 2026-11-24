@@ -257,6 +257,8 @@ pub struct SettingsPage {
     test_pending: bool,
     /// The microphone test, and why it could not start.
     mic_test: Option<voice::MicTest>,
+    /// The microphone the test is opening; dropped, its answer goes nowhere.
+    mic_opening: Option<Task<()>>,
     mic_error: Option<SharedString>,
     /// What the system says about the microphone.
     mic: crate::microphone::Host,
@@ -492,6 +494,7 @@ impl SettingsPage {
             test_note: None,
             test_pending: false,
             mic_test: None,
+            mic_opening: None,
             mic_error: None,
             mic: crate::microphone::host(cx),
             mic_asking: false,

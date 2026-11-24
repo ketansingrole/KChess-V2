@@ -379,3 +379,40 @@ fn starting_a_game_is_busy_until_the_core_answers(cx: &mut gpui_kit::TestAppCont
     assert!(busy);
     app.wait_for("the start to end", |_, cx| !super::handle(cx).read(cx).busy);
 }
+
+/// Accepting a live challenge the core refuses (here no account is connected) leaves the
+/// board on the game it was following, so that game's moves keep arriving.
+#[gpui_kit::test]
+fn a_refused_accept_leaves_the_board_on_its_game(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_contracts::types::ChallengeInfo;
+    let mut app = started(cx, None);
+    let online = settled(&mut app);
+    let challenge: ChallengeInfo = serde_json::from_value(serde_json::json!({
+        "id": "Chal5678", "account": "other", "direction": "in", "opponent": { "name": "Bob" },
+        "variant": "standard", "variantName": "Standard", "rated": false, "speed": "blitz",
+        "timeControl": { "type": "clock", "limit": 300, "increment": 3 }, "color": "white",
+        "playable": true, "receivedAt": 0,
+    }))
+    .expect("a challenge");
+    let task = app.with_window(|_, cx| {
+        online.update(cx, |state, cx| {
+            state.model.online_account = "me".into();
+            state.model.online_id = "Live1234".into();
+            state.accept(&challenge, cx)
+        })
+    });
+    let accepted = std::rc::Rc::new(std::cell::Cell::new(None));
+    let seen = accepted.clone();
+    app.cx()
+        .spawn(async move |_| seen.set(Some(task.await)))
+        .detach();
+    app.wait_within(ANSWER, "the core's refusal", |_, _| {
+        accepted.get().is_some()
+    });
+    let (account, id) = app.with_window(|_, cx| {
+        let model = &online.read(cx).model;
+        (model.online_account.clone(), model.online_id.clone())
+    });
+    assert_eq!(accepted.get(), Some(false));
+    assert_eq!((account.as_str(), id.as_str()), ("me", "Live1234"));
+}

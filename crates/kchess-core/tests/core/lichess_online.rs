@@ -1543,6 +1543,35 @@ async fn recovery_that_stops_at_a_game_keeps_help_locked_for_the_unchecked_accou
     online.close();
 }
 
+/// A recovery that finds a game keeps help locked throughout: it was verified before the old
+/// session ended, which lent help until the game reached the board.
+#[tokio::test]
+async fn a_recovery_that_finds_a_game_never_lends_help() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/account/playing" => Reply::Json(
+            200,
+            json!({ "nowPlaying": [{ "gameId": "AbCd1234", "speed": "rapid" }] }).to_string(),
+        ),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let resumed = online.resume().await.unwrap();
+    assert_eq!(resumed.map(|found| found.id), Some("AbCd1234".to_string()));
+    let reported: Vec<Value> = host
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(name, _)| name == "online:assistance")
+        .map(|(_, payload)| payload.clone())
+        .collect();
+    assert!(!reported.contains(&json!("allowed")), "{reported:?}");
+    online.cancel();
+    online.close();
+}
+
 /// 2026-11-20: a failed check for a game in progress left help locked while every frontend took
 /// it as lent. Each change of the lock is now reported, once, so they follow it: locked while
 /// the check runs, still locked when it fails, lent once a check finds no game.

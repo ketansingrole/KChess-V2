@@ -494,3 +494,76 @@ async fn a_join_answered_after_a_logout_remembers_nothing() {
         "the logged-out account's join was kept"
     );
 }
+
+/// Two accounts joining one arena at once (two windows) both keep their place: the second
+/// join read the event's change count before the first one wrote, and remembered nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_accounts_joining_one_arena_both_keep_their_place() {
+    let (release, gate) = tokio::sync::watch::channel(false);
+    let held = Arc::new(tokio::sync::Notify::new());
+    let streams: Arc<Mutex<Vec<tokio::sync::mpsc::UnboundedSender<String>>>> = Arc::default();
+    let fixture = serve({
+        let (held, streams) = (Arc::clone(&held), Arc::clone(&streams));
+        move |seen| match (seen.method.as_str(), seen.path()) {
+            (_, "/api/stream/event") => {
+                let (sender, events) = tokio::sync::mpsc::unbounded_channel();
+                streams.lock().unwrap().push(sender);
+                Reply::Stream(events)
+            }
+            ("GET", "/api/tournament/Abcd1234") => {
+                let answer = Reply::Json(200, detail(true, false).to_string());
+                if seen.header("authorization") == Some("Bearer lip_bob") {
+                    held.notify_one();
+                    Reply::Gated(gate.clone(), Box::new(answer))
+                } else {
+                    answer
+                }
+            }
+            ("POST", "/api/tournament/Abcd1234/join") => {
+                Reply::Json(200, json!({ "ok": true }).to_string())
+            }
+            _ => Reply::Json(404, "{}".into()),
+        }
+    })
+    .await;
+    let profile = signed_in::open(&fixture.base).await;
+    profile
+        .core
+        .database_for_tests()
+        .write(|c| {
+            kchess_core::store::games::add_account(c.db, "Bob", true)?;
+            kchess_core::store::games::import_token_ciphertext(c.db, Some("Bob"), "lip_bob")
+        })
+        .unwrap();
+    let core = Arc::new(profile.core.clone());
+    let join = |account: &'static str| {
+        let core = Arc::clone(&core);
+        async move {
+            core.call(
+                "joinTournament",
+                vec![
+                    json!("arena"),
+                    json!("Abcd1234"),
+                    json!(account),
+                    Value::Null,
+                ],
+            )
+            .await
+        }
+    };
+    let bob = tokio::spawn(join("Bob"));
+    held.notified().await;
+    assert_eq!(join("Alice").await.unwrap(), json!(true));
+    let _ = release.send(true);
+    assert_eq!(bob.await.unwrap().unwrap(), json!(true));
+    let joined = core.call("joinedTournaments", vec![]).await.unwrap();
+    let mut accounts: Vec<&str> = joined
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["account"].as_str())
+        .collect();
+    accounts.sort();
+    assert_eq!(accounts, ["Alice", "Bob"], "{joined}");
+    core.close().await;
+}

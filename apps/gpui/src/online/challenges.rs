@@ -126,6 +126,15 @@ impl OnlineState {
     pub fn accept(&mut self, challenge: &ChallengeInfo, cx: &mut Context<Self>) -> Task<bool> {
         let id = challenge.id.clone();
         let live = matches!(challenge.time_control, ChallengeTimeControl::Clock { .. });
+        // The board's game before this one, put back if the core refuses the accept: the
+        // board would otherwise follow a game that never started and drop the one still on.
+        let before = live.then(|| {
+            (
+                self.model.online_account.clone(),
+                self.model.online_id.clone(),
+                self.model.online_status.clone(),
+            )
+        });
         if live {
             self.prepare_for_game(&challenge.account, &id);
         }
@@ -133,9 +142,20 @@ impl OnlineState {
         let call = cx.global::<AppCore>().request(calls::AcceptChallenge {
             id: GameId(id.clone()),
         });
-        let done = self.challenge_act(id, call, cx);
+        let done = self.challenge_act(id.clone(), call, cx);
         cx.spawn(async move |this, cx| {
             let done = done.await;
+            if let (false, Some((account, previous, status))) = (done, before) {
+                this.update(cx, |this, cx| {
+                    if this.model.online_id == id {
+                        this.model.online_account = account;
+                        this.model.online_id = previous;
+                        this.model.online_status = status;
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }
             if done && !live {
                 let _ = this.update(cx, |this, cx| {
                     notice(

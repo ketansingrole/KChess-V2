@@ -14,6 +14,12 @@ use futures::channel::mpsc;
 /// One chunk of samples, -1 to 1.
 pub type Chunk = Vec<f32>;
 
+/// Where an open microphone's chunks arrive.
+pub type ChunkReceiver = mpsc::UnboundedReceiver<Chunk>;
+
+/// What the capture thread answers once the microphone opened: its rate and device name.
+type Opened = Result<(f64, String), CaptureError>;
+
 /// A capture running on its own thread; dropping it stops it.
 pub struct Capture {
     stop: Arc<AtomicBool>,
@@ -59,27 +65,78 @@ fn test_audio(cx: &gpui_kit::App) -> Option<PathBuf> {
         .map(|TestAudio(path)| path.clone())
 }
 
-/// Start capturing: chunks arrive on the returned receiver until the capture is dropped.
-pub fn start(
-    cx: &gpui_kit::App,
-) -> Result<(Capture, mpsc::UnboundedReceiver<Chunk>), CaptureError> {
+/// A microphone being opened. `wait` blocks until it answers, for up to `OPEN_TIMEOUT`, so it
+/// runs off the main thread: opening it there once froze every window while a slow headset or
+/// a permission prompt answered. Dropped unopened, the microphone closes as it answers.
+pub struct Opening {
+    capture: Capture,
+    chunks: mpsc::UnboundedReceiver<Chunk>,
+    opened: std::sync::mpsc::Receiver<Opened>,
+}
+
+impl Opening {
+    /// The capture once the microphone answers; chunks arrive on the receiver until it drops.
+    pub fn wait(self) -> Result<(Capture, mpsc::UnboundedReceiver<Chunk>), CaptureError> {
+        let Opening {
+            mut capture,
+            chunks,
+            opened,
+        } = self;
+        let (sample_rate, device) = await_open(opened, &capture.stop, OPEN_TIMEOUT)?;
+        capture.sample_rate = sample_rate;
+        capture.device = device;
+        Ok((capture, chunks))
+    }
+
+    /// An opening that answers when the test sends on the returned sender.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn pending() -> (Self, std::sync::mpsc::Sender<Opened>) {
+        let (ready, opened) = std::sync::mpsc::channel();
+        let (_, chunks) = mpsc::unbounded();
+        let capture = Capture {
+            stop: Arc::new(AtomicBool::new(false)),
+            sample_rate: 0.,
+            device: String::new(),
+        };
+        (
+            Opening {
+                capture,
+                chunks,
+                opened,
+            },
+            ready,
+        )
+    }
+}
+
+/// Start opening the microphone, without waiting for it: see `Opening::wait`.
+pub fn start(cx: &gpui_kit::App) -> Opening {
     let (sender, receiver) = mpsc::unbounded();
     let stop = Arc::new(AtomicBool::new(false));
+    let (ready, opened) = std::sync::mpsc::channel::<Opened>();
+    let opening = Opening {
+        capture: Capture {
+            stop: Arc::clone(&stop),
+            sample_rate: 0.,
+            device: String::new(),
+        },
+        chunks: receiver,
+        opened,
+    };
     if let Some(path) = test_audio(cx) {
-        let (samples, rate) = read_wav(&path).map_err(CaptureError::Busy)?;
-        let flag = Arc::clone(&stop);
-        std::thread::spawn(move || play_file(samples, rate, sender, flag));
-        return Ok((
-            Capture {
-                stop,
-                sample_rate: f64::from(rate),
-                device: "Test audio".into(),
-            },
-            receiver,
-        ));
+        match read_wav(&path) {
+            Ok((samples, rate)) => {
+                let flag = Arc::clone(&stop);
+                std::thread::spawn(move || play_file(samples, rate, sender, flag));
+                let _ = ready.send(Ok((f64::from(rate), "Test audio".into())));
+            }
+            Err(cause) => {
+                let _ = ready.send(Err(CaptureError::Busy(cause)));
+            }
+        }
+        return opening;
     }
     // The stream lives on its own thread: some platforms' streams cannot move between threads.
-    let (ready, opened) = std::sync::mpsc::channel::<Result<(f64, String), CaptureError>>();
     let flag = Arc::clone(&stop);
     std::thread::spawn(move || {
         let host = cpal::default_host();
@@ -158,7 +215,7 @@ pub fn start(
             .description()
             .map(|description| description.name().to_string())
             .unwrap_or_default();
-        // The caller gave up waiting (`await_open`): nobody owns this stream, so it closes.
+        // The caller gave up waiting (`await_open`) or the opening was dropped: nobody owns this stream, so it closes.
         if ready.send(Ok((f64::from(rate), name))).is_err() {
             return;
         }
@@ -167,15 +224,7 @@ pub fn start(
         }
         drop(stream);
     });
-    let (sample_rate, device) = await_open(opened, &stop, OPEN_TIMEOUT)?;
-    Ok((
-        Capture {
-            stop,
-            sample_rate,
-            device,
-        },
-        receiver,
-    ))
+    opening
 }
 
 /// How long a microphone may take to open.

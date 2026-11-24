@@ -1151,6 +1151,32 @@ fn a_developer_id_update_must_be_signed_through_apple() {
 
 /// A finished download comes back already held: its folder was let go between the download's
 /// lock and the hold taken by the app, and another KChess's cleanup could remove it there.
+/// An update patch was let go as its download ended, before the rebuild read it: another
+/// KChess's cleanup in between removed it, and the whole package was downloaded instead.
+#[test]
+fn a_patch_is_held_while_it_is_rebuilt() {
+    let _processes = processes();
+    let root = scratch("held-patch");
+    let package = b"the update patch".to_vec();
+    let url = feed("2026.11.0", &package, |digest, name| {
+        format!("{digest}  {name}\n")
+    });
+    let kept = super::kept_folder(&root, "2026.11.0");
+    let downloaded = block_on(check_and_download_held(url, kept.clone(), None)).unwrap();
+    let read = super::while_held(downloaded, |file| {
+        super::prune_kept(&root, |_| true);
+        std::fs::read(file).ok()
+    });
+    assert_eq!(
+        read,
+        Some(package),
+        "the patch is still there to rebuild from"
+    );
+    super::prune_kept(&root, |_| true);
+    assert!(!kept.exists(), "let go after the rebuild");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn a_finished_download_is_held_until_it_is_let_go() {
     let _processes = processes();

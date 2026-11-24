@@ -517,6 +517,11 @@ fn mark_cloud(studies: &mut Studies, id: &str, cloud: StudyCloud) {
     }
 }
 
+/// The name of a cloud study's copy kept beside a changed local one.
+fn cloud_copy_name(name: &str) -> String {
+    format!("{name} (cloud copy)")
+}
+
 /// A cloud copy of a study, kept beside a changed local one.
 fn offline(
     studies: &mut Studies,
@@ -547,7 +552,7 @@ fn offline(
         None => false,
     };
     let name = if conflict {
-        format!("{} (cloud copy)", remote.name)
+        cloud_copy_name(&remote.name)
     } else {
         remote.name.clone()
     };
@@ -577,11 +582,14 @@ fn study_matches(study: &Study, downloaded: &str) -> Result<bool> {
     // its chapters from their tags (`chapter_name`); without one tagged game a chapter, the
     // names were given apart from the moves and cannot be read back from them.
     let downloaded_chapters = crate::lichess::studies::split_pgn(downloaded);
-    // The study renamed here likewise, when the download names it.
+    // The study renamed here likewise, when the download names it: by either name a download
+    // gives it, the cloud's or its copy's (a copy read as renamed was copied again each time).
     let renamed = downloaded_chapters
         .first()
         .and_then(|first| crate::lichess::studies::study_name(first))
-        .is_some_and(|name| clean_name(&name) != study.name);
+        .is_some_and(|name| {
+            clean_name(&name) != study.name && clean_name(&cloud_copy_name(&name)) != study.name
+        });
     if renamed {
         return Ok(false);
     }
@@ -1159,6 +1167,18 @@ mod tests {
         .expect("offline after the rename");
         assert_eq!(conflict["conflict"], json!(true));
         assert_eq!(study(&db, &id)["name"], json!("Mine"));
+        // The copy, unchanged, is replaced by the next download: read as renamed (its title is
+        // not the cloud's), it was copied again on every download.
+        let copy = conflict["id"].clone();
+        let next = run(
+            &db,
+            json!({ "op": "offline", "account": "Alice", "remote": remote, "chapters": chapters }),
+        )
+        .expect("offline again");
+        assert_eq!(
+            (next["id"].clone(), next["conflict"].clone()),
+            (copy, json!(false))
+        );
     }
 
     #[test]

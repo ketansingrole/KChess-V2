@@ -467,11 +467,22 @@ impl Reviews {
     /// The engine was deleted or replaced. The review in progress stops,
     /// keeping its work, and the engine is dropped.
     pub fn restart_review_engine(&self) {
-        let state = lock(&self.shared.state);
-        if let Some(running) = &state.running {
-            running.cancelled.store(true, Ordering::SeqCst);
+        let stopped = {
+            let mut state = lock(&self.shared.state);
+            let stopped = state.running.clone().inspect(|running| {
+                running.cancelled.store(true, Ordering::SeqCst);
+            });
+            close_engine_locked(&self.shared, &state);
+            // A review someone asked for is named as stopped: `kchess-cli review` waited for it.
+            let asked = stopped.filter(|job| !job.background.load(Ordering::SeqCst));
+            if let Some(job) = &asked {
+                state.cancelled = Some(job.key.clone());
+            }
+            asked.is_some()
+        };
+        if stopped {
+            send_status(&self.shared);
         }
-        close_engine_locked(&self.shared, &state);
     }
 
     /// The app is quitting. The queue empties, the running review stops, and this

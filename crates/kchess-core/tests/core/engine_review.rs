@@ -1002,6 +1002,11 @@ async fn restarting_the_review_engine_stops_the_review_and_its_engine() {
     })
     .await;
     assert!(rig.host.complete_updates().is_empty());
+    // Named as stopped: a command line waiting for it waited for ever.
+    assert_eq!(
+        rig.host.last_status().and_then(|status| status.cancelled),
+        Some(key_of(START, &SCHOLARS))
+    );
     rig.reviews.stop_reviews().await;
 }
 

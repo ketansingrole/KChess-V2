@@ -278,6 +278,8 @@ pub struct Ai {
     /// The renewals in progress, each with its save: the core's close waits for them before it
     /// closes the keychain and the database (`Core::shutdown`).
     pub renewals: tokio_util::task::TaskTracker,
+    /// Whether a renewal may still start (`renew`): false once the core closes.
+    renewals_open: std::sync::Mutex<bool>,
 }
 
 impl Ai {
@@ -294,7 +296,32 @@ impl Ai {
             lifetime,
             refreshing: std::sync::Arc::new(AsyncMutex::new(0)),
             renewals: tokio_util::task::TaskTracker::new(),
+            renewals_open: std::sync::Mutex::new(true),
         })
+    }
+
+    /// Runs `renewal` among the renewals the close waits for, or None once the core closes: a
+    /// renewal started after the close waited would send the token request, and lose its answer
+    /// with the keychain closed.
+    pub fn renew<F>(&self, renewal: F) -> Option<tokio::task::JoinHandle<F::Output>>
+    where
+        F: std::future::Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        let open = self
+            .renewals_open
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        open.then(|| self.renewals.spawn(renewal))
+    }
+
+    /// No renewal starts from now on; those started end before `renewals.wait()` does.
+    pub fn close_renewals(&self) {
+        *self
+            .renewals_open
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
+        self.renewals.close();
     }
 
     pub fn callback_port(&self) -> u16 {
@@ -745,6 +772,17 @@ mod tests {
         };
         let renewed = ai.refresh(&tokens, "client", 0.0).await.expect("renewed");
         assert_eq!(renewed.refresh, "r2");
+    }
+
+    /// A renewal asked for once the core began closing never starts: it started after the close
+    /// had waited for the renewals, sent its token request and lost the answer.
+    #[tokio::test]
+    async fn no_renewal_starts_once_the_core_closes() {
+        let ai = Ai::new(Some("http://127.0.0.1:9".into()), CancellationToken::new()).unwrap();
+        assert!(ai.renew(async {}).is_some());
+        ai.close_renewals();
+        assert!(ai.renew(async {}).is_none());
+        ai.renewals.wait().await;
     }
 
     #[tokio::test]
