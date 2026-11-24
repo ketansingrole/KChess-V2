@@ -37,6 +37,30 @@ fn method_names_are_unique() {
     );
 }
 
+/// A game database shows games and their moves: a live game withholds it as it withholds the
+/// opening explorer.
+#[test]
+fn game_database_reads_are_help_a_live_game_withholds() {
+    for name in ["gameDbGames", "gameDbGame"] {
+        let method = core_api::method(name).expect("declared");
+        assert_eq!(method.assist, Some(Assist::Lookups), "{name}");
+    }
+    for name in ["gameDbStatus", "gameDbCancel"] {
+        assert_eq!(
+            core_api::method(name).expect("declared").assist,
+            None,
+            "{name}"
+        );
+    }
+    for name in ["gameDbImport", "gameDbDelete", "gameDbRename"] {
+        let method = core_api::method(name).expect("declared");
+        assert_eq!(method.writes, [ProfileArea::GameDb], "{name}");
+    }
+    let import = core_api::method("gameDbImport").expect("declared");
+    let params: Vec<(&str, bool)> = import.params.iter().map(|p| (p.name, p.optional)).collect();
+    assert_eq!(params, [("path", false), ("into", true), ("name", true)]);
+}
+
 #[test]
 fn excess_and_missing_arguments_are_refused_before_any_check() {
     assert_eq!(

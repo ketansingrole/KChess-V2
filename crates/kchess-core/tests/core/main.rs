@@ -37,6 +37,7 @@ mod facade_challenges;
 mod facade_dispatch;
 mod facade_effects;
 mod facade_engine;
+mod facade_gamedb;
 mod facade_lichess;
 mod facade_online;
 mod facade_online_play;

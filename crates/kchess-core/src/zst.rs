@@ -1,7 +1,7 @@
-//! Zstandard decoding for the puzzle download, over `ruzstd` (pure Rust, no C library).
-//! `ruzstd`'s streaming decoder reads one frame and leaves checksums to the caller; this module
-//! decodes every frame of the stream, skips skippable frames and verifies content checksums, as
-//! the reference decoder does.
+//! Zstandard decoding for the puzzle download and game database imports, over `ruzstd` (pure
+//! Rust, no C library). `ruzstd`'s streaming decoder reads one frame and leaves checksums to the
+//! caller; this module decodes every frame of the stream, skips skippable frames and verifies
+//! content checksums, as the reference decoder does.
 
 use std::io::{self, BufRead, BufReader, Read};
 

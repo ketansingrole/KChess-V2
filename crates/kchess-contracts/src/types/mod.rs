@@ -50,6 +50,7 @@ pub use kchess_domain::training::repetition::{RepertoireMisses, RepertoireSchedu
 mod accounts;
 mod ai;
 mod engine;
+mod gamedb;
 mod games;
 mod insights;
 mod library;
@@ -69,6 +70,7 @@ mod watch;
 pub use accounts::*;
 pub use ai::*;
 pub use engine::*;
+pub use gamedb::*;
 pub use games::*;
 pub use insights::*;
 pub use library::*;
@@ -144,6 +146,8 @@ pub enum ProfileArea {
     Accounts,
     DesktopSettings,
     Puzzles,
+    /// The local game databases (`gameDb*`).
+    GameDb,
     VoiceHistory,
     Usage,
     Engine,

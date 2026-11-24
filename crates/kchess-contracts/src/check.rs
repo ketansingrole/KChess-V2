@@ -20,6 +20,7 @@ use kchess_domain::{js, replay};
 mod accounts;
 mod ai;
 mod engine;
+mod gamedb;
 mod library;
 mod lookups;
 mod notifications;
@@ -31,6 +32,7 @@ mod themes;
 
 pub use accounts::*;
 pub use ai::*;
+pub use gamedb::*;
 pub use library::*;
 pub use lookups::*;
 pub use notifications::*;

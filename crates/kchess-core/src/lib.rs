@@ -17,6 +17,7 @@ pub mod core;
 pub mod download;
 pub mod engine;
 pub mod facade;
+pub mod gamedb;
 pub mod host;
 pub mod ids;
 pub mod lichess;
@@ -35,6 +36,7 @@ pub mod themes;
 pub mod time;
 pub mod usage;
 pub mod voice;
+mod zst;
 
 pub use crate::core::Core;
 pub use host::{Config, Host, Level, TestSwitches, TestVoiceModel};

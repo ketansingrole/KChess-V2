@@ -34,6 +34,7 @@ use crate::engine::search::Search;
 use crate::engine::status::EngineLocations;
 use crate::engine::uci::EngineHub;
 use crate::facade::GatedHost;
+use crate::gamedb::GameDbService;
 use crate::host::{Config, Host};
 use crate::lichess::services::{LiveGame, Services};
 use crate::profile_lock::ProfileClaim;
@@ -54,6 +55,8 @@ pub(crate) enum Mutation {
 pub struct Core {
     pub(crate) host: Arc<dyn Host>,
     pub(crate) puzzles: PuzzleService,
+    /// The local game databases (`databases/*.kdb`).
+    pub(crate) gamedb: GameDbService,
     /// What the core asks of its host (secrets, browser, focus, power).
     pub(crate) capabilities: Arc<Capabilities>,
     /// `kchess.db`, shared by the storage calls and the review queue.
@@ -233,6 +236,7 @@ impl Core {
             alert_owner: AtomicU64::new(APP),
             alert_reports: Mutex::new(()),
             settings_writes: AsyncMutex::new(()),
+            gamedb: GameDbService::new(&config, Arc::clone(&host)),
             puzzles: PuzzleService::new(config, Arc::clone(&host), usage.clone()),
             voice,
             voice_owner: Arc::new(AsyncMutex::new(None)),

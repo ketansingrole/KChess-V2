@@ -21,6 +21,7 @@ mod accounts;
 mod ai;
 mod chesscom;
 mod engine;
+mod gamedb;
 mod games;
 mod library;
 mod online;
@@ -308,6 +309,7 @@ impl Core {
         self.battery.close();
         self.cancel_installs();
         self.puzzles.cancel();
+        self.gamedb.cancel();
         self.services.abort();
         self.chesscom.abort();
         self.tracker.close();
@@ -330,6 +332,7 @@ impl Core {
         self.services.reset();
         self.usage.close();
         self.puzzles.close().await;
+        self.gamedb.close().await;
         self.database.close_async().await;
         let before_release = std::mem::take(&mut *lock(&self.before_release));
         for cleanup in before_release {
