@@ -176,8 +176,13 @@ pub fn clear_stored(db: &Connection) -> Result<()> {
     transaction(db, || {
         db.execute_batch("DELETE FROM puzzles; DELETE FROM puzzle_meta;")
             .sql()
-    })?;
-    // Give the space back to the file rather than leave it for reuse.
+    })
+}
+
+/// Give the space the puzzles held back to the file rather than leave it for reuse. Apart from
+/// `clear_stored`: a compaction that failed (no room for its copy) once failed the deletion it
+/// followed, though the puzzles were gone, and the windows went on offering them.
+pub fn compact(db: &Connection) -> Result<()> {
     db.execute_batch("VACUUM").sql()
 }
 

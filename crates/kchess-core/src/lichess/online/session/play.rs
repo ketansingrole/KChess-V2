@@ -61,6 +61,11 @@ impl OnlineSession {
             });
             st.protected_game = id.to_string();
             st.protected_account = st.current_account.clone();
+            // On the board now, the board's game locks help: kept as played elsewhere too, its
+            // finish on the board alone would leave help locked.
+            st.elsewhere.remove(id);
+            // A recovery checking meanwhile is older than this game: it applies nothing.
+            st.resume_attempt += 1;
             (handle, st.current_account.clone(), st.epoch)
         };
         let finished = Arc::new(AtomicBool::new(false));
@@ -210,7 +215,7 @@ impl OnlineSession {
         let st = self.st();
         if st.live.is_some() || !st.protected_game.is_empty() || !st.elsewhere.is_empty() {
             Assistance::LiveGame
-        } else if st.recovery_unverified {
+        } else if st.recovery_unverified || st.accounts_unchecked {
             Assistance::Unverified
         } else {
             Assistance::Allowed
@@ -492,6 +497,7 @@ impl OnlineSession {
             st.protected_account.clear();
             st.current_account.clear();
             st.recovery_unverified = false;
+            st.accounts_unchecked = false;
             st.epoch
         };
         self.emit_state(session, "", "", Lane::Game, OnlinePhase::Idle, None);

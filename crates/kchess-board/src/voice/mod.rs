@@ -126,6 +126,8 @@ pub struct Voice {
     rate: f64,
     requests: Option<futures::channel::mpsc::UnboundedSender<Request>>,
     _pump: Option<Task<()>>,
+    /// The microphone being opened; replaced or cleared, its answer is dropped.
+    _opening: Option<Task<()>>,
     _worker: Option<Task<()>>,
 }
 
@@ -303,6 +305,7 @@ impl Voice {
     fn disable_now(&mut self, _cx: &mut Context<Self>) {
         self.epoch += 1;
         self.capture = None;
+        self._opening = None;
         self._pump = None;
         if let Some(requests) = &self.requests {
             let _ = requests.unbounded_send(Request::Stop);
@@ -413,7 +416,31 @@ impl Voice {
     }
 
     fn open_microphone(&mut self, cx: &mut Context<Self>) {
-        let (capture, mut chunks) = match capture::start(cx) {
+        let opening = capture::start(cx);
+        self.adopt_microphone(opening, cx);
+    }
+
+    /// Waits for the microphone off the main thread, and takes it if voice is still opening
+    /// for the same owner then; a microphone answering too late closes as it is dropped.
+    fn adopt_microphone(&mut self, opening: capture::Opening, cx: &mut Context<Self>) {
+        let epoch = self.epoch;
+        self._opening = Some(cx.spawn(async move |this, cx| {
+            let opened = cx.background_spawn(async move { opening.wait() }).await;
+            this.update(cx, |this, cx| {
+                if this.epoch == epoch && this.owner.is_some() {
+                    this.microphone_opened(opened, cx);
+                }
+            })
+            .ok();
+        }));
+    }
+
+    fn microphone_opened(
+        &mut self,
+        opened: Result<(capture::Capture, capture::ChunkReceiver), capture::CaptureError>,
+        cx: &mut Context<Self>,
+    ) {
+        let (capture, mut chunks) = match opened {
             Ok(opened) => opened,
             Err(cause) => {
                 let kind = match cause {
@@ -626,6 +653,7 @@ pub fn init(cx: &mut App) {
         rate: 16_000.,
         requests: None,
         _pump: None,
+        _opening: None,
         _worker: None,
     });
     // The recognizer session on a lost connection ended with it: a listening control starts a
@@ -768,6 +796,36 @@ mod tests {
             super::init(cx);
             core
         })
+    }
+
+    /// Opening the microphone waited on the main thread, for up to ten seconds while a slow
+    /// headset or a permission prompt answered, and every window froze meanwhile. The opening
+    /// returns at once, and the microphone is taken when it answers.
+    #[gpui_kit::test]
+    fn the_microphone_opens_without_freezing_the_windows(cx: &mut gpui_kit::TestAppContext) {
+        let _core = started(cx);
+        let (opening, answer) = super::capture::Opening::pending();
+        let voice = cx.update(|cx| handle(cx));
+        let waiting = cx.update(|cx| {
+            voice.update(cx, |voice, cx| {
+                voice.owner = Some(1);
+                voice.ready = true;
+                voice.state = super::State::Loading;
+                let began = std::time::Instant::now();
+                voice.adopt_microphone(opening, cx);
+                (began.elapsed(), voice.capture.is_some(), voice.state)
+            })
+        });
+        assert!(
+            waiting.0 < std::time::Duration::from_secs(1),
+            "waited {:?}",
+            waiting.0
+        );
+        assert_eq!((waiting.1, waiting.2), (false, super::State::Loading));
+        answer.send(Ok((16_000., "Headset".into()))).unwrap();
+        cx.run_until_parked();
+        let opened = cx.update(|cx| voice.read(cx).capture.as_ref().map(|c| c.device.clone()));
+        assert_eq!(opened.as_deref(), Some("Headset"));
     }
 
     /// A build without the speech helper said "The offline voice model couldn’t load. Voice input

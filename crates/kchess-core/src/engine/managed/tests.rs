@@ -360,6 +360,70 @@ async fn deletes_only_its_own_directory_under_engine_maintenance() {
     assert!(!engine.exists());
 }
 
+/// The engines resume as the folder is gone, not when the call is dropped: a deletion whose
+/// call was dropped (its connection closed) let the engines and a reinstall in while the folder
+/// was still being removed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_dropped_delete_holds_the_engines_until_the_folder_is_gone() {
+    struct Watch {
+        dir: PathBuf,
+        suspended: Arc<AtomicUsize>,
+        left_behind: Arc<std::sync::Mutex<Option<bool>>>,
+    }
+    struct Resumed(PathBuf, Arc<std::sync::Mutex<Option<bool>>>);
+    impl Drop for Resumed {
+        fn drop(&mut self) {
+            *self.1.lock().unwrap() = Some(self.0.exists());
+        }
+    }
+    impl EngineHandoff for Watch {
+        fn suspend(&self) -> Pin<Box<dyn Future<Output = Result<EngineGuard>> + Send + '_>> {
+            Box::pin(async move {
+                self.suspended.fetch_add(1, Ordering::SeqCst);
+                let resumed = Resumed(self.dir.clone(), Arc::clone(&self.left_behind));
+                Ok(Box::new(resumed) as EngineGuard)
+            })
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let engine = dir.path().join("current");
+    for folder in 0..40 {
+        let folder = engine.join(format!("{folder}"));
+        std::fs::create_dir_all(&folder).unwrap();
+        for file in 0..100 {
+            std::fs::write(folder.join(format!("{file}")), "binary").unwrap();
+        }
+    }
+    let watch = Arc::new(Watch {
+        dir: engine.clone(),
+        suspended: Arc::new(AtomicUsize::new(0)),
+        left_behind: Arc::default(),
+    });
+    let (suspended, left_behind) = (Arc::clone(&watch.suspended), Arc::clone(&watch.left_behind));
+    let mut location = ManagedLocation::new(engine.clone());
+    location.handoff = Some(watch);
+    let deleting = tokio::spawn(async move {
+        let host = TestHost::default();
+        delete_managed_engine(&host, &location).await
+    });
+    while suspended.load(Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+    deleting.abort();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let resumed = loop {
+        if let Some(left) = *left_behind.lock().unwrap() {
+            break left;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the engines never resumed"
+        );
+        tokio::task::yield_now().await;
+    };
+    assert!(!resumed, "the engines resumed with the folder still there");
+}
+
 // The release is a Linux archive whose engine is a shell script.
 #[cfg(unix)]
 #[tokio::test]

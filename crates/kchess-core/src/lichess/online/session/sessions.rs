@@ -30,8 +30,21 @@ impl OnlineSession {
     }
 
     fn end_session(&self, report_unverified: bool) {
+        self.end_session_if(report_unverified, |_| true);
+    }
+
+    /// `end_session`, when `commit` (run first, under the same lock) says so: a recovery
+    /// applies what it found and checks that no game took the board meanwhile in one step.
+    fn end_session_if(
+        &self,
+        report_unverified: bool,
+        commit: impl FnOnce(&mut crate::lichess::online::state::State) -> bool,
+    ) -> bool {
         let (phase_report, cancel_pending) = {
             let mut st = self.st();
+            if !commit(&mut st) {
+                return false;
+            }
             st.attach_generation += 1;
             st.attaching_account.clear();
             let leaving_correspondence = st
@@ -98,6 +111,7 @@ impl OnlineSession {
                 }
             });
         }
+        true
     }
 
     /// `cancel()`: end the session's streams and its pending challenge. The idle lobby stream
@@ -155,6 +169,13 @@ impl OnlineSession {
         // Another caller may have attached this game while credentials were loading.
         if self.st().is_live(id) {
             return Ok(());
+        }
+        // A real-time game took the board meanwhile (another account's started as a challenge
+        // was being accepted): it stays, with its clock running.
+        if self.st().realtime_live() {
+            return Err(CoreError::new(
+                "Finish the game on the board before opening another.",
+            ));
         }
         self.cancel_inner();
         let handle = {
@@ -271,8 +292,10 @@ impl OnlineSession {
             accounts.insert(0, protected_account.clone());
         }
         let mut first_error: Option<CoreError> = None;
-        for account in accounts {
+        let total = accounts.len();
+        for (index, account) in accounts.into_iter().enumerate() {
             checking.account = account.clone();
+            checking.others_unchecked = index + 1 < total || first_error.is_some();
             match self
                 .resume_account(attempt, &account, &protected_account, checking)
                 .await
@@ -292,18 +315,29 @@ impl OnlineSession {
         if let Some(error) = first_error {
             return Err(error);
         }
-        self.st().recovery_unverified = false;
-        self.cancel_inner();
+        let elsewhere = std::mem::take(&mut checking.elsewhere);
+        let committed = self.end_session_if(true, |st| {
+            // A game that took the board meanwhile (a seek's, from its event stream) is newer
+            // than this check: it stays. Checked apart from the end, the end cancelled its
+            // streams and lent help while it was played.
+            if attempt != st.resume_attempt {
+                return false;
+            }
+            // Every account was checked: this is what is played elsewhere now, and a finish
+            // missed while the stream was down no longer keeps assistance locked. Kept before
+            // the flags clear and the session ends (which reports the lock): kept after, help
+            // was lent meanwhile during a game recovery had just found.
+            st.found_elsewhere(elsewhere, checking.began, true);
+            st.recovery_unverified = false;
+            st.accounts_unchecked = false;
+            true
+        });
+        if !committed {
+            return Err(CoreError::aborted("Recovery cancelled."));
+        }
         let (session, account) = {
             let mut st = self.st();
             st.protected_game.clear();
-            // Every account was checked: this is what is played elsewhere now, and a finish
-            // missed while the stream was down no longer keeps assistance locked.
-            st.found_elsewhere(
-                std::mem::take(&mut checking.elsewhere),
-                checking.began,
-                true,
-            );
             (st.epoch, st.current_account.clone())
         };
         self.emit_state(session, &account, "", Lane::Game, OnlinePhase::Idle, None);
@@ -364,16 +398,15 @@ impl OnlineSession {
                 })
                 .and_then(|game| game["gameId"].as_str())
                 .map(str::to_string);
-            // The real-time games it cannot play lock assistance until they end, whatever this
-            // check finds for the board.
+            // The other real-time games lock assistance until they end, whatever this check
+            // finds for the board: those the Board API cannot play, and any beside the one the
+            // board takes.
             checking.elsewhere.extend(
                 now_playing
                     .iter()
-                    .filter(|game| {
-                        let game = GameRef::read(game);
-                        !game.correspondence() && !game.board_compatible()
-                    })
+                    .filter(|game| !GameRef::read(game).correspondence())
                     .filter_map(|game| game["gameId"].as_str())
+                    .filter(|game| Some(*game) != id.as_deref())
                     .map(str::to_string),
             );
             if attempt != self.st().resume_attempt {
@@ -387,8 +420,10 @@ impl OnlineSession {
                 let found = checking.elsewhere.clone();
                 self.st().found_elsewhere(found, checking.began, false);
             }
-            self.st().recovery_unverified = false;
-            self.cancel_inner();
+            // Still unverified as the old session ends, so help stays locked until the game is
+            // on the board: verified first, the end of the old session lent it in between.
+            // Ended as a start does, it is not reported as a game to reconnect to.
+            self.cancel_for_start();
             {
                 let mut st = self.st();
                 st.current_account = account.to_string();
@@ -401,6 +436,11 @@ impl OnlineSession {
             };
             self.start_event_stream(auth.clone(), handle);
             self.begin_game(&id, &auth);
+            {
+                let mut st = self.st();
+                st.recovery_unverified = false;
+                st.accounts_unchecked = checking.others_unchecked;
+            }
             Ok(Some(Resumed {
                 id,
                 account: account.to_string(),
@@ -469,15 +509,17 @@ impl OnlineSession {
                     .query(&[("nb", "50")])
                     .read_json()
                     .await?;
-                for game in playing
-                    .get("nowPlaying")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                {
-                    let read = GameRef::read(game);
-                    if !read.correspondence()
-                        && !read.board_compatible()
+                // Read as no games, it once let a check settle the games played elsewhere and
+                // lend help in the middle of one; recovery refuses it too.
+                let Some(now_playing) = playing.get("nowPlaying").and_then(Value::as_array) else {
+                    return Err(CoreError::new(
+                        "Lichess returned an invalid ongoing-game response.",
+                    ));
+                };
+                for game in now_playing {
+                    // Every real-time game locks assistance until it ends: one the board holds
+                    // is left to the board below.
+                    if !GameRef::read(game).correspondence()
                         && let Some(id) = game["gameId"].as_str()
                     {
                         elsewhere.insert(id.to_string());
@@ -502,7 +544,15 @@ impl OnlineSession {
                 first_error.get_or_insert(cause);
             }
         }
-        self.st().found_elsewhere(elsewhere, began, complete);
+        {
+            let mut st = self.st();
+            // The board's own game ends with the board; another account's beside it does not.
+            elsewhere.retain(|id| !st.concerns(id));
+            st.found_elsewhere(elsewhere, began, complete);
+            if complete {
+                st.accounts_unchecked = false;
+            }
+        }
         self.refresh_assistance();
         if let Some(error) = first_error.filter(|_| games.is_empty()) {
             return Err(error);

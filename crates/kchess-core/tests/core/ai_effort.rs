@@ -52,6 +52,8 @@ struct Plan {
     fixture: Fixture,
     core: Arc<Core>,
     renewals: Arc<Mutex<Vec<String>>>,
+    /// While set, a renewal's answer waits for it to open.
+    renewal_gate: Arc<Mutex<Option<watch::Receiver<bool>>>>,
     dir: tempfile::TempDir,
 }
 
@@ -59,11 +61,13 @@ async fn signed_in_plan(responses: impl Fn(&Request) -> Reply + Send + 'static) 
     let nonce = Arc::new(Mutex::new(String::new()));
     let origin = Arc::new(Mutex::new(String::new()));
     let renewals = Arc::new(Mutex::new(Vec::<String>::new()));
+    let renewal_gate = Arc::new(Mutex::new(None::<watch::Receiver<bool>>));
     let fixture = {
-        let (nonce, origin, renewals) = (
+        let (nonce, origin, renewals, gate) = (
             Arc::clone(&nonce),
             Arc::clone(&origin),
             Arc::clone(&renewals),
+            Arc::clone(&renewal_gate),
         );
         serve(move |seen| match seen.path() {
             "/api/accounts/oauth/token" => {
@@ -88,7 +92,7 @@ async fn signed_in_plan(responses: impl Fn(&Request) -> Reply + Send + 'static) 
                     URL_SAFE_NO_PAD.encode(claims.to_string())
                 );
                 // Expired at once: every access renews.
-                Reply::Json(
+                let answer = Reply::Json(
                     200,
                     json!({
                         "access_token": "access-secret",
@@ -98,7 +102,13 @@ async fn signed_in_plan(responses: impl Fn(&Request) -> Reply + Send + 'static) 
                         "scope": "openid chatgpt.tokens.use.direct",
                     })
                     .to_string(),
-                )
+                );
+                match gate.lock().unwrap().clone() {
+                    Some(gated) if field(&seen.body, "refresh_token").is_some() => {
+                        Reply::Gated(gated, Box::new(answer))
+                    }
+                    _ => answer,
+                }
             }
             "/v1/responses" => responses(seen),
             _ => Reply::Json(404, "{}".into()),
@@ -145,6 +155,7 @@ async fn signed_in_plan(responses: impl Fn(&Request) -> Reply + Send + 'static) 
         fixture,
         core,
         renewals,
+        renewal_gate,
         dir,
     }
 }
@@ -178,6 +189,7 @@ async fn a_refused_effort_keeps_the_renewed_tokens() {
         core,
         renewals,
         dir: _dir,
+        ..
     } = {
         let hold = Arc::clone(&hold);
         signed_in_plan(move |seen| refusing_effort(seen, &hold, &gated)).await
@@ -229,6 +241,40 @@ async fn a_refused_effort_keeps_the_renewed_tokens() {
     let status = core.call("aiStatus", vec![]).await.unwrap();
     assert_eq!(status["effort"], "high");
     assert_eq!(status["effortRefused"], false);
+}
+
+/// An access whose caller goes away (its window closed) while OpenAI answers the renewal still
+/// saves the renewed tokens: OpenAI had used up the old refresh token, which was all the profile
+/// kept, and the next access sent it again and ended the sign-in.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_renewal_whose_caller_went_away_is_still_saved() {
+    let Plan {
+        fixture,
+        core,
+        renewals,
+        renewal_gate,
+        dir: _dir,
+    } = signed_in_plan(|_| stream("Nc7+ forks the king and rook.")).await;
+    core.call("resumeOnline", vec![]).await.unwrap();
+    let status = core.call("aiConnect", vec![]).await.unwrap();
+    assert_eq!(status["connected"], true);
+    let (gate, gated) = watch::channel(false);
+    *renewal_gate.lock().unwrap() = Some(gated);
+    let explaining = tokio::spawn({
+        let core = Arc::clone(&core);
+        async move { core.call("aiExplain", vec![request("e1e2")]).await }
+    });
+    // OpenAI has the old token and renews it; the caller goes before the answer comes.
+    let asked = fixture.to("/api/accounts/oauth/token").len();
+    fixture
+        .requested("/api/accounts/oauth/token", asked + 1)
+        .await;
+    explaining.abort();
+    let _ = explaining.await;
+    *renewal_gate.lock().unwrap() = None;
+    gate.send(true).unwrap();
+    core.call("aiExplain", vec![request("e1d1")]).await.unwrap();
+    assert_eq!(*renewals.lock().unwrap(), ["refresh-1", "refresh-2"]);
 }
 
 /// A wrong puzzle move is explained with the engine's reply to it: the engine is asked about the

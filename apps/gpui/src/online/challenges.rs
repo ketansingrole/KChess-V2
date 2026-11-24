@@ -125,17 +125,40 @@ impl OnlineState {
     /// Accept a challenge: a live one opens on the board; a correspondence one joins the games.
     pub fn accept(&mut self, challenge: &ChallengeInfo, cx: &mut Context<Self>) -> Task<bool> {
         let id = challenge.id.clone();
+        // A real-time game on the board stays there: the core refuses to open another, and the
+        // board moved to the challenge meanwhile dropped that game's moves until it answered.
         let live = matches!(challenge.time_control, ChallengeTimeControl::Clock { .. });
-        if live {
+        let prepare = live && !self.live_game_on();
+        // The board's game before this one, put back if the core refuses the accept: the
+        // board would otherwise follow a game that never started and drop the one still on.
+        let before = prepare.then(|| {
+            (
+                self.model.online_account.clone(),
+                self.model.online_id.clone(),
+                self.model.online_status.clone(),
+            )
+        });
+        if prepare {
             self.prepare_for_game(&challenge.account, &id);
         }
         let opponent = challenge.opponent.name.clone();
         let call = cx.global::<AppCore>().request(calls::AcceptChallenge {
             id: GameId(id.clone()),
         });
-        let done = self.challenge_act(id, call, cx);
+        let done = self.challenge_act(id.clone(), call, cx);
         cx.spawn(async move |this, cx| {
             let done = done.await;
+            if let (false, Some((account, previous, status))) = (done, before) {
+                this.update(cx, |this, cx| {
+                    if this.model.online_id == id {
+                        this.model.online_account = account;
+                        this.model.online_id = previous;
+                        this.model.online_status = status;
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }
             if done && !live {
                 let _ = this.update(cx, |this, cx| {
                     notice(

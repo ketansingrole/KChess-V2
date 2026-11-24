@@ -272,6 +272,10 @@ impl Core {
     async fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
         self.ai.lifetime().cancel();
+        // A renewal OpenAI is answering ends with its save, while the keychain and the database
+        // are still open: its old refresh token is used up.
+        self.ai.close_renewals();
+        self.ai.renewals.wait().await;
         self.services.spectator().stop();
         self.services.online().close();
         self.analysis.stop_analysis(true);

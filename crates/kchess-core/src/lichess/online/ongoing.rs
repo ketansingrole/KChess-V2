@@ -12,8 +12,10 @@ pub(crate) struct Checking {
     pub(crate) account: String,
     pub(crate) auth_required: bool,
     pub(crate) error: Option<CoreError>,
-    /// The real-time games found that the Board API cannot play (`State::elsewhere`).
+    /// The real-time games found beside the board's (`State::elsewhere`).
     pub(crate) elsewhere: std::collections::BTreeSet<String>,
+    /// Accounts besides this one are unchecked (later in the order, or their check failed).
+    pub(crate) others_unchecked: bool,
     /// `State::elsewhere_changes` when the check began.
     pub(crate) began: u64,
 }

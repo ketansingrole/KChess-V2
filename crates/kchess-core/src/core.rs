@@ -68,7 +68,7 @@ pub struct Core {
     pub(crate) analysis: Analysis,
     pub(crate) reviews: Reviews,
     /// ChatGPT plan usage.
-    pub(crate) ai: crate::ai::Ai,
+    pub(crate) ai: Arc<crate::ai::Ai>,
     /// The Lichess services (client, online session, spectator, explorer, cloud evaluation).
     pub(crate) services: Services,
     /// Chess.com game sync.
@@ -247,7 +247,10 @@ impl Core {
             search,
             analysis,
             reviews,
-            ai: crate::ai::Ai::new(test.openai_origin, CancellationToken::new())?,
+            ai: Arc::new(crate::ai::Ai::new(
+                test.openai_origin,
+                CancellationToken::new(),
+            )?),
             chesscom,
             services,
             usage,

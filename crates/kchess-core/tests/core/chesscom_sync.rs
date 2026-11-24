@@ -230,6 +230,32 @@ async fn a_month_without_its_games_is_asked_again() {
     assert_eq!(profile.games("Alice@chess.com").await.len(), 1);
 }
 
+/// An archive index answered without its list is not an empty one: the sync once read
+/// nothing and still marked the player synced. A list that is empty is read as empty.
+#[tokio::test]
+async fn an_archive_index_without_its_list_is_not_a_sync() {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&asked);
+    let fixture = serve(move |request: &Request| match request.path() {
+        "/pub/player/alice" => Reply::Json(200, profile_body()),
+        "/pub/player/alice/games/archives" => {
+            if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                Reply::Json(200, "{}".into())
+            } else {
+                Reply::Json(200, json!({ "archives": [] }).to_string())
+            }
+        }
+        _ => Reply::Json(404, "{}".into()),
+    })
+    .await;
+    let profile = profile(&fixture);
+    let failed = profile.chesscom.add("alice").await;
+    assert!(failed.is_err(), "{failed:?}");
+    let accounts = profile.chesscom.sync(None).await.expect("the next sync");
+    assert!(accounts[0].last_synced_at.is_some(), "{accounts:?}");
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+}
+
 /// The player, their archives and accounts are gone, and the add that was overtaken failed
 /// without waiting for Chess.com to answer (`open` is never sent).
 async fn removed_during_add(

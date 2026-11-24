@@ -248,10 +248,23 @@ pub use crate::export::{choose_game_file, read_game_file};
 /// analysis board, as if pasted into its import; several games are offered as a study, in the
 /// Studies import; anything else is refused with a notice.
 pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
-    let Some(path) = paths.paths().first() else {
+    let Some(path) = paths.paths().first().cloned() else {
         return;
     };
-    let Some(text) = read_game_file(path) else {
+    // Read off the main thread: a file on a stalled network folder froze every window.
+    let read = cx.background_spawn(async move { read_game_file(&path) });
+    window
+        .spawn(cx, async move |cx| {
+            let text = read.await;
+            cx.update(|window, cx| open_dropped_text(text, window, cx))
+                .ok();
+        })
+        .detach();
+}
+
+/// What `open_dropped` read: opened as a game, a position or a study, or refused.
+fn open_dropped_text(text: Option<String>, window: &mut Window, cx: &mut App) {
+    let Some(text) = text else {
         window.push_notification(
             gpui_kit::component::notification::Notification::error(
                 "Drop a PGN or FEN file under 2 MB",

@@ -83,6 +83,13 @@ fn scripted(mode: &str, position: &str) -> (String, &'static str) {
 }
 
 fn info(mode: &str, position: &str, depth: u32, rank: usize) {
+    // `scoreless`: searches as `search` does, but tells no score.
+    if mode == "scoreless" {
+        emit(&format!(
+            "info depth {depth} seldepth {depth} multipv {rank} nodes 9 pv e2e4"
+        ));
+        return;
+    }
     let (score, pv) = scripted(mode, position);
     emit(&format!(
         "info depth {depth} seldepth {depth} multipv {rank} {score} nodes 9 pv {pv}"
@@ -236,7 +243,10 @@ fn main() {
         let exe = std::env::current_exe().ok()?;
         started_as_copy.then(|| exe.with_extension("log").display().to_string())
     });
-    let searching = matches!(mode.as_str(), "search" | "review" | "stall" | "stall-late");
+    let searching = matches!(
+        mode.as_str(),
+        "search" | "review" | "stall" | "stall-late" | "scoreless"
+    );
     let state = Mutex::new(Search::default());
 
     #[cfg(unix)]

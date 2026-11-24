@@ -382,11 +382,14 @@ impl Chesscom {
             StatusCode::NOT_FOUND | StatusCode::GONE => return Err(no_such_player(name)),
             _ => return Err(unreachable()),
         }
-        let mut months: Vec<String> = Self::json(&list)?
+        // An answer without its list is not an empty one: it once marked the account synced
+        // with nothing read.
+        let index = Self::json(&list)?;
+        let listed = index
             .get("archives")
             .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+            .ok_or_else(|| CoreError::new("Chess.com sent an answer KChess cannot read."))?;
+        let mut months: Vec<String> = listed
             .iter()
             .filter_map(Value::as_str)
             .filter_map(archive_month)

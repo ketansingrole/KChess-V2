@@ -233,6 +233,8 @@ struct State {
     paused: Option<Pause>,
     waiting_background: usize,
     failed: Option<ReviewFailure>,
+    /// The last review stopped by `cancel_review` (`ReviewStatus::cancelled`), until asked again.
+    cancelled: Option<String>,
     /// Games not to try again this session.
     skipped: HashSet<String>,
     pumping: bool,
@@ -384,6 +386,9 @@ impl Reviews {
             // The game asked for most recently is the one being looked at: it goes first.
             state.asked.insert(0, Arc::clone(&job));
             state.skipped.remove(&key);
+            if state.cancelled.as_ref() == Some(&key) {
+                state.cancelled = None;
+            }
             if state
                 .failed
                 .as_ref()
@@ -401,17 +406,25 @@ impl Reviews {
     pub fn cancel_review(&self, key: &str) {
         {
             let mut state = lock(&self.shared.state);
+            let mut stopped = false;
             for job in state.pending.iter().filter(|job| job.key == key) {
                 job.cancelled.store(true, Ordering::SeqCst);
+                stopped = true;
             }
+            let asked = state.asked.len();
             state.asked.retain(|job| job.key != key);
+            stopped |= state.asked.len() != asked;
             if let Some(running) = state.running.clone()
                 && running.key == key
             {
                 running.cancelled.store(true, Ordering::SeqCst);
+                stopped = true;
                 if let Some((_, token)) = &state.search {
                     token.cancel();
                 }
+            }
+            if stopped {
+                state.cancelled = Some(key.to_string());
             }
         }
         send_status(&self.shared);
@@ -454,11 +467,22 @@ impl Reviews {
     /// The engine was deleted or replaced. The review in progress stops,
     /// keeping its work, and the engine is dropped.
     pub fn restart_review_engine(&self) {
-        let state = lock(&self.shared.state);
-        if let Some(running) = &state.running {
-            running.cancelled.store(true, Ordering::SeqCst);
+        let stopped = {
+            let mut state = lock(&self.shared.state);
+            let stopped = state.running.clone().inspect(|running| {
+                running.cancelled.store(true, Ordering::SeqCst);
+            });
+            close_engine_locked(&self.shared, &state);
+            // A review someone asked for is named as stopped: `kchess-cli review` waited for it.
+            let asked = stopped.filter(|job| !job.background.load(Ordering::SeqCst));
+            if let Some(job) = &asked {
+                state.cancelled = Some(job.key.clone());
+            }
+            asked.is_some()
+        };
+        if stopped {
+            send_status(&self.shared);
         }
-        close_engine_locked(&self.shared, &state);
     }
 
     /// The app is quitting. The queue empties, the running review stops, and this
@@ -618,6 +642,7 @@ fn review_status_of(s: &Shared) -> ReviewStatus {
         waiting: state.asked.len() + state.waiting_background,
         paused: state.paused,
         failed: state.failed.clone(),
+        cancelled: state.cancelled.clone(),
     }
 }
 
@@ -982,7 +1007,18 @@ async fn run(s: &Arc<Shared>, job: Arc<Job>) {
                 Level::Warn,
                 &format!("Review failed: {} {cause}", job.key),
             );
-            lock(&s.state).running = None;
+            let mut state = lock(&s.state);
+            state.running = None;
+            // Someone waits for this review (`kchess-cli review`): it ends with the failure,
+            // as an engine's does. Dropped unsaid, the wait never ended.
+            if !job.background.load(Ordering::SeqCst) {
+                state.failed = Some(ReviewFailure {
+                    key: job.key.clone(),
+                    message: cause.message.clone(),
+                });
+                drop(state);
+                send_status(s);
+            }
             return;
         }
     };
@@ -1041,6 +1077,9 @@ async fn run(s: &Arc<Shared>, job: Arc<Job>) {
                         cause.message.clone()
                     },
                 });
+                // Said now, before the next job can fail in its place: the status holds one
+                // failure, and the one replaced unsaid left `kchess-cli review` waiting.
+                send_status(s);
             }
             close_engine(s);
             if review.evals.iter().any(Option::is_some)
@@ -1156,9 +1195,21 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
         .all(|eval| eval.as_ref().is_some_and(|eval| has_score(Some(eval))));
     publish(s, job, review.clone()).await?;
     if !review.complete {
-        lock(&s.state)
+        let mut state = lock(&s.state);
+        state
             .skipped
             .insert(job.game_id.clone().unwrap_or_else(|| job.key.clone()));
+        // Someone waits for this review (`kchess-cli review`): the engine left positions
+        // without a score, so it never completes. Kept partial, it is said failed; unsaid,
+        // the wait never ended.
+        if !job.background.load(Ordering::SeqCst) {
+            state.failed = Some(ReviewFailure {
+                key: job.key.clone(),
+                message: "The engine gave no score for some positions.".to_string(),
+            });
+            drop(state);
+            send_status(s);
+        }
     }
     Ok(())
 }

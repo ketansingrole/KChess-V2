@@ -152,6 +152,60 @@ async fn two_uploads_of_one_study_take_turns() {
     assert_eq!(moves, 1);
 }
 
+/// Two collaborators' uploads of one study (each account's own copy of it) take turns too: the
+/// lock was each account's, so both found the baseline and the later replaced the first's edit.
+#[tokio::test]
+async fn two_accounts_uploads_of_one_study_take_turns() {
+    let cloud = Arc::new(Mutex::new(BASELINE.to_string()));
+    let fixture = serve({
+        let cloud = Arc::clone(&cloud);
+        move |seen| {
+            if seen.method == "GET" {
+                Reply::Text(
+                    200,
+                    "application/x-chess-pgn",
+                    cloud.lock().unwrap().clone(),
+                )
+            } else {
+                // The chapter's moves become the cloud's.
+                if seen.path().ends_with("/moves") {
+                    *cloud.lock().unwrap() = form_field(&seen.body, "pgn").unwrap_or_default();
+                }
+                Reply::Json(200, "{\"ok\":true}".into())
+            }
+        }
+    })
+    .await;
+    let lichess = lichess_service(
+        &fixture.base,
+        &Arc::new(Recording::default()),
+        MemoryStore::with_accounts(&[("Alice", true), ("Bob", true)]),
+        MemoryTokens::with(&[("Alice", "lip_alice"), ("Bob", "lip_bob")]),
+    );
+    let first = BASELINE.replace("{Keep}", "{First window}");
+    let second = BASELINE.replace("{Keep}", "{Second window}");
+    let (first, mut second) = (request(&first), request(&second));
+    second.account = "Bob".into();
+    let (one, two) = tokio::join!(
+        sync_lichess_study(&lichess, &first),
+        sync_lichess_study(&lichess, &second),
+    );
+    let refused = [&one, &two]
+        .iter()
+        .filter(|result| {
+            result
+                .as_ref()
+                .is_err_and(|error| error.message.contains("cloud study changed"))
+        })
+        .count();
+    assert_eq!(refused, 1, "{one:?} {two:?}");
+    let moves = posts(&fixture)
+        .iter()
+        .filter(|seen| seen.path().ends_with("/moves"))
+        .count();
+    assert_eq!(moves, 1);
+}
+
 #[tokio::test]
 async fn rejects_illegal_moves_structure_changes_and_wrong_chapter_identities_before_writing() {
     let cloud = Arc::new(Mutex::new(BASELINE.to_string()));

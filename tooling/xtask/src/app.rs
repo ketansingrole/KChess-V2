@@ -177,29 +177,44 @@ fn stop_outdated_service(profile: &Path, binary: &Path) -> Result {
     Err(format!("The core service (pid {pid}) did not stop."))
 }
 
-fn check_startable(profile: &Path) -> Result {
+fn check_startable(profile: &Path) -> Result<PathBuf> {
     startable(profile, running(), |name| std::env::var_os(name))
 }
 
 /// Whether the app may start on `profile`, made if missing: not while one already runs as
-/// `running`, nor on the real profile (`var` reads the environment).
+/// `running`, nor on the real profile (`var` reads the environment). Answers the folder checked,
+/// links resolved, for every launch to use: a link changed later would otherwise take a
+/// restart elsewhere than was checked.
 fn startable(
     profile: &Path,
     running: Option<u32>,
     var: impl Fn(&str) -> Option<std::ffi::OsString>,
-) -> Result {
+) -> Result<PathBuf> {
     if let Some(pid) = running {
         return Err(format!(
             "KChess already runs (pid {pid}); `cargo xtask app --stop` first."
         ));
     }
-    if is_real_profile(profile, var) {
+    // The app takes an empty `KCHESS_USER_DATA_DIR` as unset and opens the real profile.
+    if profile.as_os_str().is_empty() {
+        return Err("--profile needs the profile folder.".into());
+    }
+    if is_real_profile(profile, &var) {
         return Err(format!(
             "{} is a real profile; development runs use a scratch one.",
             profile.display()
         ));
     }
-    std::fs::create_dir_all(profile).map_err(|cause| cause.to_string())
+    std::fs::create_dir_all(profile).map_err(|cause| cause.to_string())?;
+    let checked = profile.canonicalize().map_err(|cause| cause.to_string())?;
+    // The link resolved to the real profile.
+    if is_real_profile(&checked, &var) {
+        return Err(format!(
+            "{} is a real profile; development runs use a scratch one.",
+            profile.display()
+        ));
+    }
+    Ok(checked)
 }
 
 /// Starts `binary`, with a fresh log and its process ID in the PID file.
@@ -238,7 +253,7 @@ fn launch(
 }
 
 fn start(profile: &Path, args: &[String]) -> Result {
-    check_startable(profile)?;
+    let profile = &check_startable(profile)?;
     let engine = engine()?;
     let binary = build()?;
     let child = launch(&binary, profile, &engine, args, false)?;
@@ -379,7 +394,7 @@ fn remove_quietly(path: &Path) {
 /// Starts the app, then rebuilds and restarts it whenever a source changes, until it is quit or
 /// stopped. A build that fails leaves the running app alone, and the next save tries again.
 fn watch(profile: &Path, args: &[String]) -> Result {
-    check_startable(profile)?;
+    let profile = &check_startable(profile)?;
     let engine = engine()?;
     let mut known = sources();
     let mut binary = build()?;
@@ -450,6 +465,15 @@ fn stop() -> Result {
     Ok(())
 }
 
+/// `--profile`'s folder, from where xtask runs: the app starts in the repository's root, so a
+/// relative path would name another folder there than the one checked here.
+fn scratch_profile(arg: &str) -> Result<PathBuf> {
+    if arg.is_empty() {
+        return Err("--profile needs the profile folder.".into());
+    }
+    std::path::absolute(arg).map_err(|cause| cause.to_string())
+}
+
 /// `app [--profile <dir>] [--watch] [--stop] [-- <app arguments>]`.
 pub fn run(args: &[String]) -> Result {
     let (ours, theirs) = match args.iter().position(|arg| arg == "--") {
@@ -460,10 +484,10 @@ pub fn run(args: &[String]) -> Result {
         return stop();
     }
     let profile = match ours.iter().position(|arg| arg == "--profile") {
-        Some(at) => PathBuf::from(
+        Some(at) => scratch_profile(
             ours.get(at + 1)
                 .ok_or("--profile needs the profile folder.")?,
-        ),
+        )?,
         None => root().join(PROFILE),
     };
     if ours.iter().any(|arg| arg == "--watch") {
@@ -596,5 +620,35 @@ mod tests {
         let refused = startable(&real, None, env).unwrap_err();
         assert!(refused.contains("is a real profile"), "{refused}");
         assert!(!real.exists());
+    }
+
+    /// An empty `--profile ""` passed the real-profile check (`create_dir_all("")` succeeds), and
+    /// the app took the empty `KCHESS_USER_DATA_DIR` as unset and opened the real profile.
+    #[test]
+    fn an_empty_profile_is_refused() {
+        let env = |_: &str| None;
+        let refused = startable(Path::new(""), None, env).unwrap_err();
+
+        assert!(refused.contains("--profile"), "{refused}");
+        assert!(scratch_profile("").is_err());
+        let relative = scratch_profile("scratch").unwrap();
+        assert!(relative.is_absolute());
+        assert_eq!(relative, std::env::current_dir().unwrap().join("scratch"));
+    }
+
+    /// A profile named through a link starts on the folder the link named when it was checked:
+    /// a watch passed the link to every restart, so a link changed meanwhile to the real
+    /// profile would have opened it.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_profile_starts_on_the_folder_checked() {
+        let scratch = tempfile::tempdir().unwrap();
+        let env = |_: &str| None;
+        let target = scratch.path().join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        let link = scratch.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let checked = startable(&link, None, env).unwrap();
+        assert_eq!(checked, target.canonicalize().unwrap());
     }
 }

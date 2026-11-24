@@ -277,11 +277,30 @@ fn dir_lock(dir: &Path) -> Arc<AsyncMutex<()>> {
 
 /// Remove the downloaded engine. Bundled and user-picked engines are never touched.
 pub async fn delete_managed_engine(host: &dyn Host, location: &ManagedLocation) -> Result<()> {
-    let lock = dir_lock(&location.dir);
-    let _held = lock.lock().await;
+    let result = delete(location).await;
+    log_mutation_failure(host, &location.dir, &result);
+    result
+}
+
+/// The removal, as the install commits its renames: a blocking task owns the folder lock, the
+/// engines' suspension and the core's call tracker, so all three last until the folder is
+/// gone even when the call is dropped (its connection closed). Dropped with the call, they let
+/// a reinstall, or the next core, in while the folder was still being removed.
+async fn delete(location: &ManagedLocation) -> Result<()> {
+    let held = dir_lock(&location.dir).lock_owned().await;
+    let suspended = match &location.handoff {
+        Some(handoff) => Some(
+            tokio::time::timeout(location.exit_deadline, handoff.suspend())
+                .await
+                .map_err(|_| CoreError::new(super::uci::EXIT_TIMEOUT_MESSAGE))??,
+        ),
+        None => None,
+    };
     let dir = location.dir.clone();
-    let result = with_handoff(location, || async move {
-        match tokio::fs::remove_dir_all(&dir).await {
+    let keep_alive = location.keep_alive.clone();
+    tokio::task::spawn_blocking(move || {
+        let _guards = (held, suspended, keep_alive);
+        match std::fs::remove_dir_all(&dir) {
             Ok(()) => Ok(()),
             Err(cause) if cause.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(cause) => Err(CoreError::new(format!(
@@ -289,9 +308,8 @@ pub async fn delete_managed_engine(host: &dyn Host, location: &ManagedLocation) 
             ))),
         }
     })
-    .await;
-    log_mutation_failure(host, &location.dir, &result);
-    result
+    .await
+    .map_err(|_| CoreError::new("Could not delete the Stockfish folder."))?
 }
 
 /// Install the latest official native build, verified against the digest GitHub publishes.
@@ -319,24 +337,6 @@ fn log_mutation_failure<T>(host: &dyn Host, dir: &Path, result: &Result<T>) {
             ),
         );
     }
-}
-
-/// Run `commit` while the engine owners are suspended. The exit deadline bounds the suspension;
-/// the owners resume after `commit` whether it succeeded or not.
-async fn with_handoff<T, F, Fut>(location: &ManagedLocation, commit: F) -> Result<T>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<T>>,
-{
-    let Some(handoff) = &location.handoff else {
-        return commit().await;
-    };
-    let guard = tokio::time::timeout(location.exit_deadline, handoff.suspend())
-        .await
-        .map_err(|_| CoreError::new(super::uci::EXIT_TIMEOUT_MESSAGE))??;
-    let result = commit().await;
-    drop(guard);
-    result
 }
 
 async fn install(

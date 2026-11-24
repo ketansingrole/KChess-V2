@@ -136,25 +136,42 @@ pub fn split_pgn(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// `/^\[NAME "([^"]*)"\]/m`: the value of the first tag line named `name`.
+/// The study's name as a downloaded chapter names it, when it does (`StudyName`).
+pub fn study_name(pgn: &str) -> Option<String> {
+    tag_value(pgn, "StudyName")
+}
+
+/// The name a downloaded chapter, the `index`th of its study, is kept under.
+pub fn chapter_name(pgn: &str, index: usize) -> String {
+    let name = tag_value(pgn, "ChapterName")
+        .or_else(|| tag_value(pgn, "Event"))
+        .unwrap_or_else(|| format!("Chapter {}", index + 1));
+    js::slice_utf16(&name, 120).to_string()
+}
+
+/// The value of the first tag line named `name` (`[NAME "value"]`). A quote or a backslash in
+/// it comes escaped (`\"`, `\\`), as the PGN reader reads it: a reader that stopped at the
+/// first quote found no title, so a study renamed here was taken for unchanged and its name
+/// replaced.
 fn tag_value(pgn: &str, name: &str) -> Option<String> {
     let prefix = format!("[{name} \"");
-    let mut line_start = 0;
-    loop {
-        if pgn[line_start..].starts_with(&prefix) {
-            let value_start = line_start + prefix.len();
-            if let Some(quote) = pgn[value_start..].find('"') {
-                let end = value_start + quote;
-                if pgn[end + 1..].starts_with(']') {
-                    return Some(pgn[value_start..end].to_string());
-                }
+    pgn.lines().find_map(|line| {
+        let mut chars = line.strip_prefix(&prefix)?.chars();
+        let mut value = String::new();
+        loop {
+            match chars.next()? {
+                '"' => return chars.as_str().starts_with(']').then_some(value),
+                '\\' => match chars.next()? {
+                    escaped @ ('"' | '\\') => value.push(escaped),
+                    other => {
+                        value.push('\\');
+                        value.push(other);
+                    }
+                },
+                other => value.push(other),
             }
         }
-        {
-            let newline = pgn[line_start..].find('\n')?;
-            line_start += newline + 1
-        }
-    }
+    })
 }
 
 /// Every chapter of a study, with variations, comments and
@@ -184,14 +201,9 @@ pub async fn lichess_study_chapters(
                 .into_iter()
                 .take(MAX_CHAPTERS)
                 .enumerate()
-                .map(|(index, pgn)| {
-                    let name = tag_value(&pgn, "ChapterName")
-                        .or_else(|| tag_value(&pgn, "Event"))
-                        .unwrap_or_else(|| format!("Chapter {}", index + 1));
-                    ChapterInput {
-                        name: js::slice_utf16(&name, 120).to_string(),
-                        pgn,
-                    }
+                .map(|(index, pgn)| ChapterInput {
+                    name: chapter_name(&pgn, index),
+                    pgn,
                 })
                 .collect())
         })
@@ -231,11 +243,8 @@ pub async fn public_study_chapter(
         .into_iter()
         .next()
         .ok_or_else(|| CoreError::new("That study has no chapter to open."))?;
-    let name = tag_value(&pgn, "ChapterName")
-        .or_else(|| tag_value(&pgn, "Event"))
-        .unwrap_or_else(|| "Chapter 1".into());
     Ok(ChapterInput {
-        name: js::slice_utf16(&name, 120).to_string(),
+        name: chapter_name(&pgn, 0),
         pgn,
     })
 }
@@ -308,12 +317,14 @@ fn imported_all(imported: &Value, games: usize) -> CoreResult<()> {
     Ok(())
 }
 
-/// The lock one study's uploads take turns on, by account and study; kept while one is held.
-fn upload_turn(account: &str, study: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+/// The lock one study's uploads take turns on, whichever account uploads; kept while one is
+/// held. Keyed by account too, two collaborators' uploads of one study both found the baseline,
+/// and the later replaced the first's edit while both said they succeeded.
+fn upload_turn(study: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
     static TURNS: std::sync::Mutex<
         std::collections::BTreeMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>,
     > = std::sync::Mutex::new(std::collections::BTreeMap::new());
-    let key = format!("{}/{study}", account.to_lowercase());
+    let key = study.to_string();
     let mut turns = TURNS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -338,7 +349,7 @@ pub async fn sync_lichess_study(
     // One upload of a study at a time, from its check of the cloud copy to the copy it answers:
     // two windows' uploads both found the copy they started from and the later one replaced the
     // first, which also said it succeeded.
-    let turn = upload_turn(&request.account, &request.study_id);
+    let turn = upload_turn(&request.study_id);
     let _turn = turn.lock().await;
     let before = valid_chapters(&request.baseline)?;
     let after = valid_chapters(&request.pgn)?;
@@ -680,5 +691,23 @@ mod tests {
         let undated = study_metadata(&serde_json::json!({ "id": "Study002", "name": "Undated" }))
             .expect("a record without timestamps");
         assert_eq!(undated.updated_at, 0);
+    }
+}
+
+#[cfg(test)]
+mod tag_tests {
+    use super::{chapter_name, study_name};
+
+    /// A title with a quote in it comes escaped: the reader once stopped at the first quote and
+    /// found no title, so a study renamed here was taken for unchanged and its name replaced.
+    #[test]
+    fn titles_with_quotes_are_read_whole() {
+        let pgn = "[Event \"Open \\\"A\\\"\"]\n[StudyName \"My \\\"Best\\\" Lines\"]\n\
+                   [ChapterName \"The \\\"Najdorf\\\"\"]\n\n1. e4 c5 *";
+        assert_eq!(study_name(pgn).as_deref(), Some("My \"Best\" Lines"));
+        assert_eq!(chapter_name(pgn, 0), "The \"Najdorf\"");
+        let unnamed = "[Event \"Open \\\"A\\\"\"]\n\n1. e4 *";
+        assert_eq!(chapter_name(unnamed, 0), "Open \"A\"");
+        assert_eq!(chapter_name("1. e4 *", 2), "Chapter 3");
     }
 }

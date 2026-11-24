@@ -47,6 +47,73 @@ struct Connection {
     effort_refused: bool,
 }
 
+async fn save_connection(
+    database: &std::sync::Arc<crate::store::Database>,
+    connection: &Connection,
+) -> Result<()> {
+    let value = serde_json::to_value(connection)
+        .map_err(|_| CoreError::new("ChatGPT connection could not be saved."))?;
+    database
+        .write_async(move |ctx| crate::store::ai::save_connection(ctx, &value))
+        .await
+}
+
+async fn seal(capabilities: &crate::capabilities::Capabilities, tokens: &Tokens) -> Result<String> {
+    let text = serde_json::to_string(tokens)
+        .map_err(|_| CoreError::new("ChatGPT connection could not be saved."))?;
+    capabilities.encrypt(&text).await
+}
+
+/// A renewal of the tokens and its save, which end together however its caller ends
+/// (`Core::ai_access`).
+struct Renewal {
+    ai: std::sync::Arc<crate::ai::Ai>,
+    capabilities: std::sync::Arc<crate::capabilities::Capabilities>,
+    database: std::sync::Arc<crate::store::Database>,
+    host: std::sync::Arc<dyn crate::host::Host>,
+}
+
+impl Renewal {
+    async fn run(
+        self,
+        mut connection: Connection,
+        tokens: Tokens,
+        client_id: String,
+        now: f64,
+    ) -> std::result::Result<String, Refusal> {
+        let unavailable = |detail: &str| Refusal {
+            problem: Problem::Unavailable,
+            detail: detail.to_string(),
+        };
+        match self.ai.refresh(&tokens, &client_id, now).await {
+            Ok(renewed) => {
+                connection.sealed = Some(
+                    seal(&self.capabilities, &renewed)
+                        .await
+                        .map_err(|_| unavailable("seal"))?,
+                );
+                save_connection(&self.database, &connection)
+                    .await
+                    .map_err(|_| unavailable("save"))?;
+                Ok(renewed.access)
+            }
+            Err(refusal) => {
+                if refusal.problem == Problem::Connect {
+                    connection.sealed = None;
+                    if let Err(cause) = save_connection(&self.database, &connection).await {
+                        self.host.log(
+                            Level::Warn,
+                            "ai",
+                            &format!("Save failed: {}", cause.message),
+                        );
+                    }
+                }
+                Err(refusal)
+            }
+        }
+    }
+}
+
 fn problem(refusal: Problem) -> AiExplanation {
     AiExplanation::Refused { problem: refusal }
 }
@@ -70,17 +137,11 @@ impl Core {
     }
 
     async fn save_ai_connection(&self, connection: &Connection) -> Result<()> {
-        let value = serde_json::to_value(connection)
-            .map_err(|_| CoreError::new("ChatGPT connection could not be saved."))?;
-        self.database
-            .write_async(move |ctx| crate::store::ai::save_connection(ctx, &value))
-            .await
+        save_connection(&self.database, connection).await
     }
 
     async fn seal_tokens(&self, tokens: &Tokens) -> Result<String> {
-        let text = serde_json::to_string(tokens)
-            .map_err(|_| CoreError::new("ChatGPT connection could not be saved."))?;
-        self.capabilities.encrypt(&text).await
+        seal(&self.capabilities, tokens).await
     }
 
     /// A usable access token, renewed when due. A sign-in OpenAI ended is forgotten.
@@ -89,8 +150,10 @@ impl Core {
             problem: Problem::Unavailable,
             detail: detail.to_string(),
         };
-        let _renewing = self.ai.refreshing.lock().await;
-        let mut connection = self
+        let renewing = std::sync::Arc::clone(&self.ai.refreshing)
+            .lock_owned()
+            .await;
+        let connection = self
             .ai_connection()
             .await
             .map_err(|_| unavailable("read"))?;
@@ -112,32 +175,24 @@ impl Core {
         if tokens.fresh(now) {
             return Ok(tokens.access);
         }
-        match self.ai.refresh(&tokens, &client_id, now).await {
-            Ok(renewed) => {
-                connection.sealed = Some(
-                    self.seal_tokens(&renewed)
-                        .await
-                        .map_err(|_| unavailable("seal"))?,
-                );
-                self.save_ai_connection(&connection)
-                    .await
-                    .map_err(|_| unavailable("save"))?;
-                Ok(renewed.access)
-            }
-            Err(refusal) => {
-                if refusal.problem == Problem::Connect {
-                    connection.sealed = None;
-                    if let Err(cause) = self.save_ai_connection(&connection).await {
-                        self.host.log(
-                            Level::Warn,
-                            "ai",
-                            &format!("Save failed: {}", cause.message),
-                        );
-                    }
-                }
-                Err(refusal)
-            }
-        }
+        let renewal = Renewal {
+            ai: std::sync::Arc::clone(&self.ai),
+            capabilities: std::sync::Arc::clone(&self.capabilities),
+            database: std::sync::Arc::clone(&self.database),
+            host: std::sync::Arc::clone(&self.host),
+        };
+        // On its own task, holding the lock until it is saved: OpenAI rotates the refresh token
+        // as it answers, so a caller that went away before the save (a closed window) left the
+        // profile the used-up token, and the next access ended the sign-in.
+        let Some(renewing) = self.ai.renew(async move {
+            let _renewing = renewing;
+            renewal.run(connection, tokens, client_id, now).await
+        }) else {
+            return Err(unavailable("closing"));
+        };
+        renewing
+            .await
+            .unwrap_or_else(|_| Err(unavailable("stopped")))
     }
 
     /// Signs a ChatGPT account in through the browser.

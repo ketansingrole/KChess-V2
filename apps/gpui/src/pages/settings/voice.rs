@@ -29,11 +29,27 @@ pub(super) struct MicTest {
 impl SettingsPage {
     /// Open the microphone and show its loudness, or close it again.
     pub(super) fn toggle_mic_test(&mut self, cx: &mut Context<Self>) {
-        if self.mic_test.is_some() {
+        if self.mic_test.is_some() || self.mic_opening.is_some() {
             return self.stop_mic_test(cx);
         }
         self.mic_error = None;
-        match capture::start(cx) {
+        // The microphone answers off the main thread (`Opening::wait`): a slow one froze every
+        // window while it opened.
+        let opening = capture::start(cx);
+        self.mic_opening = Some(cx.spawn(async move |this, cx| {
+            let opened = cx.background_spawn(async move { opening.wait() }).await;
+            this.update(cx, |this, cx| this.mic_opened(opened, cx)).ok();
+        }));
+        cx.notify();
+    }
+
+    fn mic_opened(
+        &mut self,
+        opened: Result<(Capture, capture::ChunkReceiver), CaptureError>,
+        cx: &mut Context<Self>,
+    ) {
+        self.mic_opening = None;
+        match opened {
             Ok((capture, mut chunks)) => {
                 let pump = cx.spawn(async move |this, cx| {
                     while let Some(chunk) = chunks.next().await {
@@ -102,7 +118,7 @@ impl SettingsPage {
 
     /// Release the microphone (leaving the section or the page).
     pub fn stop_mic_test(&mut self, cx: &mut Context<Self>) {
-        if self.mic_test.take().is_some() {
+        if self.mic_test.take().is_some() | self.mic_opening.take().is_some() {
             cx.notify();
         }
     }
@@ -114,6 +130,8 @@ impl SettingsPage {
         palette: &Palette,
     ) -> Div {
         let test = self.mic_test.as_ref();
+        // Opening counts as running: Stop gives the microphone up before it answers.
+        let running = test.is_some() || self.mic_opening.is_some();
         let heard = test.and_then(|test| capture::heard(test.loudest, test.chunks));
         let status: Option<SharedString> = match (&self.mic_error, test, heard) {
             (Some(error), _, _) => Some(error.clone()),
@@ -243,12 +261,12 @@ impl SettingsPage {
                 h_flex().child(
                     Button::new("voice-mic-test")
                         .outline()
-                        .icon(if test.is_some() {
+                        .icon(if running {
                             icon("square")
                         } else {
                             icon("audio-lines")
                         })
-                        .label(if test.is_some() { "Stop" } else { "Start test" })
+                        .label(if running { "Stop" } else { "Start test" })
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_mic_test(cx))),
                 ),
                 None,

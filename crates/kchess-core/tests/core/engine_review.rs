@@ -574,6 +574,11 @@ async fn cancelling_keeps_the_finished_quick_pass_and_is_not_complete() {
         (rig.host.last_status()?.current.is_none()).then_some(())
     })
     .await;
+    // Named as cancelled: a command line waiting for it (`kchess-cli review`) waited for ever.
+    assert_eq!(
+        rig.host.last_status().and_then(|status| status.cancelled),
+        Some(key.clone())
+    );
     let stored = rig.store.review(&key).expect("the partial review is kept");
     assert!(!stored.complete, "an interrupted review is never complete");
     assert!(stored.evals.iter().all(Option::is_some));
@@ -997,6 +1002,11 @@ async fn restarting_the_review_engine_stops_the_review_and_its_engine() {
     })
     .await;
     assert!(rig.host.complete_updates().is_empty());
+    // Named as stopped: a command line waiting for it waited for ever.
+    assert_eq!(
+        rig.host.last_status().and_then(|status| status.cancelled),
+        Some(key_of(START, &SCHOLARS))
+    );
     rig.reviews.stop_reviews().await;
 }
 
@@ -1019,6 +1029,96 @@ async fn a_failed_review_closes_the_engine_left_open() {
         .expect("the request");
     wait_until(WAIT, "the failed review", || rig.host.last_status()?.failed).await;
     assert!(rig.recording.logged("Engine stopped"), "the engine closed");
+    rig.reviews.stop_reviews().await;
+}
+
+/// A review whose stored copy cannot be read once its turn comes fails, said with its key, so
+/// whoever waits for it (`kchess-cli review`) stops waiting: it was dropped with a log line.
+#[tokio::test]
+async fn a_review_whose_store_fails_as_it_starts_is_reported_failed() {
+    let rig = rig("review", "store-fails", false, "off", true);
+    *rig.host.busy.lock().expect("busy") = Some(Pause::Online);
+    rig.reviews
+        .request_review(request(&SCHOLARS))
+        .await
+        .expect("the request");
+    wait_until(WAIT, "the review queued", || {
+        (rig.reviews.review_status().waiting == 1).then_some(())
+    })
+    .await;
+    rig.store
+        .database
+        .write(|c| {
+            c.db.execute_batch("ALTER TABLE reviews RENAME TO reviews_gone")
+                .map_err(|cause| kchess_contracts::CoreError::new(cause.to_string()))
+        })
+        .expect("the store breaks");
+    *rig.host.busy.lock().expect("busy") = None;
+    rig.reviews.reviews_changed();
+    let failed = wait_until(WAIT, "the failed review", || rig.host.last_status()?.failed).await;
+    assert_eq!(failed.key, key_of(START, &SCHOLARS));
+    rig.reviews.stop_reviews().await;
+}
+
+/// Two requested reviews that both fail before the queue reports are each said failed, by
+/// key: the status held one failure, and the second replaced the first unsaid, so whoever
+/// waited for the first (`kchess-cli review`) waited for good.
+#[tokio::test]
+async fn each_failed_review_is_said_failed() {
+    let rig = rig("review", "each-failed", false, "off", true);
+    rig.host.settings.lock().expect("settings").engine_path = "/no/such/engine".into();
+    *rig.host.busy.lock().expect("busy") = Some(Pause::Online);
+    let second = ["d2d4", "d7d5"];
+    for line in [&SCHOLARS[..], &second[..]] {
+        rig.reviews
+            .request_review(request(line))
+            .await
+            .expect("the request");
+    }
+    wait_until(WAIT, "both reviews queued", || {
+        (rig.reviews.review_status().waiting == 2).then_some(())
+    })
+    .await;
+    *rig.host.busy.lock().expect("busy") = None;
+    rig.reviews.reviews_changed();
+    let failed = || -> Vec<String> {
+        let mut keys: Vec<String> = Vec::new();
+        for status in rig.host.statuses.lock().expect("statuses").iter() {
+            if let Some(failed) = &status.failed
+                && !keys.contains(&failed.key)
+            {
+                keys.push(failed.key.clone());
+            }
+        }
+        keys
+    };
+    wait_until(WAIT, "the second failure", || {
+        failed().contains(&key_of(START, &second)).then_some(())
+    })
+    .await;
+    assert!(
+        failed().contains(&key_of(START, &SCHOLARS)),
+        "{:?}",
+        failed()
+    );
+    rig.reviews.stop_reviews().await;
+}
+
+/// A requested review the engine leaves without scores is said failed, by key, and what it
+/// found is kept: it was only skipped, so `kchess-cli review` waited for good.
+#[tokio::test]
+async fn a_review_left_without_scores_is_said_failed() {
+    let rig = rig("scoreless", "scoreless", false, "off", true);
+    rig.reviews
+        .request_review(request(&["e2e4", "e7e5"]))
+        .await
+        .expect("the request");
+    let failed = wait_until(WAIT, "the failed review", || rig.host.last_status()?.failed).await;
+    assert_eq!(failed.key, key_of(START, &["e2e4", "e7e5"]));
+    assert!(
+        rig.host.complete_updates().is_empty(),
+        "nothing complete without scores"
+    );
     rig.reviews.stop_reviews().await;
 }
 
