@@ -71,36 +71,64 @@ pub(super) fn names(table: &str, words: &str, worded: bool, args: &mut Vec<SqlVa
     format!("SELECT id FROM {table} WHERE {}", clauses.join(" AND "))
 }
 
-/// The `WHERE` clause of a search, and its arguments.
-fn filters(query: &GameDbQuery, visible: i64, worded: bool) -> (String, Vec<SqlValue>) {
-    let mut args = vec![SqlValue::Integer(visible)];
-    let mut clauses = vec!["g.import_id <= ?1".to_string()];
+/// The clauses picking out the games of `query`'s player (on its side), opponent and event, on
+/// the games' columns as `{games}white` and so on (`games` is `g.` or nothing); their arguments
+/// join `args`.
+pub(super) fn named(
+    query: &GameDbQuery,
+    worded: bool,
+    args: &mut Vec<SqlValue>,
+    games: &str,
+) -> Vec<String> {
+    let mut clauses = Vec::new();
+    let side = query.side.unwrap_or(GameDbSide::Either);
     if let Some(player) = &query.player {
-        let ids = names("players", player, worded, &mut args);
-        clauses.push(match query.side.unwrap_or(GameDbSide::Either) {
-            GameDbSide::White => format!("g.white IN ({ids})"),
-            GameDbSide::Black => format!("g.black IN ({ids})"),
-            GameDbSide::Either => format!("(g.white IN ({ids}) OR g.black IN ({ids}))"),
+        let ids = names("players", player, worded, args);
+        clauses.push(match side {
+            GameDbSide::White => format!("{games}white IN ({ids})"),
+            GameDbSide::Black => format!("{games}black IN ({ids})"),
+            GameDbSide::Either => {
+                format!("({games}white IN ({ids}) OR {games}black IN ({ids}))")
+            }
         });
         if let Some(opponent) = &query.opponent {
-            let others = names("players", opponent, worded, &mut args);
-            clauses.push(match query.side.unwrap_or(GameDbSide::Either) {
-                GameDbSide::White => format!("g.black IN ({others})"),
-                GameDbSide::Black => format!("g.white IN ({others})"),
+            let others = names("players", opponent, worded, args);
+            clauses.push(match side {
+                GameDbSide::White => format!("{games}black IN ({others})"),
+                GameDbSide::Black => format!("{games}white IN ({others})"),
                 GameDbSide::Either => format!(
-                    "((g.white IN ({ids}) AND g.black IN ({others}))
-                      OR (g.black IN ({ids}) AND g.white IN ({others})))"
+                    "(({games}white IN ({ids}) AND {games}black IN ({others}))
+                      OR ({games}black IN ({ids}) AND {games}white IN ({others})))"
                 ),
             });
         }
     } else if let Some(opponent) = &query.opponent {
-        let others = names("players", opponent, worded, &mut args);
-        clauses.push(format!("(g.white IN ({others}) OR g.black IN ({others}))"));
+        let others = names("players", opponent, worded, args);
+        clauses.push(format!(
+            "({games}white IN ({others}) OR {games}black IN ({others}))"
+        ));
     }
     if let Some(event) = &query.event {
-        let ids = names("events", event, worded, &mut args);
-        clauses.push(format!("g.event IN ({ids})"));
+        let ids = names("events", event, worded, args);
+        clauses.push(format!("{games}event IN ({ids})"));
     }
+    clauses
+}
+
+/// The clause keeping the games of `query`'s result.
+pub(super) fn result(query: &GameDbQuery) -> Option<&'static str> {
+    query.result.map(|result| match result {
+        GameDbResult::White => "g.result = 1",
+        GameDbResult::Draw => "g.result = 0",
+        GameDbResult::Black => "g.result = -1",
+    })
+}
+
+/// The `WHERE` clause of a search, and its arguments.
+fn filters(query: &GameDbQuery, visible: i64, worded: bool) -> (String, Vec<SqlValue>) {
+    let mut args = vec![SqlValue::Integer(visible)];
+    let mut clauses = vec!["g.import_id <= ?1".to_string()];
+    clauses.extend(named(query, worded, &mut args, "g."));
     if let Some(year) = query.year_from {
         args.push(SqlValue::Integer(i64::from(year)));
         clauses.push(format!("g.year >= ?{}", args.len()));
@@ -114,16 +142,7 @@ fn filters(query: &GameDbQuery, visible: i64, worded: bool) -> (String, Vec<SqlV
         let n = args.len();
         clauses.push(format!("g.low_elo >= ?{n}"));
     }
-    if let Some(result) = query.result {
-        clauses.push(
-            match result {
-                GameDbResult::White => "g.result = 1",
-                GameDbResult::Draw => "g.result = 0",
-                GameDbResult::Black => "g.result = -1",
-            }
-            .to_string(),
-        );
-    }
+    clauses.extend(result(query).map(str::to_string));
     if let Some(eco) = &query.eco {
         args.push(SqlValue::Text(format!("{eco}%")));
         clauses.push(format!("g.eco LIKE ?{}", args.len()));

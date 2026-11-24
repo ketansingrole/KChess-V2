@@ -4456,6 +4456,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kchess-database"
+version = "2026.11.9"
+dependencies = [
+ "gpui-kit",
+ "kchess-app",
+ "kchess-board",
+ "kchess-contracts",
+ "kchess-hack",
+ "kchess-nav",
+ "kchess-ui",
+ "serde",
+]
+
+[[package]]
 name = "kchess-delta"
 version = "2026.11.9"
 dependencies = [
@@ -4514,6 +4528,7 @@ dependencies = [
  "kchess-board",
  "kchess-contracts",
  "kchess-core",
+ "kchess-database",
  "kchess-delta",
  "kchess-domain",
  "kchess-games",

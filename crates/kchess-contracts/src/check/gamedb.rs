@@ -9,6 +9,7 @@ use crate::types::{GameDbQuery, GameDbResult, GameDbSide, GameDbSort};
 
 const DATABASE: &str = "Invalid database.";
 const QUERY: &str = "Invalid game search.";
+const POSITION: &str = "Invalid position.";
 
 /// A database's id, as `gameDbStatus` lists it: 1 to 40 lowercase letters, digits and dashes.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -110,6 +111,7 @@ struct SentQuery {
     min_elo: Option<u64>,
     result: Option<GameDbResult>,
     eco: Option<String>,
+    position: Option<String>,
     sort: Option<GameDbSort>,
     offset: u64,
     limit: u64,
@@ -131,6 +133,7 @@ impl Validate for GameDbQuery {
             ["database"] => Some(DATABASE),
             ["yearFrom" | "yearTo"] => Some("Invalid year."),
             ["minElo"] => Some("Invalid rating."),
+            ["position"] => Some(POSITION),
             _ => Some(QUERY),
         })?;
         ensure(
@@ -153,6 +156,9 @@ impl Validate for GameDbQuery {
                 && chars.all(|c| c.is_ascii_digit());
             ensure(valid, Some("Invalid ECO code."), "", String::new)?;
         }
+        if let Some(position) = &sent.position {
+            analysis_position(position, None).map_err(|_| Refusal::from(POSITION))?;
+        }
         within(sent.offset, 0, 10_000_000, Some(QUERY), "")?;
         within(sent.limit, 1, 200, Some(QUERY), "")?;
         let year = |year: Option<i64>| year.and_then(|year| i32::try_from(year).ok());
@@ -167,6 +173,7 @@ impl Validate for GameDbQuery {
             min_elo: sent.min_elo.and_then(|elo| u32::try_from(elo).ok()),
             result: sent.result,
             eco,
+            position: sent.position,
             sort: sent.sort,
             offset: u32::try_from(sent.offset).unwrap_or(u32::MAX),
             limit: u32::try_from(sent.limit).unwrap_or(1),
@@ -238,5 +245,21 @@ mod tests {
             refused(json!({"database": "mine", "x": 1, "offset": 0, "limit": 5})),
             QUERY
         );
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let at = check::<GameDbQuery>(sent(
+            json!({"database": "mine", "position": start, "offset": 0, "limit": 5}),
+        ))
+        .unwrap();
+        assert_eq!(at.position.as_deref(), Some(start));
+        for bad in [
+            json!("8/8/8/8/8/8/8/8 w - - 0 1"),
+            json!("nonsense"),
+            json!(3),
+        ] {
+            assert_eq!(
+                refused(json!({"database": "mine", "position": bad, "offset": 0, "limit": 5})),
+                POSITION
+            );
+        }
     }
 }

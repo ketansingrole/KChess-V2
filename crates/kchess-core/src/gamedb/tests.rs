@@ -831,9 +831,15 @@ fn a_position_past_the_tree_is_found_in_every_game_that_reached_it() {
         }
         // Every move each game played from each position, by the position's key and the move.
         let mut every: HashMap<(u64, String), [i64; 3]> = HashMap::new();
-        for (moves, result) in &games {
+        // The games (their White, `P<n>`) that played a move from each position.
+        let mut reached: HashMap<u64, std::collections::BTreeSet<String>> = HashMap::new();
+        for (game, (moves, result)) in games.iter().enumerate() {
             let mut pos = rules::default_position(Variant::Chess);
             for m in moves {
+                reached
+                    .entry(gamedb_key(&pos))
+                    .or_default()
+                    .insert(format!("P{game}"));
                 let counts = every
                     .entry((gamedb_key(&pos), rules::make_uci(m)))
                     .or_default();
@@ -896,6 +902,82 @@ fn a_position_past_the_tree_is_found_in_every_game_that_reached_it() {
                         assert_eq!(filtered.moves, all.moves, "{fen}");
                         assert_eq!(filtered.total, all.total, "{fen}");
                         assert_eq!(filtered.games, all.games, "{fen}");
+                    }
+                    // The games listed with the position are those that played from it, each
+                    // once, in every order, a page at a time, with the other filters applied.
+                    let expected = reached.get(key).cloned().unwrap_or_default();
+                    let wins: std::collections::BTreeSet<String> = expected
+                        .iter()
+                        .filter(|white| {
+                            let game: usize = white[1..].parse().unwrap();
+                            games[game].1 == "1-0"
+                        })
+                        .cloned()
+                        .collect();
+                    let listed = explore::Listed::default();
+                    for (filter, wanted) in [
+                        (GameDbQuery::default(), &expected),
+                        (
+                            GameDbQuery {
+                                opponent: Some("q".into()),
+                                min_elo: Some(1),
+                                ..GameDbQuery::default()
+                            },
+                            &expected,
+                        ),
+                        (
+                            GameDbQuery {
+                                result: Some(GameDbResult::White),
+                                ..GameDbQuery::default()
+                            },
+                            &wins,
+                        ),
+                    ] {
+                        for sort in [GameDbSort::Newest, GameDbSort::Oldest, GameDbSort::Rating] {
+                            let mut pages = Vec::new();
+                            loop {
+                                let page = explore::games_at(
+                                    &db,
+                                    &GameDbQuery {
+                                        database: id.clone(),
+                                        position: Some(fen.clone()),
+                                        sort: Some(sort),
+                                        offset: pages.len() as u32,
+                                        limit: 7,
+                                        ..filter.clone()
+                                    },
+                                    &listed,
+                                    &go,
+                                )
+                                .unwrap();
+                                assert_eq!(page.total as usize, wanted.len(), "{fen}");
+                                if page.games.is_empty() {
+                                    break;
+                                }
+                                pages.extend(page.games);
+                            }
+                            let names: std::collections::BTreeSet<String> =
+                                pages.iter().map(|row| row.white.clone()).collect();
+                            assert_eq!(names.len(), pages.len(), "each game once: {fen}");
+                            assert_eq!(&names, wanted, "{fen}");
+                            let ids: Vec<u64> = pages.iter().map(|row| row.id).collect();
+                            let mut by_id = ids.clone();
+                            by_id.sort_unstable();
+                            match sort {
+                                // Undated: by id.
+                                GameDbSort::Oldest => assert_eq!(ids, by_id),
+                                GameDbSort::Newest => {
+                                    by_id.reverse();
+                                    assert_eq!(ids, by_id);
+                                }
+                                GameDbSort::Rating => assert!(
+                                    pages
+                                        .windows(2)
+                                        .all(|pair| pair[0].white_elo >= pair[1].white_elo),
+                                    "best rated first: {fen}"
+                                ),
+                            }
+                        }
                     }
                     all
                 })

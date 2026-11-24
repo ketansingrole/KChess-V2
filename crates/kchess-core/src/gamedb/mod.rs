@@ -58,6 +58,8 @@ struct Inner {
     dir: PathBuf,
     readers: Mutex<HashMap<String, Arc<Lane>>>,
     running: Mutex<Option<Arc<Running>>>,
+    /// The games the last position search found, for its other pages.
+    listed: Arc<explore::Listed>,
 }
 
 pub struct GameDbService {
@@ -308,6 +310,7 @@ impl GameDbService {
                 dir: config.data_dir.join("databases"),
                 readers: Mutex::new(HashMap::new()),
                 running: Mutex::new(None),
+                listed: Arc::default(),
             }),
         }
     }
@@ -501,10 +504,19 @@ impl GameDbService {
     }
 
     pub async fn games(&self, query: GameDbQuery) -> Result<GameDbPage> {
+        // A search the caller dropped (a newer one replaced it) stops replaying games for nobody.
+        let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
+        let stopped = Arc::clone(&stop.0);
+        let listed = Arc::clone(&self.inner.listed);
         let result = match self.inner.reader(&query.database) {
+            Ok(lane) if query.position.is_some() => {
+                lane.run(move |db| explore::games_at(db, &query, &listed, &stopped))
+                    .await
+            }
             Ok(lane) => lane.run(move |db| search::games(db, &query)).await,
             Err(error) => Err(error),
         };
+        drop(stop);
         self.inner.logged("games", result)
     }
 

@@ -246,11 +246,20 @@ pub use crate::export::{choose_game_file, read_game_file};
 
 /// A PGN or FEN file dropped on the window, from any page: one game or a position opens on the
 /// analysis board, as if pasted into its import; several games are offered as a study, in the
-/// Studies import; anything else is refused with a notice.
+/// Studies import; anything else is refused with a notice. On the Database page a PGN file is
+/// imported into a game database instead.
 pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
     let Some(path) = paths.paths().first().cloned() else {
         return;
     };
+    // On the Database page a PGN file of any size is imported into a game database.
+    let name = path.to_string_lossy().to_ascii_lowercase();
+    if crate::shell::current_page(cx) == Some(crate::pages::Page::Database)
+        && (name.ends_with(".pgn") || name.ends_with(".pgn.zst"))
+    {
+        crate::pages::database::import_dropped(path, cx);
+        return;
+    }
     // Read off the main thread: a file on a stalled network folder froze every window.
     let read = cx.background_spawn(async move { read_game_file(&path) });
     window

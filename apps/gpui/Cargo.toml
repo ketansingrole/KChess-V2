@@ -36,6 +36,8 @@ kchess-nav.workspace = true
 kchess-puzzles.workspace = true
 # The History page (`crates/kchess-history`).
 kchess-history.workspace = true
+# The Database page (`crates/kchess-database`).
+kchess-database.workspace = true
 # The Home page (`crates/kchess-home`).
 kchess-home.workspace = true
 # The Over the board page (`crates/kchess-local`).
@@ -120,6 +122,7 @@ kchess-board = { workspace = true, features = ["test-support"] }
 kchess-puzzles = { workspace = true, features = ["test-support"] }
 # The History page's Lichess list, which the end-to-end tests read.
 kchess-history = { workspace = true, features = ["test-support"] }
+kchess-database = { workspace = true, features = ["test-support"] }
 # The Home page's Lichess activity card, which the end-to-end tests read.
 kchess-home = { workspace = true, features = ["test-support"] }
 # The Over the board page's turned faces and saved game, which the end-to-end tests read.

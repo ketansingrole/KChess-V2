@@ -8,7 +8,7 @@ use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
-use kchess_contracts::check::PgnFilePath;
+use kchess_contracts::check::{DatabaseId, PgnFilePath};
 use kchess_contracts::types::{
     DatabaseInfo, GameDbPhase, GameDbProgress, GameDbStatus, ProfileArea,
 };
@@ -134,6 +134,27 @@ impl GameDb {
                     Ok(_) => this.refresh(cx),
                     // A failed or cancelled import leaves every database as it was.
                     Err(_) if this.cancelling => {}
+                    Err(cause) => this.failed(&cause),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Deletes database `id`; the list follows the core's answer.
+    pub fn delete(&mut self, id: String, cx: &mut Context<Self>) {
+        self.changes += 1;
+        self.error = None;
+        let delete = cx.global::<AppCore>().request(calls::GameDbDelete {
+            database: DatabaseId(id),
+        });
+        cx.spawn(async move |this, cx| {
+            let result = delete.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(status) => this.status = status,
                     Err(cause) => this.failed(&cause),
                 }
                 cx.notify();
