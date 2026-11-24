@@ -260,12 +260,14 @@ async fn a_renewal_whose_caller_went_away_is_still_saved() {
     assert_eq!(status["connected"], true);
     let (gate, gated) = watch::channel(false);
     *renewal_gate.lock().unwrap() = Some(gated);
+    // Counted before the explanation starts: its renewal can reach the fixture before this line
+    // would, and a count taken after it waits for one more renewal that never comes.
+    let asked = fixture.to("/api/accounts/oauth/token").len();
     let explaining = tokio::spawn({
         let core = Arc::clone(&core);
         async move { core.call("aiExplain", vec![request("e1e2")]).await }
     });
     // OpenAI has the old token and renews it; the caller goes before the answer comes.
-    let asked = fixture.to("/api/accounts/oauth/token").len();
     fixture
         .requested("/api/accounts/oauth/token", asked + 1)
         .await;
