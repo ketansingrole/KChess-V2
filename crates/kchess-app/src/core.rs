@@ -456,6 +456,10 @@ mod tests {
             ProfileArea::ViewPreferences => "prefs.rs",
             ProfileArea::Broadcasts => "kchess-watch broadcasts.rs: the alerts shown",
             ProfileArea::Notifications => "apps/gpui notifications/centre.rs",
+            ProfileArea::GameDb => {
+                "ignored: no page shows the game databases yet; the Database page will read \
+                 them again"
+            }
         }
     }
 
