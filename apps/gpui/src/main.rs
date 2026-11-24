@@ -124,10 +124,15 @@ fn main() {
 /// The models, from the profile the core has read (its settings and library read once for
 /// them), then the window.
 fn start_models(profile: startup::Profile, cx: &mut App) {
-    let startup::Profile { settings, library } = profile;
+    let startup::Profile {
+        settings,
+        library,
+        themes,
+        view_preferences,
+    } = profile;
     let library = &library;
-    settings::init(settings, cx);
-    prefs::init(cx);
+    settings::init(settings, themes, cx);
+    prefs::start(view_preferences, cx);
     kchess_app::notifications::init(cx);
     let profile_dir = profile::data_dir().unwrap_or_default();
     interface_zoom::init(&profile_dir, cx);

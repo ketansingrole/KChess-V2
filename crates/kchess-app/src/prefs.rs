@@ -175,11 +175,17 @@ where
 
 /// Read the saved preferences before the window opens.
 pub fn init(cx: &mut App) {
-    let values = match cx
+    let values = cx
         .global::<AppCore>()
         .bridge
-        .request_now(calls::ViewPreferences {})
-    {
+        .request_now(calls::ViewPreferences {});
+    start(values, cx);
+}
+
+/// Start from the saved preferences, as the app's startup read them (`startup::check`); ones
+/// that could not be read start from the defaults.
+pub fn start(values: Result<Map<String, Value>, kchess_contracts::CoreError>, cx: &mut App) {
+    let values = match values {
         Ok(values) => values,
         Err(cause) => {
             crate::log::write(

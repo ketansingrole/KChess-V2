@@ -141,19 +141,17 @@ fn defaults() -> Settings {
     }
 }
 
-/// Starts from `settings`, as the app's startup read them from the core (`startup::check`, which
-/// refuses to start without them), and reads the custom themes. Both are in before the window
-/// opens, so it opens in the chosen theme.
-pub fn init(settings: Settings, cx: &mut App) {
-    let bridge = std::sync::Arc::clone(&cx.global::<AppCore>().bridge);
-    let report = bridge
-        .request_now(CustomThemes {})
-        .warn_on_err()
-        .unwrap_or_else(|| CustomThemeReport {
-            themes: Vec::new(),
-            dir: String::new(),
-            problems: Vec::new(),
-        });
+/// Starts from `settings` and the custom themes, as the app's startup read them from the core
+/// (`startup::check`, which refuses to start without the settings). Both are in before the window
+/// opens, so it opens in the chosen theme. The themes are read with the rest: read here, they kept
+/// the main thread waiting after the startup screen's Try again (2026-11-24). Themes that could
+/// not be read leave only the built-in ones.
+pub fn init(settings: Settings, themes: Result<CustomThemeReport, CoreError>, cx: &mut App) {
+    let report = themes.warn_on_err().unwrap_or_else(|| CustomThemeReport {
+        themes: Vec::new(),
+        dir: String::new(),
+        problems: Vec::new(),
+    });
     let (stored, results) = mpsc::unbounded();
     let saving = Saving {
         core: cx.global::<AppCore>().clone(),
@@ -590,7 +588,12 @@ mod tests {
             crate::tests::start_core(cx)
         });
         let entity = cx.update(|cx| {
-            super::init(defaults(), cx);
+            let themes = kchess_contracts::types::CustomThemeReport {
+                themes: Vec::new(),
+                dir: String::new(),
+                problems: Vec::new(),
+            };
+            super::init(defaults(), Ok(themes), cx);
             cx.global::<super::SettingsHandle>().0.clone()
         });
         let base = defaults();
