@@ -541,11 +541,13 @@ fn the_tree_matches_a_replay_of_random_games() {
                 kchess_domain::pgn::pgn_from_san(&sans).trim_end()
             ));
         }
+        // An unfinished game is in the database but not in its tree.
+        pgn.push_str("[White \"Live\"]\n[Black \"Game\"]\n[Result \"*\"]\n\n1. e4 e5 2. Nf3 *\n\n");
         let id = write_database(profile.path(), "R", &pgn).unwrap();
         let db =
             schema::open_read(&profile.path().join("databases").join(format!("{id}.kdb"))).unwrap();
         let rows: HashMap<(u64, u16), u64> = db
-            .prepare("SELECT key, mv, draws FROM tree")
+            .prepare("SELECT key, mv, draws FROM tree UNION ALL SELECT key, mv, 1 FROM lone")
             .unwrap()
             .query_map([], |row| {
                 Ok((

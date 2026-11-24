@@ -84,6 +84,12 @@ const MIGRATIONS: &[&str] = &[r#"CREATE TABLE meta (
     last_game INTEGER NOT NULL,
     last_date INTEGER NOT NULL,
     PRIMARY KEY (key, mv)
+  ) WITHOUT ROWID;
+  CREATE TABLE lone (
+    key INTEGER NOT NULL,
+    mv INTEGER NOT NULL,
+    game INTEGER NOT NULL,
+    PRIMARY KEY (key, mv)
   ) WITHOUT ROWID;"#];
 
 /// The games' indexes, built after a new database's games are in: building them once is much

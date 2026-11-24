@@ -20,7 +20,7 @@ use super::tree::{Stats, TreeBuilder};
 use crate::store::sql::{Sql as _, transaction};
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::DatabaseSource;
-use kchess_domain::gamedb::{self, Stored};
+use kchess_domain::gamedb::{self, Outcome, Stored};
 use kchess_domain::pgn::{PgnItem, PgnReader};
 
 /// Games written to the file in one transaction.
@@ -204,8 +204,13 @@ fn insert_game(
     Ok(db.last_insert_rowid())
 }
 
-/// The tree rows of one game: each of its first `depth` positions and the move played there.
+/// The tree rows of one finished game: each of its first `depth` positions and the move played
+/// there.
 fn add_to_tree(tree: &mut TreeBuilder, id: i64, stored: &Stored, depth: u32) -> Result<()> {
+    // An unfinished game counts in no result, so the tree leaves it out, as Lichess's does.
+    if stored.outcome == Outcome::Unknown {
+        return Ok(());
+    }
     let Some(start) = gamedb::start_of(stored.fen.as_deref()) else {
         return Ok(());
     };

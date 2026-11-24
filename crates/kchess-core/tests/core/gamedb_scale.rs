@@ -53,10 +53,11 @@ async fn gamedb_scale() {
         let host = host.clone();
         tokio::spawn(async move {
             let pid = std::process::id().to_string();
-            let run = |program: &str, args: &[&str]| {
-                std::process::Command::new(program)
+            let run = async |program: &str, args: &[&str]| {
+                tokio::process::Command::new(program)
                     .args(args)
                     .output()
+                    .await
                     .ok()
                     .and_then(|out| String::from_utf8(out.stdout).ok())
                     .unwrap_or_default()
@@ -65,12 +66,14 @@ async fn gamedb_scale() {
             loop {
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 let rss = run("ps", &["-o", "rss=", "-p", &pid])
+                    .await
                     .trim()
                     .parse::<f64>()
                     .unwrap_or(0.0)
                     / 1024.0;
                 // "zsh [91370]: 64-bit    Footprint: 1920 KB (16384 bytes per page)"
                 let footprint = run("footprint", &[&pid])
+                    .await
                     .split("Footprint: ")
                     .nth(1)
                     .and_then(|rest| {
@@ -150,12 +153,15 @@ async fn gamedb_scale() {
     };
     let lone = by_games("white + draws + black = 1");
     let none = by_games("white + draws + black = 0");
+    let lone_rows: i64 = db
+        .query_row("SELECT COUNT(*) FROM lone", [], |r| r.get(0))
+        .unwrap_or(0);
     println!(
-        "tree rows of one game: {lone} ({:.1}%), of none: {none}, of more: {}",
+        "tree rows of one game: {lone} ({:.1}%), of none: {none}, of more: {}; lone rows: {lone_rows}",
         100.0 * lone as f64 / tree_rows.max(1) as f64,
         tree_rows - lone - none
     );
-    for table in ["games", "tree", "players", "events"] {
+    for table in ["games", "tree", "lone", "players", "events"] {
         let bytes: Option<i64> = db
             .query_row(
                 "SELECT SUM(pgsize) FROM dbstat WHERE name = ?1",

@@ -13,7 +13,7 @@ use std::collections::{BinaryHeap, HashMap};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension as _, params};
 
 use crate::store::sql::Sql as _;
 use kchess_contracts::error::{CoreError, Result};
@@ -164,8 +164,15 @@ impl TreeBuilder {
         })
     }
 
+    /// One finished game's move from a position. A lone row is read back from its one game, so a
+    /// game that counts in no result is never added.
     pub fn add(&mut self, key: u64, mv: u16, stats: &Stats) -> Result<()> {
-        self.rows.entry((key, mv)).or_default().add(stats);
+        // A row starts as its first game, not as an empty row: an unrated game's rating (0)
+        // never beats an empty row's, so it would never become the row's best game.
+        self.rows
+            .entry((key, mv))
+            .and_modify(|row| row.add(stats))
+            .or_insert(*stats);
         if self.rows.len() >= self.capacity {
             self.spill()?;
         }
@@ -247,50 +254,103 @@ impl TreeBuilder {
         Ok(())
     }
 
-    /// Writes the tree into `db`: inserted into an empty table, or added to the rows an earlier
-    /// import left. The caller holds the transaction, if any.
+    /// Writes the tree into `db`: a move only one game played as that game's `lone` row, the
+    /// rest as `tree` rows. Adding to an earlier import's rows sums them, a `lone` row becoming a
+    /// `tree` row once a second game plays its move. The caller holds the transaction, if any.
     pub fn write(self, db: &Connection, adding: bool, cancelled: &dyn Fn() -> bool) -> Result<u64> {
-        let sql = if adding {
-            "INSERT INTO tree VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-             ON CONFLICT (key, mv) DO UPDATE SET
-               white = white + excluded.white, draws = draws + excluded.draws,
-               black = black + excluded.black, elo_sum = elo_sum + excluded.elo_sum,
-               elo_n = elo_n + excluded.elo_n,
-               best_game = CASE WHEN excluded.best_elo > best_elo
-                 THEN excluded.best_game ELSE best_game END,
-               best_elo = MAX(best_elo, excluded.best_elo),
-               last_game = CASE WHEN excluded.last_date >= last_date
-                 THEN excluded.last_game ELSE last_game END,
-               last_date = MAX(last_date, excluded.last_date)"
-        } else {
-            "INSERT INTO tree VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
-        };
-        let mut insert = db.prepare_cached(sql).sql()?;
         let mut written = 0u64;
         self.merged(|key, mv, s| {
             if written.is_multiple_of(65_536) && cancelled() {
                 return Err(CoreError::new("Import cancelled."));
             }
-            insert
-                .execute(params![
-                    key as i64,
-                    mv,
-                    s.white,
-                    s.draws,
-                    s.black,
-                    s.elo_sum as i64,
-                    s.elo_n,
-                    s.best_game,
-                    s.best_elo,
-                    s.last_game,
-                    s.last_date
-                ])
-                .sql()?;
             written += 1;
+            if !adding {
+                return insert(db, key, mv, s);
+            }
+            let earlier: Option<i64> = db
+                .prepare_cached("DELETE FROM lone WHERE key = ?1 AND mv = ?2 RETURNING game")
+                .sql()?
+                .query_row(params![key as i64, mv], |row| row.get(0))
+                .optional()
+                .sql()?;
+            if let Some(game) = earlier {
+                let mut sum = game_stats(db, game)?;
+                sum.add(s);
+                return insert(db, key, mv, &sum);
+            }
+            let added = db
+                .prepare_cached(
+                    "UPDATE tree SET
+                       white = white + ?3, draws = draws + ?4, black = black + ?5,
+                       elo_sum = elo_sum + ?6, elo_n = elo_n + ?7,
+                       best_game = CASE WHEN ?9 > best_elo THEN ?8 ELSE best_game END,
+                       best_elo = MAX(best_elo, ?9),
+                       last_game = CASE WHEN ?11 >= last_date THEN ?10 ELSE last_game END,
+                       last_date = MAX(last_date, ?11)
+                     WHERE key = ?1 AND mv = ?2",
+                )
+                .sql()?
+                .execute(row(key, mv, s))
+                .sql()?;
+            if added == 0 {
+                insert(db, key, mv, s)?;
+            }
             Ok(())
         })?;
         Ok(written)
     }
+}
+
+/// A row's values in the `tree` table's order.
+fn row(key: u64, mv: u16, s: &Stats) -> impl rusqlite::Params {
+    (
+        key as i64,
+        mv,
+        s.white,
+        s.draws,
+        s.black,
+        s.elo_sum as i64,
+        s.elo_n,
+        s.best_game,
+        s.best_elo,
+        s.last_game,
+        s.last_date,
+    )
+}
+
+/// A new row: `lone` when one game played the move, else `tree`.
+fn insert(db: &Connection, key: u64, mv: u16, s: &Stats) -> Result<()> {
+    if s.games() == 1 {
+        db.prepare_cached("INSERT INTO lone VALUES (?1, ?2, ?3)")
+            .sql()?
+            .execute(params![key as i64, mv, s.best_game])
+            .sql()?;
+    } else {
+        db.prepare_cached("INSERT INTO tree VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)")
+            .sql()?
+            .execute(row(key, mv, s))
+            .sql()?;
+    }
+    Ok(())
+}
+
+/// What one game counts in the tree, read from its row as the import counted it.
+fn game_stats(db: &Connection, game: i64) -> Result<Stats> {
+    db.prepare_cached("SELECT result, rating, date_key FROM games WHERE id = ?1")
+        .sql()?
+        .query_row([game], |row| {
+            Ok(lone_stats(game, row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .sql()
+}
+
+fn lone_stats(game: i64, result: Option<i64>, rating: Option<i64>, date: i64) -> Stats {
+    Stats::of(
+        game,
+        Outcome::from_score(result),
+        rating.and_then(|r| u16::try_from(r).ok()),
+        u32::try_from(date).unwrap_or(0),
+    )
 }
 
 /// Orders the heap by position alone; equal positions from different runs are added together.
@@ -350,6 +410,23 @@ pub fn moves(db: &Connection, key: u64) -> Result<Vec<TreeMove>> {
         .sql()?
         .collect::<rusqlite::Result<Vec<_>>>()
         .sql()?;
+    let mut lone = db
+        .prepare_cached(
+            "SELECT l.mv, l.game, g.result, g.rating, g.date_key
+             FROM lone l JOIN games g ON g.id = l.game WHERE l.key = ?1",
+        )
+        .sql()?;
+    let lone = lone
+        .query_map([key as i64], |row| {
+            Ok(TreeMove {
+                mv: row.get(0)?,
+                stats: lone_stats(row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?),
+            })
+        })
+        .sql()?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .sql()?;
+    moves.extend(lone);
     moves.sort_by_key(|m| (Reverse(m.stats.games()), m.mv));
     Ok(moves)
 }
@@ -367,7 +444,7 @@ mod tests {
 
     fn all(db: &Connection) -> HashMap<(u64, u16), Stats> {
         let mut rows = HashMap::new();
-        let mut query = db.prepare("SELECT DISTINCT key FROM tree").unwrap();
+        let mut query = db.prepare("SELECT key FROM tree UNION SELECT key FROM lone").unwrap();
         let keys: Vec<i64> = query
             .query_map([], |row| row.get(0))
             .unwrap()
@@ -387,26 +464,32 @@ mod tests {
     fn runs_merge_to_what_one_map_holds() {
         random::check(20, |rng| {
             let dir = tempfile::tempdir().unwrap();
+            let db = database(dir.path());
             let entries: Vec<(u64, u16, Stats)> = (0..400)
                 .map(|game| {
                     let outcome = *rng
-                        .pick(&[
-                            Outcome::White,
-                            Outcome::Draw,
-                            Outcome::Black,
-                            Outcome::Unknown,
-                        ])
+                        .pick(&[Outcome::White, Outcome::Draw, Outcome::Black])
                         .unwrap();
                     let rating = rng.chance(70).then(|| 1500 + rng.below(1300) as u16);
-                    let stats = Stats::of(game, outcome, rating, 20000101 + rng.below(9000) as u32);
+                    let date = 20000101 + rng.below(9000) as u32;
+                    // A move only this game played is read back from its row.
+                    db.execute(
+                        "INSERT INTO games (id, import_id, white, black, date_key, rating, result,
+                           plies, moves) VALUES (?1, 1, 1, 1, ?2, ?3, ?4, 0, x'')",
+                        params![game, date, rating, outcome.score()],
+                    )
+                    .unwrap();
+                    let stats = Stats::of(game, outcome, rating, date);
                     (rng.below(40) as u64, rng.below(5) as u16, stats)
                 })
                 .collect();
             let mut expected: HashMap<(u64, u16), Stats> = HashMap::new();
             for (key, mv, stats) in &entries {
-                expected.entry((*key, *mv)).or_default().add(stats);
+                expected
+                    .entry((*key, *mv))
+                    .and_modify(|row| row.add(stats))
+                    .or_insert(*stats);
             }
-            let db = database(dir.path());
             let (first, second) = entries.split_at(150);
             let mut builder = TreeBuilder::new(dir.path(), 1 + rng.below(30)).unwrap();
             for (key, mv, stats) in first {
@@ -432,8 +515,16 @@ mod tests {
                         stats.elo_n
                     )
                 );
-                assert_eq!(row.best_elo, stats.best_elo);
-                assert_eq!(row.last_date, stats.last_date);
+                // Unrated games included: the best and latest games are games that were played.
+                assert_eq!(
+                    (row.best_game, row.best_elo, row.last_game, row.last_date),
+                    (
+                        stats.best_game,
+                        stats.best_elo,
+                        stats.last_game,
+                        stats.last_date
+                    )
+                );
             }
         });
     }
