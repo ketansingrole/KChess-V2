@@ -1,6 +1,6 @@
-# gpui-pre 0.3.12, patched for KChess
+# gpui-pre 0.3.14, patched for KChess
 
-This is the published `gpui-pre` 0.3.12 crate (Zed's GPUI, Apache-2.0, see `LICENSE-APACHE`),
+This is the published `gpui-pre` 0.3.14 crate (Zed's GPUI, Apache-2.0, see `LICENSE-APACHE`),
 used through `[patch.crates-io]` in the workspace `Cargo.toml`. Its `examples/` and `tests/`
 are left out, and so are their targets in `Cargo.toml`. Everything else is unchanged except for
 the lines marked `KChess patch`, which add a **window zoom** for the GPUI app's Settings →
@@ -57,17 +57,13 @@ A fourth patch makes a reused view keep its **title-bar areas** (`Window::reuse_
 not these, so a frame that reused the top bar left Windows with no drag area or window buttons
 until the bar next drew: the bar could not move the window and the buttons did nothing.
 
-A fifth patch calls the atomics' `try_update` where upstream calls `fetch_update`, which Rust 1.100
-deprecates under that new name (`src/profiler.rs`, `src/profiler/journal.rs`), so building GPUI
-warns of nothing.
-
 The app sets the zoom (`apps/gpui/src/interface_zoom.rs`) and moves the macOS traffic lights to
 stay centred on its top bar.
 
 ## Reusing cached views
 
 The app draws its shell, pages and their parts as cached views (`AnyView::cached`,
-`apps/gpui/src/part.rs`), so a frame redraws only what changed and replays the rest. Four
+`apps/gpui/src/part.rs`), so a frame redraws only what changed and replays the rest. Three
 patches make that replay cheaper, and one keeps shaped text; none changes what is drawn.
 
 - **Cached views inside a redrawn cached view are reused** (`prepaint_view` in `src/view.rs`).
@@ -81,10 +77,10 @@ patches make that replay cheaper, and one keeps shaped text; none changes what i
 - **Replayed primitives keep their order** (`Scene::replay` in `src/scene.rs`,
   `BoundsTree::insert_span` in `src/bounds_tree.rs`). A reused view's primitives move up together
   above whatever the frame drew under their bounds so far, and their bounds go into the tree once,
-  at the highest of their orders. Upstream inserted each primitive into the tree again. Inside a
-  layer, each is still inserted.
-- **Tab order is sorted when Tab asks for it** (`TabStopMap` in `src/tab_stop.rs`). Upstream kept
-  a sorted tree updated on every insert, and a reused view replays all its tab stops each frame.
+  at the highest of their orders with the highest kind drawn there, so later primitives share that
+  order only where upstream would let them. Each paint operation keeps the order its primitive was
+  given, which replay offsets. Upstream inserted each primitive into the tree again. Inside a
+  layer still being painted, and for native views and animated sprites, each is still inserted.
 
 - **Shaped text is kept for a while** (`LineLayoutCacheState::retained` in
   `src/text_system/line_layout.rs`). Upstream kept a line's shaping for one frame after its
@@ -129,5 +125,8 @@ new release, since input handling and view caching may have moved.
 
 A three-way merge does most of it: the published the previous release as the base, this folder as one side and
 the new release as the other (0.3.9 → 0.3.11 conflicted only in `src/window.rs` and
-`src/text_system/line_layout.rs`; 0.3.11 → 0.3.12 merged cleanly). Keep the gpui-kit pin in `apps/gpui/Cargo.toml` on the
+`src/text_system/line_layout.rs`; 0.3.11 → 0.3.12 merged cleanly). 0.3.12 → 0.3.14 reworked the
+drawing order (primitives of different kinds share an order, layers are inserted when they end),
+so the replay patch was rewritten for it; upstream had meanwhile taken the lazy tab order and the
+atomics' `try_update`, which left the patch. Keep the gpui-kit pin in `apps/gpui/Cargo.toml` on the
 release whose `gpui-pre` this folder holds.

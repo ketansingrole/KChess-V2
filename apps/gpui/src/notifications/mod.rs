@@ -350,7 +350,7 @@ fn confirm_move(tag: &str, game: &str, action: Option<&str>, cx: &mut App) {
         }
         Some("cancel") => {
             move_reply::take(tag, cx);
-            cx.dismiss_system_notification(tag);
+            cx.dismiss_system_notification(tag).detach();
         }
         _ => open_game(game, cx),
     }

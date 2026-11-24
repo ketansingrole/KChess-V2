@@ -18,7 +18,7 @@ kchess-domain.workspace = true
 kchess-games.workspace = true
 kchess-ui.workspace = true
 # Pinned with the app's (apps/gpui/Cargo.toml).
-gpui-kit = "=0.10.0"
+gpui-kit = "=0.11.0"
 serde.workspace = true
 serde_json.workspace = true
 shakmaty.workspace = true
@@ -58,7 +58,7 @@ windows = { version = "0.62", features = ["Foundation", "Foundation_Collections"
 
 [dev-dependencies]
 # Headless windows for the tests (`#[gpui_kit::test]`).
-gpui-kit = { version = "=0.10.0", features = ["test-support"] }
+gpui-kit = { version = "=0.11.0", features = ["test-support"] }
 # Default Settings without a core, for the tests (`settings::init_for_tests`).
 kchess-app = { workspace = true, features = ["test-support"] }
 # Scratch folders for the export tests.

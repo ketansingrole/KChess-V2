@@ -167,6 +167,8 @@ pub enum FrameSkipReason {
     ThermalFrameRateLimit,
     /// Low power mode deferred drawing.
     LowPowerFrameRateLimit,
+    /// A scene animation's frame rate cap deferred presenting.
+    AnimationFrameRateLimit,
 }
 
 /// A completed frame request that returned without drawing a new frame.
@@ -440,7 +442,6 @@ impl ForegroundRunnableCounter {
     }
 
     fn finished(&self) {
-        // KChess patch: `try_update`, Rust 1.100's name for `fetch_update`.
         let _ = self
             .0
             .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {

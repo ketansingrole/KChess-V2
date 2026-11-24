@@ -11,7 +11,7 @@ kchess-contracts.workspace = true
 kchess-domain.workspace = true
 # Pinned with the app's (apps/gpui/Cargo.toml): a newer gpui-kit requires a newer gpui-pre than the
 # patched copy in vendor/gpui-pre.
-gpui-kit = "=0.10.0"
+gpui-kit = "=0.11.0"
 serde_json.workspace = true
 # Dates and times in local time and UTC (`src/dates.rs`), as the app's.
 jiff = "1.0"
@@ -31,7 +31,7 @@ windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 # Headless windows and app contexts for the tests (`#[gpui_kit::test]`).
-gpui-kit = { version = "=0.10.0", features = ["test-support"] }
+gpui-kit = { version = "=0.11.0", features = ["test-support"] }
 
 [lints]
 workspace = true

@@ -131,14 +131,6 @@ pub fn live_region(id: impl Into<ElementId>, text: impl Into<SharedString>) -> L
     }
 }
 
-impl IntoElement for LiveRegion {
-    type Element = Self;
-
-    fn into_element(self) -> Self {
-        self
-    }
-}
-
 impl Element for LiveRegion {
     type RequestLayoutState = ();
     type PrepaintState = ();

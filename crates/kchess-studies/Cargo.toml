@@ -20,14 +20,14 @@ kchess-practice.workspace = true
 kchess-nav.workspace = true
 kchess-ui.workspace = true
 # Pinned with the app's (apps/gpui/Cargo.toml).
-gpui-kit = "=0.10.0"
+gpui-kit = "=0.11.0"
 serde_json.workspace = true
 shakmaty.workspace = true
 kchess-hack = { version = "0.1", path = "../kchess-hack" }
 
 [dev-dependencies]
 # Headless windows for the tests (`#[gpui_kit::test]`).
-gpui-kit = { version = "=0.10.0", features = ["test-support"] }
+gpui-kit = { version = "=0.11.0", features = ["test-support"] }
 # A real core over a fresh profile, Settings, the theme and a window, for the tests
 # (`kchess_board::testing::Started`).
 kchess-app = { workspace = true, features = ["test-support"] }
