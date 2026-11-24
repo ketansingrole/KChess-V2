@@ -2151,6 +2151,69 @@ async fn a_check_of_every_account_settles_a_finish_that_went_unheard() {
     online.close();
 }
 
+/// A real-time game the Board API can play, on an account other than the board's, locks
+/// assistance: only games it could not play were counted as played elsewhere, so with two
+/// accounts each in a game, the board's game ending lent help during the other.
+#[tokio::test]
+async fn another_accounts_board_game_locks_assistance() {
+    use kchess_contracts::types::Assistance;
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/stream/event" => Reply::Hang,
+        "/api/account/playing" => {
+            let games = if seen.header("Authorization") == Some("Bearer Bob-token") {
+                json!([{ "gameId": "Bob12345", "speed": "rapid", "compat": { "board": true } }])
+            } else {
+                json!([])
+            };
+            Reply::Json(200, json!({ "nowPlaying": games }).to_string())
+        }
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true), ("Bob", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    fixture.requested("/api/stream/event", 1).await;
+    online.ongoing().await.expect("the games");
+    assert_eq!(online.assistance(), Assistance::LiveGame);
+    online.close();
+}
+
+/// A check whose answer lists no games at all (`nowPlaying` missing) settles nothing: read as no
+/// games, it dropped a bullet game played elsewhere and lent help during it.
+#[tokio::test]
+async fn an_invalid_ongoing_answer_keeps_a_game_played_elsewhere() {
+    use kchess_contracts::types::Assistance;
+    let streams: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
+        Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&streams);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/stream/event" => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            *slot.lock().unwrap() = Some(tx);
+            Reply::Stream(rx)
+        }
+        "/api/account/playing" => Reply::Json(200, json!({}).to_string()),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    fixture.requested("/api/stream/event", 1).await;
+    let sender = streams.lock().unwrap().clone().unwrap();
+    let start = json!({ "type": "gameStart", "game":
+        { "gameId": "Else1234", "speed": "bullet", "compat": { "board": false } } });
+    sender.send(format!("{start}\n")).unwrap();
+    until("the bullet game locks help", || {
+        online.assistance() == Assistance::LiveGame
+    })
+    .await;
+    assert!(online.ongoing().await.is_err(), "the answer is refused");
+    assert_eq!(online.assistance(), Assistance::LiveGame);
+    online.close();
+}
+
 /// A check of every account that began first and answers last, from before a bullet game
 /// began, leaves the game a later check found locked: two windows checking at once once let the
 /// older empty answer lend help in the middle of the game.

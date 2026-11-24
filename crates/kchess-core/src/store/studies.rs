@@ -572,6 +572,20 @@ fn offline(
 
 /// Whether a stored study's chapters match the downloaded PGN; a chapter that holds no game is an error.
 fn study_matches(study: &Study, downloaded: &str) -> Result<bool> {
+    // The moves' comparison leaves out the names Lichess writes into each chapter, so a chapter
+    // renamed here matched and Download latest wrote the cloud's name over it. A download names
+    // its chapters from their tags (`chapter_name`); without one tagged game a chapter, the
+    // names were given apart from the moves and cannot be read back from them.
+    let names = crate::lichess::studies::split_pgn(downloaded)
+        .iter()
+        .enumerate()
+        .map(|(index, pgn)| crate::lichess::studies::chapter_name(pgn, index))
+        .collect::<Vec<_>>();
+    if names.len() == study.chapters.len()
+        && !study.chapters.iter().map(|c| &c.name).eq(names.iter())
+    {
+        return Ok(false);
+    }
     let pairs: Vec<(&str, &str)> = study
         .chapters
         .iter()
@@ -1063,6 +1077,45 @@ mod tests {
         let unchanged = run(&db, json!({ "op": "rename", "id": "missing", "name": "X" }))
             .expect("a study no longer there");
         assert_eq!(unchanged["studies"], json!([]));
+    }
+
+    /// A chapter renamed here since the download is a change of its own: Download latest
+    /// compared the moves alone and wrote the cloud's chapter name over the new one.
+    #[test]
+    fn a_chapter_renamed_since_the_download_keeps_the_cloud_copy_beside_it() {
+        let db = database();
+        let pgn = "[Event \"Cloud: One\"]\n[ChapterName \"One\"]\n\n1. e4 *";
+        let chapters = json!([{ "name": "One", "pgn": pgn }]);
+        let remote = json!({ "id": "abcdEFGH", "name": "Cloud" });
+        let first = run(
+            &db,
+            json!({ "op": "offline", "account": "Alice", "remote": remote, "chapters": chapters }),
+        )
+        .expect("offline");
+        let id = first["id"].as_str().expect("id").to_string();
+        let again = run(
+            &db,
+            json!({ "op": "offline", "account": "Alice", "remote": remote, "chapters": chapters }),
+        )
+        .expect("offline unchanged");
+        assert_eq!(
+            again["conflict"],
+            json!(false),
+            "unchanged: replaced in place"
+        );
+        let chapter = study(&db, &id)["chapters"][0]["id"].clone();
+        run(
+            &db,
+            json!({ "op": "renameChapter", "id": id, "chapterId": chapter, "name": "Mine" }),
+        )
+        .expect("rename");
+        let conflict = run(
+            &db,
+            json!({ "op": "offline", "account": "Alice", "remote": remote, "chapters": chapters }),
+        )
+        .expect("offline after the rename");
+        assert_eq!(conflict["conflict"], json!(true));
+        assert_eq!(study(&db, &id)["chapters"][0]["name"], json!("Mine"));
     }
 
     #[test]

@@ -259,7 +259,7 @@ pub struct Ai {
     callback_port: u16,
     /// Refresh tokens rotate: two refreshes at once would burn the sign-in. It counts the
     /// disconnects, so a sign-in started before one does not connect again after it.
-    pub refreshing: AsyncMutex<u64>,
+    pub refreshing: std::sync::Arc<AsyncMutex<u64>>,
 }
 
 impl Ai {
@@ -274,7 +274,7 @@ impl Ai {
             auth: origin.clone().unwrap_or_else(|| AUTH.to_string()),
             api: origin.unwrap_or_else(|| API.to_string()),
             lifetime,
-            refreshing: AsyncMutex::new(0),
+            refreshing: std::sync::Arc::new(AsyncMutex::new(0)),
         })
     }
 

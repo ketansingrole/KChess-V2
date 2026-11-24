@@ -506,6 +506,9 @@ impl OnlineSession {
             match started {
                 super::state::Started::OnBoard => {}
                 super::state::Started::ListedOnly => {
+                    // A real-time game beside the board's locks assistance until it ends, as
+                    // one the Board API cannot play does: the board's ending would lend it.
+                    self.started_elsewhere(&game_id, correspondence);
                     self.ongoing_changed();
                     return;
                 }

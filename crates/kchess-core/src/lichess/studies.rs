@@ -136,6 +136,14 @@ pub fn split_pgn(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// The name a downloaded chapter, the `index`th of its study, is kept under.
+pub fn chapter_name(pgn: &str, index: usize) -> String {
+    let name = tag_value(pgn, "ChapterName")
+        .or_else(|| tag_value(pgn, "Event"))
+        .unwrap_or_else(|| format!("Chapter {}", index + 1));
+    js::slice_utf16(&name, 120).to_string()
+}
+
 /// `/^\[NAME "([^"]*)"\]/m`: the value of the first tag line named `name`.
 fn tag_value(pgn: &str, name: &str) -> Option<String> {
     let prefix = format!("[{name} \"");
@@ -184,14 +192,9 @@ pub async fn lichess_study_chapters(
                 .into_iter()
                 .take(MAX_CHAPTERS)
                 .enumerate()
-                .map(|(index, pgn)| {
-                    let name = tag_value(&pgn, "ChapterName")
-                        .or_else(|| tag_value(&pgn, "Event"))
-                        .unwrap_or_else(|| format!("Chapter {}", index + 1));
-                    ChapterInput {
-                        name: js::slice_utf16(&name, 120).to_string(),
-                        pgn,
-                    }
+                .map(|(index, pgn)| ChapterInput {
+                    name: chapter_name(&pgn, index),
+                    pgn,
                 })
                 .collect())
         })
@@ -231,11 +234,8 @@ pub async fn public_study_chapter(
         .into_iter()
         .next()
         .ok_or_else(|| CoreError::new("That study has no chapter to open."))?;
-    let name = tag_value(&pgn, "ChapterName")
-        .or_else(|| tag_value(&pgn, "Event"))
-        .unwrap_or_else(|| "Chapter 1".into());
     Ok(ChapterInput {
-        name: js::slice_utf16(&name, 120).to_string(),
+        name: chapter_name(&pgn, 0),
         pgn,
     })
 }

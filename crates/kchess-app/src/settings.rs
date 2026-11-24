@@ -202,58 +202,65 @@ pub fn init(settings: Settings, cx: &mut App) {
 /// Read the settings and themes again: after this window's saves already sent, and only the
 /// newest read, so an older answer never becomes the base of this window's next save.
 pub fn reload(entity: &Entity<AppSettings>, cx: &mut App) {
-    let (read, sent) = entity.update(cx, |this, _| (this.reads.start(), this.sent()));
-    let entity = entity.downgrade();
-    cx.spawn(async move |cx| {
-        let _ = sent.await;
-        let (settings, themes) = cx.update(|cx| {
-            let core = cx.global::<AppCore>().clone();
-            (
-                core.request(DesktopSettings {}),
-                core.request(CustomThemes {}),
-            )
-        });
-        let settings = settings.await;
-        let themes = themes.await;
-        let _ = entity.update(cx, |this, cx| {
-            match this.reads.answer(read) {
-                Answer::Show => {}
-                Answer::Again => return reload(&cx.entity(), cx),
-                Answer::Superseded => return,
-            }
-            match settings {
-                // Edits not yet stored stay; every other setting shows what is stored.
-                Ok(settings) => {
-                    this.settings = if this.dirty {
-                        adopt(&this.settings, &this.stored, &settings)
-                    } else {
-                        settings.clone()
-                    };
-                    this.stored = settings;
+    entity.update(cx, |this, cx| this.reload(cx));
+}
+
+impl AppSettings {
+    /// `reload`, on the settings already being updated: a read answered after a local change
+    /// reads again from here, since updating the entity again inside its own update panics.
+    fn reload(&mut self, cx: &mut gpui_kit::Context<Self>) {
+        let (read, sent) = (self.reads.start(), self.sent());
+        cx.spawn(async move |entity, cx| {
+            let _ = sent.await;
+            let (settings, themes) = cx.update(|cx| {
+                let core = cx.global::<AppCore>().clone();
+                (
+                    core.request(DesktopSettings {}),
+                    core.request(CustomThemes {}),
+                )
+            });
+            let settings = settings.await;
+            let themes = themes.await;
+            let _ = entity.update(cx, |this, cx| {
+                match this.reads.answer(read) {
+                    Answer::Show => {}
+                    Answer::Again => return this.reload(cx),
+                    Answer::Superseded => return,
                 }
-                Err(cause) => crate::log::write(
-                    Level::Warn,
-                    "settings",
-                    &format!("Loading settings failed: {}", cause.message),
-                ),
-            }
-            match themes {
-                Ok(report) => {
-                    this.custom_themes = report.themes;
-                    this.themes_dir = report.dir;
-                    this.theme_problems = report.problems;
+                match settings {
+                    // Edits not yet stored stay; every other setting shows what is stored.
+                    Ok(settings) => {
+                        this.settings = if this.dirty {
+                            adopt(&this.settings, &this.stored, &settings)
+                        } else {
+                            settings.clone()
+                        };
+                        this.stored = settings;
+                    }
+                    Err(cause) => crate::log::write(
+                        Level::Warn,
+                        "settings",
+                        &format!("Loading settings failed: {}", cause.message),
+                    ),
                 }
-                Err(cause) => crate::log::write(
-                    Level::Warn,
-                    "themes",
-                    &format!("Loading custom themes failed: {}", cause.message),
-                ),
-            }
-            cx.emit(SettingsChanged);
-            cx.notify();
-        });
-    })
-    .detach();
+                match themes {
+                    Ok(report) => {
+                        this.custom_themes = report.themes;
+                        this.themes_dir = report.dir;
+                        this.theme_problems = report.problems;
+                    }
+                    Err(cause) => crate::log::write(
+                        Level::Warn,
+                        "themes",
+                        &format!("Loading custom themes failed: {}", cause.message),
+                    ),
+                }
+                cx.emit(SettingsChanged);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
 }
 
 /// The settings' saves (`Writer`), one at a time in the order they were made. A save that
@@ -569,6 +576,49 @@ mod tests {
                 entity.entity_id()
             );
         });
+    }
+
+    /// Another window's save is being read when this window saves an edit: the read is answered
+    /// after the edit, so it is read again. That retry updated the settings inside their own
+    /// update, which GPUI refuses with a panic.
+    #[gpui_kit::test]
+    fn a_read_answered_after_a_local_edit_reads_again(cx: &mut gpui_kit::TestAppContext) {
+        use kchess_contracts::calls::SaveDesktopSettings;
+        cx.executor().allow_parking();
+        let _core = cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::tests::start_core(cx)
+        });
+        let entity = cx.update(|cx| {
+            super::init(defaults(), cx);
+            cx.global::<super::SettingsHandle>().0.clone()
+        });
+        let base = defaults();
+        let mut elsewhere = base.clone();
+        elsewhere.frontend.sound_enabled = !base.frontend.sound_enabled;
+        let bridge =
+            cx.update(|cx| std::sync::Arc::clone(&cx.global::<crate::core::AppCore>().bridge));
+        bridge
+            .request_now(SaveDesktopSettings {
+                settings: elsewhere.clone(),
+                base: Some(base),
+            })
+            .expect("another window's save");
+        cx.update(|cx| {
+            super::reload(&entity, cx);
+            // This window's edit is sent after that read started.
+            entity.update(cx, |this, _| this.reads.edited());
+        });
+        for _ in 0..3000 {
+            cx.run_until_parked();
+            if cx.update(|cx| entity.read(cx).stored.frontend.sound_enabled)
+                == elsewhere.frontend.sound_enabled
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timed out waiting for the settings to be read again");
     }
 
     fn settings(writes: Writer<Save>) -> AppSettings {

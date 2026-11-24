@@ -193,6 +193,10 @@ fn startable(
             "KChess already runs (pid {pid}); `cargo xtask app --stop` first."
         ));
     }
+    // The app takes an empty `KCHESS_USER_DATA_DIR` as unset and opens the real profile.
+    if profile.as_os_str().is_empty() {
+        return Err("--profile needs the profile folder.".into());
+    }
     if is_real_profile(profile, var) {
         return Err(format!(
             "{} is a real profile; development runs use a scratch one.",
@@ -450,6 +454,15 @@ fn stop() -> Result {
     Ok(())
 }
 
+/// `--profile`'s folder, from where xtask runs: the app starts in the repository's root, so a
+/// relative path would name another folder there than the one checked here.
+fn scratch_profile(arg: &str) -> Result<PathBuf> {
+    if arg.is_empty() {
+        return Err("--profile needs the profile folder.".into());
+    }
+    std::path::absolute(arg).map_err(|cause| cause.to_string())
+}
+
 /// `app [--profile <dir>] [--watch] [--stop] [-- <app arguments>]`.
 pub fn run(args: &[String]) -> Result {
     let (ours, theirs) = match args.iter().position(|arg| arg == "--") {
@@ -460,10 +473,10 @@ pub fn run(args: &[String]) -> Result {
         return stop();
     }
     let profile = match ours.iter().position(|arg| arg == "--profile") {
-        Some(at) => PathBuf::from(
+        Some(at) => scratch_profile(
             ours.get(at + 1)
                 .ok_or("--profile needs the profile folder.")?,
-        ),
+        )?,
         None => root().join(PROFILE),
     };
     if ours.iter().any(|arg| arg == "--watch") {
@@ -596,5 +609,18 @@ mod tests {
         let refused = startable(&real, None, env).unwrap_err();
         assert!(refused.contains("is a real profile"), "{refused}");
         assert!(!real.exists());
+    }
+
+    /// An empty `--profile ""` passed the real-profile check (`create_dir_all("")` succeeds), and
+    /// the app took the empty `KCHESS_USER_DATA_DIR` as unset and opened the real profile.
+    #[test]
+    fn an_empty_profile_is_refused() {
+        let env = |_: &str| None;
+        let refused = startable(Path::new(""), None, env).unwrap_err();
+        assert!(refused.contains("--profile"), "{refused}");
+        assert!(scratch_profile("").is_err());
+        let relative = scratch_profile("scratch").unwrap();
+        assert!(relative.is_absolute());
+        assert_eq!(relative, std::env::current_dir().unwrap().join("scratch"));
     }
 }

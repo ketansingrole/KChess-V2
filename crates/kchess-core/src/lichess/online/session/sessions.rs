@@ -364,16 +364,15 @@ impl OnlineSession {
                 })
                 .and_then(|game| game["gameId"].as_str())
                 .map(str::to_string);
-            // The real-time games it cannot play lock assistance until they end, whatever this
-            // check finds for the board.
+            // The other real-time games lock assistance until they end, whatever this check
+            // finds for the board: those the Board API cannot play, and any beside the one the
+            // board takes.
             checking.elsewhere.extend(
                 now_playing
                     .iter()
-                    .filter(|game| {
-                        let game = GameRef::read(game);
-                        !game.correspondence() && !game.board_compatible()
-                    })
+                    .filter(|game| !GameRef::read(game).correspondence())
                     .filter_map(|game| game["gameId"].as_str())
+                    .filter(|game| Some(*game) != id.as_deref())
                     .map(str::to_string),
             );
             if attempt != self.st().resume_attempt {
@@ -469,15 +468,17 @@ impl OnlineSession {
                     .query(&[("nb", "50")])
                     .read_json()
                     .await?;
-                for game in playing
-                    .get("nowPlaying")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                {
-                    let read = GameRef::read(game);
-                    if !read.correspondence()
-                        && !read.board_compatible()
+                // Read as no games, it once let a check settle the games played elsewhere and
+                // lend help in the middle of one; recovery refuses it too.
+                let Some(now_playing) = playing.get("nowPlaying").and_then(Value::as_array) else {
+                    return Err(CoreError::new(
+                        "Lichess returned an invalid ongoing-game response.",
+                    ));
+                };
+                for game in now_playing {
+                    // Every real-time game locks assistance until it ends: one the board holds
+                    // is left to the board below.
+                    if !GameRef::read(game).correspondence()
                         && let Some(id) = game["gameId"].as_str()
                     {
                         elsewhere.insert(id.to_string());
@@ -502,7 +503,12 @@ impl OnlineSession {
                 first_error.get_or_insert(cause);
             }
         }
-        self.st().found_elsewhere(elsewhere, began, complete);
+        {
+            let mut st = self.st();
+            // The board's own game ends with the board; another account's beside it does not.
+            elsewhere.retain(|id| !st.concerns(id));
+            st.found_elsewhere(elsewhere, began, complete);
+        }
         self.refresh_assistance();
         if let Some(error) = first_error.filter(|_| games.is_empty()) {
             return Err(error);

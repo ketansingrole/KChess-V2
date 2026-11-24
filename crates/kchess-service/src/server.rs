@@ -462,6 +462,8 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
     });
 
     let calls: Arc<Mutex<HashMap<u64, JoinHandle<()>>>> = Arc::default();
+    // Calls stopped while the connection stays: each may still be in a step (`stop_calls`).
+    let mut stopped: Vec<JoinHandle<()>> = Vec::new();
     // Why the loop ended: a cut-off client's queue is not flushed, and a writer that failed is done.
     let (mut behind, mut written) = (false, false);
     loop {
@@ -522,10 +524,11 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                     let _ = sender.send(frame).await;
                 });
                 // A reused id replaces nothing still running: the earlier call is stopped.
-                if let Some(earlier) = registered.insert(id, task) {
-                    earlier.abort();
-                }
+                let earlier = registered.insert(id, task);
                 drop(registered);
+                if let Some(earlier) = earlier {
+                    stop(earlier, &mut stopped);
+                }
             }
             Frame::Cancel { id } => {
                 let task = calls
@@ -533,7 +536,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                     .ok()
                     .and_then(|mut running| running.remove(&id));
                 if let Some(task) = task {
-                    task.abort();
+                    stop(task, &mut stopped);
                     let cancelled = sender.try_send(Frame::Result {
                         id,
                         value: None,
@@ -554,7 +557,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         }
     }
 
-    stop_calls(&calls).await;
+    stop_calls(&calls, stopped).await;
     state.host.remove(connection);
     drop(sender);
     // A client that stopped reading can hold a write open forever: what it started still ends.
@@ -571,15 +574,23 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
     state.changed.notify_one();
 }
 
-/// Stops a connection's calls and waits until none is running. An abort lands at a call's next
-/// await: one being run on another worker right now could otherwise start this connection's
-/// analysis (or a watch) after `disconnect` forgot it, and nothing would ever stop that engine.
-/// Each ends at its next await, so the wait is short.
-async fn stop_calls(calls: &Mutex<HashMap<u64, JoinHandle<()>>>) {
-    let stopping: Vec<JoinHandle<()>> = calls
+/// Stops one call while its connection stays, kept with the others stopped until it ends.
+fn stop(task: JoinHandle<()>, stopped: &mut Vec<JoinHandle<()>>) {
+    task.abort();
+    stopped.retain(|task| !task.is_finished());
+    stopped.push(task);
+}
+
+/// Stops a connection's calls and waits until none is running, those `stopped` earlier too. An
+/// abort lands at a call's next await: one being run on another worker right now could otherwise
+/// start this connection's analysis (or a watch) after `disconnect` forgot it, and nothing would
+/// ever stop that engine. Each ends at its next await, so the wait is short.
+async fn stop_calls(calls: &Mutex<HashMap<u64, JoinHandle<()>>>, stopped: Vec<JoinHandle<()>>) {
+    let mut stopping: Vec<JoinHandle<()>> = calls
         .lock()
         .map(|mut running| running.drain().map(|(_, task)| task).collect())
         .unwrap_or_default();
+    stopping.extend(stopped);
     for task in &stopping {
         task.abort();
     }
@@ -675,8 +686,33 @@ mod tests {
         });
         calls.lock().expect("calls").insert(1, task);
         started.notified().await;
-        stop_calls(&calls).await;
+        stop_calls(&calls, Vec::new()).await;
         assert!(stepped.load(Ordering::SeqCst), "the step ended first");
         assert!(calls.lock().expect("calls").is_empty());
+    }
+
+    /// A call the client cancelled in the middle of a step, its connection going straight after:
+    /// the cancel took the call from the running ones, so the connection was forgotten before
+    /// the step ended, and the step could start an analysis nothing would stop.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_connection_waits_for_a_call_it_cancelled() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (started, stepped) = (Arc::new(Notify::new()), Arc::new(AtomicBool::new(false)));
+        let calls: Mutex<HashMap<u64, JoinHandle<()>>> = Mutex::default();
+        let task = tokio::spawn({
+            let (started, stepped) = (Arc::clone(&started), Arc::clone(&stepped));
+            async move {
+                started.notify_one();
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                stepped.store(true, Ordering::SeqCst);
+                std::future::pending::<()>().await;
+            }
+        });
+        started.notified().await;
+        // `Frame::Cancel`.
+        let mut stopped = Vec::new();
+        stop(task, &mut stopped);
+        stop_calls(&calls, stopped).await;
+        assert!(stepped.load(Ordering::SeqCst), "the step ended first");
     }
 }
