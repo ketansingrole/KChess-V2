@@ -78,7 +78,12 @@ enum Shape {
     ClockEval = 4,
 }
 
-const SHAPES: [Shape; 4] = [Shape::EvalClock, Shape::Eval, Shape::Clock, Shape::ClockEval];
+const SHAPES: [Shape; 4] = [
+    Shape::EvalClock,
+    Shape::Eval,
+    Shape::Clock,
+    Shape::ClockEval,
+];
 
 /// The shortest shared start worth storing as a reference.
 const SHARED_MIN: usize = 8;
@@ -277,9 +282,11 @@ fn shape_of(comment: &str) -> Option<(Shape, Option<Eval>, Option<Clock>)> {
             return Some((Shape::Eval, Some(eval), None));
         }
         let (clock, rest) = command(rest.strip_prefix(' ')?, "clk")?;
-        return rest
-            .is_empty()
-            .then_some((Shape::EvalClock, Some(eval), Some(Clock::parse(clock)?)));
+        return rest.is_empty().then_some((
+            Shape::EvalClock,
+            Some(eval),
+            Some(Clock::parse(clock)?),
+        ));
     }
     let (clock, rest) = command(comment, "clk")?;
     let clock = Clock::parse(clock)?;
@@ -417,11 +424,7 @@ pub(super) fn column(stored: &Stored, name: &str) -> Option<String> {
 
 /// The bytes `a` and `b` start with alike, ending on a character boundary.
 fn shared(a: &str, b: &str) -> usize {
-    let mut length = a
-        .bytes()
-        .zip(b.bytes())
-        .take_while(|(x, y)| x == y)
-        .count();
+    let mut length = a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count();
     while !b.is_char_boundary(length) {
         length -= 1;
     }
@@ -649,7 +652,14 @@ mod tests {
         for text in ["1:30:58", "0:00:05.3", "12:00:00", "0:00:00.125"] {
             assert_eq!(Clock::parse(text).unwrap().to_string(), text);
         }
-        for text in ["01:30:58", "1:3:58", "90:58", "1:30:58:00", "1:30:58.", "1:30:5a"] {
+        for text in [
+            "01:30:58",
+            "1:3:58",
+            "90:58",
+            "1:30:58:00",
+            "1:30:58.",
+            "1:30:5a",
+        ] {
             assert_eq!(Clock::parse(text), None, "{text}");
         }
     }

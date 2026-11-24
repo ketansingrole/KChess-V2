@@ -444,7 +444,9 @@ mod tests {
 
     fn all(db: &Connection) -> HashMap<(u64, u16), Stats> {
         let mut rows = HashMap::new();
-        let mut query = db.prepare("SELECT key FROM tree UNION SELECT key FROM lone").unwrap();
+        let mut query = db
+            .prepare("SELECT key FROM tree UNION SELECT key FROM lone")
+            .unwrap();
         let keys: Vec<i64> = query
             .query_map([], |row| row.get(0))
             .unwrap()

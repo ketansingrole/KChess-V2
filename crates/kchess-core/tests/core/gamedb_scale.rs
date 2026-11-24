@@ -300,8 +300,7 @@ fn gamedb_sample() {
         let length = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().expect("four bytes"));
         at += 8 + length as usize;
     }
-    let mut decoder =
-        ruzstd::decoding::StreamingDecoder::new(&bytes[at..]).expect("a zstd frame");
+    let mut decoder = ruzstd::decoding::StreamingDecoder::new(&bytes[at..]).expect("a zstd frame");
     let mut text = vec![0; 6_000];
     decoder.read_exact(&mut text).expect("reads");
     println!("{}", String::from_utf8_lossy(&text));

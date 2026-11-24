@@ -503,7 +503,12 @@ mod tests {
         let text = pgn::make_pgn(&original);
         assert_eq!(pgn_of(&stored).unwrap(), text);
         // The headers' text and the URLs they share, and four bytes or so a move.
-        assert!(extra.len() * 4 < text.len(), "{} of {}", extra.len(), text.len());
+        assert!(
+            extra.len() * 4 < text.len(),
+            "{} of {}",
+            extra.len(),
+            text.len()
+        );
     }
 
     #[test]
