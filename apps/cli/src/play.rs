@@ -4,7 +4,7 @@
 //! core's library as the app saves them, so either can carry the game on.
 
 use kchess_contracts::calls::{self, CoreCall};
-use kchess_contracts::check::{ArchivedGame, LibraryId, Moves, SessionObject};
+use kchess_contracts::check::{ArchivedGame, LibraryId, Moves, SessionBase, SessionObject};
 use kchess_contracts::types::{
     ComputerSession, EngineLevel, HistoryKind, PlayedGame, SessionDocument, SessionKind,
 };
@@ -35,6 +35,9 @@ struct Session<'a> {
     games: Vec<PlayedGame>,
     started: Instant,
     failed: bool,
+    /// The game's session as the profile held it when read, or as last saved here: a save over
+    /// one continued elsewhere since (the app, another command) is refused.
+    based_on: Option<(SessionKind, Option<SessionDocument>)>,
 }
 
 impl Session<'_> {
@@ -127,19 +130,31 @@ impl Session<'_> {
         crate::print(json!({ "fen": self.fen(), "moves": self.moves(), "result": self.result() }));
     }
 
-    async fn save<C: CoreCall>(&mut self, call: C) {
+    async fn save<C: CoreCall>(&mut self, call: C) -> bool {
         if let Err(cause) = self.core.request(call).await {
             eprintln!("[cli] Saving failed: {cause}");
             self.failed = true;
+            return false;
         }
+        true
     }
 
     async fn save_session(&mut self, kind: SessionKind, session: SessionDocument) {
-        self.save(calls::SaveSession {
-            kind,
-            session: SessionObject::of(&session),
-        })
-        .await;
+        let based_on = match &self.based_on {
+            Some((read, base)) if *read == kind => Some(SessionBase::of(base.as_ref())),
+            _ => None,
+        };
+        let tracked = based_on.is_some();
+        let saved = self
+            .save(calls::SaveSession {
+                kind,
+                session: SessionObject::of(&session),
+                based_on,
+            })
+            .await;
+        if saved && tracked {
+            self.based_on = Some((kind, Some(session)));
+        }
     }
 
     /// Carry out what Game history asks, keeping the played games as they leave them.
@@ -151,11 +166,11 @@ impl Session<'_> {
                     self.save(calls::SaveArchivedGame {
                         game: ArchivedGame::of(&game),
                     })
-                    .await
+                    .await;
                 }
                 Write::RemoveGame(id) => {
                     self.save(calls::RemoveArchivedGame { id: LibraryId(id) })
-                        .await
+                        .await;
                 }
                 Write::SaveSession { kind, identity } => {
                     self.save_session(kind, SessionDocument::Archive(identity))
@@ -618,6 +633,17 @@ pub async fn interactive(
     let library = core.request(calls::Library {}).await?;
     let mut sessions = library.sessions;
     let started = Instant::now();
+    let based_on = if computer {
+        (
+            SessionKind::Computer,
+            sessions.computer.clone().map(SessionDocument::Computer),
+        )
+    } else {
+        (
+            SessionKind::Local,
+            sessions.local.clone().map(SessionDocument::Local),
+        )
+    };
     let game = if computer {
         computer_game(core, sessions.computer.take(), level, variant).await?
     } else {
@@ -641,6 +667,7 @@ pub async fn interactive(
         games,
         started,
         failed: false,
+        based_on: Some(based_on),
     };
     session.written(writes).await;
     if let Some(color) = color.filter(|_| computer) {

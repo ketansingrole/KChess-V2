@@ -80,6 +80,8 @@ async fn the_explorers_pages_come_from_lichess_and_a_reset_forgets_their_usage()
             .to_string(),
         ),
         "/api/account/playing" => Reply::Json(200, json!({ "nowPlaying": [] }).to_string()),
+        // The account's games are followed: an event stream Lichess refused would lock help.
+        "/api/stream/event" => Reply::Hang,
         _ => Reply::Json(404, "{}".into()),
     }
     })

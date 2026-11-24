@@ -30,31 +30,38 @@ impl OnlineSession {
     }
 
     pub(super) fn stop_lobby(&self) {
-        if let Some((_, token)) = self.st().lobby.take() {
+        let stopped = self.st().lobby.take();
+        if let Some((_, token)) = stopped {
             token.cancel();
         }
+        // Its account is watched again.
+        self.sync_watchers();
     }
 
     pub(super) fn start_lobby(&self) {
-        let (account, cancel) = {
+        let started = {
             let mut st = self.st();
             let account = st.lobby_account.clone();
-            if account.is_empty() || st.controller.is_some() {
-                return;
-            }
             let running = st
                 .lobby
                 .as_ref()
                 .is_some_and(|(running, token)| *running == account && !token.is_cancelled());
-            if running {
-                return;
+            if account.is_empty() || st.controller.is_some() || running {
+                None
+            } else {
+                if let Some((_, token)) = st.lobby.take() {
+                    token.cancel();
+                }
+                let token = CancellationToken::new();
+                st.lobby = Some((account.clone(), token.clone()));
+                Some((account, token))
             }
-            if let Some((_, token)) = st.lobby.take() {
-                token.cancel();
-            }
-            let token = CancellationToken::new();
-            st.lobby = Some((account.clone(), token.clone()));
-            (account, token)
+        };
+        // The lobby's account stops being watched before its stream opens, and the account a
+        // stream stopped covering is watched again.
+        self.sync_watchers();
+        let Some((account, cancel)) = started else {
+            return;
         };
         let this = self.clone();
         tokio::spawn(async move {

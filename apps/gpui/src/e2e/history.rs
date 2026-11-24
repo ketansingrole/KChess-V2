@@ -172,6 +172,7 @@ fn a_game_left_in_another_window_is_continued_from_home(cx: &mut gpui_kit::TestA
     app.request(kchess_contracts::calls::SaveSession {
         kind: kchess_contracts::types::SessionKind::Computer,
         session: kchess_contracts::check::SessionObject(serde_json::json!(game.snapshot(host.now))),
+        based_on: None,
     });
     app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Sessions]);
     app.find("home-continue");

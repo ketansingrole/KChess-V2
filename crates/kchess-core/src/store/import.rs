@@ -42,7 +42,29 @@ pub fn legacy_import_pending(ctx: &StoreContext) -> Result<bool> {
         .legacy_database_path
         .as_deref()
         .is_some_and(std::path::Path::exists);
-    Ok(exists && profile_empty(ctx)?)
+    Ok(exists && (deferred(ctx.db)? || profile_empty(ctx)?))
+}
+
+/// Whether an earlier database's import waits for a start that can read it (`legacy_import`).
+fn deferred(db: &Connection) -> Result<bool> {
+    db.query_row("SELECT EXISTS(SELECT 1 FROM legacy_import)", [], |row| {
+        row.get(0)
+    })
+    .sql()
+}
+
+/// Records that the earlier database's import waits for a later start, or that it no longer does.
+fn set_deferred(db: &Connection, waiting: bool) -> Result<()> {
+    if waiting {
+        db.execute(
+            "INSERT OR IGNORE INTO legacy_import (id, deferredAt) VALUES (1, ?)",
+            [crate::time::now_ms()],
+        )
+    } else {
+        db.execute("DELETE FROM legacy_import", [])
+    }
+    .sql()?;
+    Ok(())
 }
 
 fn profile_empty(ctx: &StoreContext) -> Result<bool> {
@@ -61,16 +83,30 @@ fn profile_empty(ctx: &StoreContext) -> Result<bool> {
 }
 
 /// Import from an earlier release if the profile is empty; a profile with anything in it is left
-/// alone. Returns the plaintext tokens of an earlier database that the caller must store.
+/// alone, unless its earlier database could not be read when the profile was new (`legacy_import`):
+/// that import is retried on every start until it reads, and then only adds what the profile does
+/// not have yet. 2026-11-24: a start that could not read it, followed by one setting changed,
+/// left the earlier games out for good.
 pub fn migrate(ctx: &StoreContext) -> Result<()> {
-    if !profile_empty(ctx)? {
-        return Ok(());
+    if profile_empty(ctx)? {
+        if from_json(ctx)? {
+            return Ok(());
+        }
+        from_legacy(ctx, Target::Empty);
+    } else if deferred(ctx.db)? {
+        from_legacy(ctx, Target::Used);
     }
-    if from_json(ctx)? {
-        return Ok(());
-    }
-    from_legacy(ctx);
     Ok(())
+}
+
+/// The profile an earlier database is imported into.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Target {
+    /// Nothing in it yet: everything is taken.
+    Empty,
+    /// Used since a start that could not read the earlier database: its settings, accounts,
+    /// games and logins stay as they are, and only what it lacks is added.
+    Used,
 }
 
 /// True when the JSON backup was imported (and archived).
@@ -437,8 +473,17 @@ fn with_bak(path: &Path) -> std::path::PathBuf {
 /// seals them next (`due_legacy_logins`). Sealed after this import committed, a start that ended
 /// before them (KChess quit at the keychain's prompt) left accounts shown connected without a login
 /// and their plaintext never retried.
-fn from_legacy(ctx: &StoreContext) {
-    let Some(legacy_path) = ctx.config.legacy_database_path.as_deref() else {
+fn from_legacy(ctx: &StoreContext, into: Target) {
+    let Some(legacy_path) = ctx
+        .config
+        .legacy_database_path
+        .as_deref()
+        .filter(|path| path.exists())
+    else {
+        // Gone since (or never there): nothing waits to be imported.
+        if into == Target::Used {
+            set_deferred(ctx.db, false).log_failure(ctx);
+        }
         return;
     };
     let legacy = match Connection::open_with_flags(
@@ -455,6 +500,7 @@ fn from_legacy(ctx: &StoreContext) {
                     legacy_path.display()
                 ),
             );
+            set_deferred(ctx.db, true).log_failure(ctx);
             return;
         }
     };
@@ -510,6 +556,7 @@ fn from_legacy(ctx: &StoreContext) {
             Level::Warn,
             "The earlier database could not be read; its import is retried on the next start.",
         );
+        set_deferred(ctx.db, true).log_failure(ctx);
         return;
     }
 
@@ -585,30 +632,80 @@ fn from_legacy(ctx: &StoreContext) {
         })
         .collect();
 
+    let used = into == Target::Used;
     let imported = transaction(ctx.db, || {
-        save_settings(ctx.db, &settings)?;
+        // A used profile keeps the settings chosen in it.
+        let chosen = used
+            && ctx
+                .db
+                .query_row("SELECT EXISTS(SELECT 1 FROM settings)", [], |row| {
+                    row.get::<_, bool>(0)
+                })
+                .sql()?;
+        if !chosen {
+            save_settings(ctx.db, &settings)?;
+        }
+        let account_sql = if used {
+            "INSERT OR IGNORE INTO accounts (username, connected, lastSyncedAt) VALUES (?, ?, ?)"
+        } else {
+            "INSERT OR REPLACE INTO accounts (username, connected, lastSyncedAt) VALUES (?, ?, ?)"
+        };
         for row in &account_rows {
             if !matches!(&row[0], SqlValue::Text(name) if !name.trim().is_empty()) {
                 continue;
             }
+            // `accounts.username` compares case-sensitively; a used profile's account of
+            // another case is the same Lichess account.
+            if used
+                && ctx
+                    .db
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM accounts WHERE username = ? COLLATE NOCASE)",
+                        [&row[0]],
+                        |found| found.get::<_, bool>(0),
+                    )
+                    .sql()?
+            {
+                continue;
+            }
             let auth_oauth = matches!(&row[1], SqlValue::Text(kind) if kind == "oauth");
             ctx.db
-                    .execute(
-                        "INSERT OR REPLACE INTO accounts (username, connected, lastSyncedAt) VALUES (?, ?, ?)",
-                        params_from_iter([
-                            row[0].clone(),
-                            SqlValue::Integer(i64::from(auth_oauth)),
-                            SqlValue::Null,
-                        ]),
-                    )
-                    .sql()?;
+                .execute(
+                    account_sql,
+                    params_from_iter([
+                        row[0].clone(),
+                        SqlValue::Integer(i64::from(auth_oauth)),
+                        SqlValue::Null,
+                    ]),
+                )
+                .sql()?;
         }
         let mut rows = GameRows::new(ctx.db)?;
         for game in &games {
+            // A game the used profile has (synced since, with its PGN) stays as it is.
+            if used && stored_game(ctx.db, game)? {
+                continue;
+            }
             insert_game(&mut rows, ctx.db, game)?;
+        }
+        if used {
+            for account in games.iter().filter_map(|game| game["account"].as_str()) {
+                super::games::trim_games(ctx.db, account)?;
+            }
         }
         for account in &logins {
             match account {
+                // A used profile's own login of the account stays, and so does whether the
+                // account is connected: the earlier plaintext is only removed.
+                Some(name) if used && has_login(ctx.db, name)? => {
+                    ctx.db
+                        .execute(
+                            "INSERT OR REPLACE INTO legacy_logins (username, connect, attempts, scrub)
+                             VALUES (?, 0, 0, 1)",
+                            [name],
+                        )
+                        .sql()?;
+                }
                 Some(name) => {
                     ctx.db
                         .execute(
@@ -636,14 +733,52 @@ fn from_legacy(ctx: &StoreContext) {
                 }
             }
         }
-        Ok(())
+        set_deferred(ctx.db, false)
     });
     if let Err(cause) = imported {
         log(
             ctx,
-            Level::Debug,
+            Level::Warn,
             &format!("Legacy migration failed: {cause}"),
         );
+        set_deferred(ctx.db, true).log_failure(ctx);
+    }
+}
+
+/// Whether the profile has this game of its account already.
+fn stored_game(db: &Connection, game: &Value) -> Result<bool> {
+    db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM games WHERE account = ? COLLATE NOCASE AND id = ?)",
+        params_from_iter([to_sql(game.get("account"))?, to_sql(game.get("id"))?]),
+        |row| row.get(0),
+    )
+    .sql()
+}
+
+/// Whether the profile holds a login of this account.
+fn has_login(db: &Connection, account: &str) -> Result<bool> {
+    db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM tokens WHERE username = ? COLLATE NOCASE)",
+        [account],
+        |row| row.get(0),
+    )
+    .sql()
+}
+
+trait LogFailure {
+    fn log_failure(self, ctx: &StoreContext);
+}
+
+impl LogFailure for Result<()> {
+    /// The marker could not be written: the import is decided again on the next start.
+    fn log_failure(self, ctx: &StoreContext) {
+        if let Err(cause) = self {
+            log(
+                ctx,
+                Level::Warn,
+                &format!("The earlier database's import could not be recorded: {cause}"),
+            );
+        }
     }
 }
 

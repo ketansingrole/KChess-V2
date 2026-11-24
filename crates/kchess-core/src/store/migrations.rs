@@ -274,6 +274,13 @@ pub const MIGRATIONS: &[&str] = &[
     attempts INTEGER NOT NULL DEFAULT 0,
     scrub INTEGER NOT NULL DEFAULT 0
   );"#,
+    // An earlier release's database that could not be read when this profile was new: its import
+    // waits for a start that can read it, even after the profile has data of its own, and then
+    // adds only what the profile does not have (`import::migrate`).
+    r#"CREATE TABLE legacy_import (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    deferredAt INTEGER NOT NULL
+  );"#,
 ];
 
 /// Apply every migration newer than the database's `user_version`, each in its own transaction.

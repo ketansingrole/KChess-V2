@@ -215,7 +215,7 @@ impl OnlineSession {
         let st = self.st();
         if st.live.is_some() || !st.protected_game.is_empty() || !st.elsewhere.is_empty() {
             Assistance::LiveGame
-        } else if st.recovery_unverified || st.accounts_unchecked {
+        } else if st.recovery_unverified || st.accounts_unchecked || st.watching_unknown() {
             Assistance::Unverified
         } else {
             Assistance::Allowed
@@ -506,6 +506,7 @@ impl OnlineSession {
     /// Stop everything for good (the app is quitting).
     pub fn close(&self) {
         self.st().lobby_account.clear();
+        self.st().watched.clear();
         self.cancel();
         self.stop_lobby();
         if let Some(timer) = self.st().ongoing_timer.take() {

@@ -540,11 +540,14 @@ core_api! {
         AnswerMistake = "answerMistake" fn answer_mistake(id: LibraryId, solved: bool) -> Vec<Drill>;
         /// The reviewed games with positions in practice, most recently played first.
         MistakeGames = "mistakeGames" fn mistake_games() -> Vec<MistakeGame>;
-        /// Keep an unfinished game or analysis so it can be resumed.
+        /// Keep an unfinished game or analysis so it can be resumed. `based_on` is the session as
+        /// the frontend last read or saved it, so a save over one continued elsewhere since (the
+        /// command line, another window) is refused.
         #[writes(Sessions)]
         SaveSession = "saveSession" fn save_session(
             kind: SessionKind,
-            session: SessionObject
+            session: SessionObject;
+            based_on: Option<crate::check::SessionBase>
         ) -> ();
         /// Tournaments joined from KChess that have not ended.
         JoinedTournaments = "joinedTournaments" fn joined_tournaments() -> Vec<JoinedTournament>;
