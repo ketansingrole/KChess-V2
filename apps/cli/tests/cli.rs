@@ -159,6 +159,82 @@ fn notifications_are_listed_marked_read_and_cleared() {
     assert!(!wrong.status.success());
 }
 
+/// A PGN file is imported into a database, which is listed, searched, read a game of, looked up
+/// in, renamed and deleted, all from the command line.
+#[test]
+fn a_game_database_is_imported_searched_and_deleted() {
+    let profile = tempfile::tempdir().expect("profile");
+    let source = tempfile::tempdir().expect("source");
+    let file = source.path().join("club.pgn");
+    std::fs::write(
+        &file,
+        "[White \"Carlsen, Magnus\"]\n[Black \"Anna\"]\n[Result \"1-0\"]\n[Date \"2024.01.02\"]\n\n\
+         1. e4 e5 2. Nf3 Nc6 1-0\n\n\
+         [White \"Anna\"]\n[Black \"Bob\"]\n[Result \"0-1\"]\n\n1. d4 d5 0-1\n",
+    )
+    .expect("writes the games");
+    let imported = cli(
+        profile.path(),
+        &["db", "import", &file.to_string_lossy()],
+        "",
+    );
+    assert!(imported.status.success(), "{imported:?}");
+    let imported = &lines(&imported)[0];
+    assert_eq!(imported["added"], json!(2));
+    let id = imported["database"]["id"]
+        .as_str()
+        .expect("an id")
+        .to_string();
+    assert_eq!(imported["database"]["name"], json!("club"));
+
+    let listed = cli(profile.path(), &["db"], "");
+    assert_eq!(lines(&listed)[0]["databases"][0]["games"], json!(2));
+    let found = cli(
+        profile.path(),
+        &["db", "games", &id, "--player", "carlsen"],
+        "",
+    );
+    assert!(found.status.success(), "{found:?}");
+    let found = &lines(&found)[0];
+    assert_eq!(found["total"], json!(1));
+    let game = found["games"][0]["id"].to_string();
+    let pgn = cli(profile.path(), &["db", "game", &id, &game], "");
+    let pgn = String::from_utf8_lossy(&pgn.stdout);
+    assert!(pgn.contains("[White \"Carlsen, Magnus\"]"), "{pgn}");
+    assert!(pgn.contains("2. Nf3 Nc6"), "{pgn}");
+    let looked = cli(
+        profile.path(),
+        &["explore", "database", &id, "e4", "e5"],
+        "",
+    );
+    assert_eq!(lines(&looked)[0]["total"], json!(1), "{looked:?}");
+    let at = cli(
+        profile.path(),
+        &[
+            "db",
+            "games",
+            &id,
+            "--position",
+            "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+        ],
+        "",
+    );
+    assert!(at.status.success(), "{at:?}");
+    let at = &lines(&at)[0];
+    assert_eq!(at["total"], json!(1), "the game that reached 1.e4 e5");
+    assert_eq!(at["games"][0]["white"], json!("Carlsen, Magnus"));
+
+    let renamed = cli(profile.path(), &["db", "rename", &id, "Club", "games"], "");
+    assert_eq!(
+        lines(&renamed)[0]["databases"][0]["name"],
+        json!("Club games")
+    );
+    let deleted = cli(profile.path(), &["db", "delete", &id], "");
+    assert_eq!(lines(&deleted)[0]["databases"], json!([]));
+    let wrong = cli(profile.path(), &["db", "games"], "");
+    assert!(!wrong.status.success());
+}
+
 /// 2026-11-11: `--data-dir` alone (no `KCHESS_USER_DATA_DIR`) gave the scratch profile the
 /// person's own downloaded engine in `~/.kchess/engines`, which installing or deleting it there
 /// then replaced. A scratch profile keeps its own, as the app's do.

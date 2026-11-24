@@ -7,6 +7,7 @@
 use kchess_hack as _;
 
 mod core;
+mod db;
 mod play;
 mod puzzle;
 mod review;
@@ -87,6 +88,15 @@ commands! {
     Explore "explore" [] {
         "[masters|opening|tablebase] [--variant name] <fen|startpos|moves>" => "Look a position up (the tablebase for 7 pieces or fewer)",
         "database <id> <fen|startpos|moves>" => "Look a position up in a game database on this computer",
+    }
+    Db "db" ["database"] {
+        "[list]" => "List the game databases on this computer as JSON",
+        "import <file> [--into id] [--name name]" => "Import a .pgn or .pgn.zst file into a new database, or into one",
+        "masters [--months n]" => "Download the master games (Lichess's broadcasts), or only their newest months",
+        "games <id> [--player p] [--side white|black] [--opponent p] [--event e] [--from year] [--to year] [--min-elo n] [--result white|draw|black] [--eco code] [--position fen] [--sort newest|oldest|rating] [--offset n] [--limit n]" => "Search a database's games",
+        "game <id> <game>" => "Print a game's PGN",
+        "rename <id> <name>" => "Rename a database",
+        "delete <id>" => "Delete a database",
     }
     Opening "opening" [] {
         "<fen|startpos|moves>" => "Name the opening a position or line reaches (ECO)",
@@ -447,6 +457,7 @@ async fn with_core(
                 };
                 print(json!(entries));
             }
+            Command::Db => db::run(&core, &mut events, db::parse(rest)?).await?,
             Command::Explore => {
                 let (kind, fen, options) = explore_request(rest)?;
                 core.request(calls::ResumeOnline {}).await?;

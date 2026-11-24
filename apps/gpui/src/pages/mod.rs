@@ -3,6 +3,7 @@
 
 pub mod analysis;
 pub mod computer;
+pub use kchess_database as database;
 pub mod editor;
 pub mod friends;
 pub use kchess_history as history;
@@ -22,9 +23,9 @@ pub use kchess_watch as watch;
 
 pub use kchess_nav::page::*;
 
-static REGISTRY: [Registered; 17] = PAGES;
+static REGISTRY: [Registered; 18] = PAGES;
 
-const PAGES: [Registered; 17] = [
+const PAGES: [Registered; 18] = [
     register::<home::HomePage>(),
     register::<computer::ComputerPage>(),
     register::<local::LocalPage>(),
@@ -34,6 +35,7 @@ const PAGES: [Registered; 17] = [
     register::<analysis::AnalysisPage>(),
     register::<history::HistoryPage>(),
     register::<studies::StudiesPage>(),
+    register::<database::DatabasePage>(),
     register::<editor::EditorPage>(),
     register::<online::OnlinePage>(),
     register::<tournaments::TournamentsPage>(),

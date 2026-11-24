@@ -257,5 +257,34 @@ async fn gamedb_explore_scale() {
             println!("lookup {line}, {label} ({answer}): {}", millis(best));
         }
     }
+    // The games with a position, a page at a time: the first page finds them, the next reads
+    // the ones found.
+    for (line, fen) in &positions {
+        for (label, player, min_elo) in [
+            ("no filter", None, None),
+            ("carlsen", Some("carlsen"), None),
+            ("both 2400+", None, Some(2400)),
+        ] {
+            let query = |offset| kchess_contracts::types::GameDbQuery {
+                database: info.id.clone(),
+                position: Some(fen.clone()),
+                player: player.map(str::to_string),
+                min_elo,
+                offset,
+                limit: 20,
+                ..Default::default()
+            };
+            let begun = Instant::now();
+            let total = games.games(query(0)).await.expect("first page").total;
+            let first = begun.elapsed();
+            let begun = Instant::now();
+            games.games(query(20)).await.expect("next page");
+            println!(
+                "games with {line}, {label} ({total} games): first page {}, next {}",
+                millis(first),
+                millis(begun.elapsed())
+            );
+        }
+    }
     games.close().await;
 }

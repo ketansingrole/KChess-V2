@@ -1298,6 +1298,7 @@ checksum = "aa"
             Selection::Packages(vec![
                 "kchess-app".to_string(),
                 "kchess-board".to_string(),
+                "kchess-database".to_string(),
                 APP.to_string(),
                 "kchess-history".to_string(),
                 "kchess-home".to_string(),
@@ -1378,6 +1379,7 @@ checksum = "aa"
                 "kchess-nav",
                 "kchess-puzzles",
                 "kchess-history",
+                "kchess-database",
                 "kchess-home",
                 "kchess-local",
                 "kchess-practice",

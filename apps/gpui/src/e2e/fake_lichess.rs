@@ -441,6 +441,13 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
     // Broadcasts are public: a listing whose covers are KChess's icons, as Lichess names its
     // pictures (`image.lichess.org`, which the app reads here); and a tournament of two rounds,
     // which a round's link finds.
+    // The master games archive (`database.lichess.org/broadcast/`): one month of two games.
+    if let Some(name) = request.path().strip_prefix("/database/broadcast/") {
+        return match master_archive(name) {
+            Some(body) => kchess_testkit::respond(out, 200, "application/octet-stream", &body),
+            None => not_found(out),
+        };
+    }
     match (request.method.as_str(), request.path()) {
         ("GET", "/api/broadcast/top") => return reply(out, &broadcast_listing()),
         ("GET", "/display") => {
@@ -829,6 +836,37 @@ fn refuse(out: &mut TcpStream, body: &Value) -> std::io::Result<()> {
 
 fn unauthorized(out: &mut TcpStream) -> std::io::Result<()> {
     kchess_testkit::json(out, 401, &json!({ "error": "No such token" }))
+}
+
+/// The month the master games archive lists, and its games.
+pub const MASTER_MONTH: &str = "2026-10";
+pub const MASTER_GAMES: &str = "[Event \"Grand Open\"]\n[Date \"2026.10.04\"]\n\
+     [White \"Firouzja, Alireza\"]\n[Black \"Caruana, Fabiano\"]\n[Result \"1-0\"]\n\
+     [WhiteElo \"2760\"]\n[BlackElo \"2790\"]\n\n1. e4 e5 2. Nf3 Nc6 1-0\n\n\
+     [Event \"Grand Open\"]\n[Date \"2026.10.05\"]\n[White \"Caruana, Fabiano\"]\n\
+     [Black \"Firouzja, Alireza\"]\n[Result \"1/2-1/2\"]\n\n1. d4 d5 1/2-1/2\n";
+
+/// A file of the master games archive: its list of months, their digests, or a month's games
+/// packed as the archive packs them.
+fn master_archive(name: &str) -> Option<Vec<u8>> {
+    use sha2::Digest as _;
+    let file = format!("lichess_db_broadcast_{MASTER_MONTH}.pgn.zst");
+    let month = || {
+        ruzstd::encoding::compress_to_vec(
+            MASTER_GAMES.as_bytes(),
+            ruzstd::encoding::CompressionLevel::Fastest,
+        )
+    };
+    if name == "list.txt" {
+        Some(format!("https://database.lichess.org/broadcast/{file}\n").into_bytes())
+    } else if name == "sha256sums.txt" {
+        let digest = kchess_delta::hex(&sha2::Sha256::digest(month()));
+        Some(format!("{digest}  {file}\n").into_bytes())
+    } else if name == file {
+        Some(month())
+    } else {
+        None
+    }
 }
 
 fn not_found(out: &mut TcpStream) -> std::io::Result<()> {

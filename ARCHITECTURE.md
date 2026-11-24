@@ -38,6 +38,7 @@ crates/
                          another, the board pages' layout
   kchess-home/           The Home page
   kchess-history/        The History page
+  kchess-database/       The Database page: a game database's games, searched and opened
   kchess-local/          The Over the board page and its chess clock
   kchess-practice/       The Practice page: drills, endgames, openings, your mistakes, Guess the move
   kchess-puzzles/        The Puzzles page: training, the daily puzzle, Puzzle Rush, stats, history

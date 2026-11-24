@@ -132,6 +132,9 @@ pub struct GameDbQuery {
     /// An ECO code or its start (`B9`, `C65`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eco: Option<String>,
+    /// Only the games that reached this position (a FEN), with a move played from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<String>,
     /// Newest first when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<GameDbSort>,

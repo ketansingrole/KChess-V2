@@ -36,6 +36,8 @@ kchess-nav.workspace = true
 kchess-puzzles.workspace = true
 # The History page (`crates/kchess-history`).
 kchess-history.workspace = true
+# The Database page (`crates/kchess-database`).
+kchess-database.workspace = true
 # The Home page (`crates/kchess-home`).
 kchess-home.workspace = true
 # The Over the board page (`crates/kchess-local`).
@@ -120,6 +122,7 @@ kchess-board = { workspace = true, features = ["test-support"] }
 kchess-puzzles = { workspace = true, features = ["test-support"] }
 # The History page's Lichess list, which the end-to-end tests read.
 kchess-history = { workspace = true, features = ["test-support"] }
+kchess-database = { workspace = true, features = ["test-support"] }
 # The Home page's Lichess activity card, which the end-to-end tests read.
 kchess-home = { workspace = true, features = ["test-support"] }
 # The Over the board page's turned faces and saved game, which the end-to-end tests read.
@@ -136,6 +139,9 @@ gpui-kit = { version = "=0.11.0", features = ["test-support"] }
 tempfile = "3"
 # The stand-in Lichess and Chess.com the end-to-end tests talk to (`src/e2e/fake_*.rs`).
 kchess-testkit.workspace = true
+# The master games archive the stand-in Lichess serves, packed as Lichess packs it; the core's
+# version, already in Cargo.lock.
+ruzstd = "0.9"
 # Release keys that sign the updater tests' checksums (`src/updates/tests.rs`).
 ring = "0.17"
 # A profile document the core cannot read, written beside the running core (`src/e2e`); the

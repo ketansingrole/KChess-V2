@@ -28,6 +28,7 @@ pub enum Page {
     Analysis,
     History,
     Studies,
+    Database,
     Editor,
     Online,
     Tournaments,

@@ -16,6 +16,7 @@ mod audit;
 mod background;
 mod chesscom;
 mod computer;
+mod database;
 mod fake_chesscom;
 mod fake_lichess;
 mod history;
