@@ -245,7 +245,7 @@ mod tests {
     /// preferences read themselves on the main thread, so a slow disk froze the app with no window
     /// shown. Try again reads them with the rest, and the models start without waiting.
     #[gpui_kit::test]
-    fn the_models_start_from_try_agains_reads_without_waiting(cx: &mut gpui_kit::TestAppContext) {
+    fn the_models_start_from_the_retried_check_without_waiting(cx: &mut gpui_kit::TestAppContext) {
         let mut app = crate::e2e::Harness::start(cx);
         let checked = app.cx.update(|cx| super::check_later(cx));
         let profile = app
