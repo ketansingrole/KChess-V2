@@ -212,7 +212,7 @@ async fn follow(
     tokio::pin!(work);
     let mut wait = Wait::new(events);
     let mut cancelled = false;
-    let imported = loop {
+    loop {
         tokio::select! {
             imported = &mut work => break imported,
             next = wait.next() => match next {
@@ -230,8 +230,7 @@ async fn follow(
                 _ => {}
             },
         }
-    };
-    imported
+    }
 }
 
 /// Runs `db`, printing what it answers: JSON, or a game's PGN.
