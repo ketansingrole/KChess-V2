@@ -142,6 +142,14 @@ pub struct GameDbProgress {
     pub message: Option<String>,
 }
 
+/// A game saved into a database: the database as it is now, and the game's id in it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbSaved {
+    pub database: DatabaseInfo,
+    pub game: u64,
+}
+
 /// What an import added.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]

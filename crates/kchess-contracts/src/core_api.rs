@@ -662,6 +662,50 @@ core_api! {
         /// keeps to the archive's newest that many months. Progress arrives as `gamedb:progress`
         /// (`downloading`, then each month's import); `gameDbCancel` stops it and keeps the
         /// months already in.
+        /// Adds the games of `pgn` (a game from the board, usually) to `database`; answers the
+        /// database and the last game's id. Refused for "Your games", which follows the games
+        /// you play.
+        #[writes(GameDb)]
+        GameDbAddGames = "gameDbAddGames" fn game_db_add_games(
+            database: DatabaseId,
+            pgn: PgnText
+        ) -> GameDbSaved;
+        /// Puts `pgn` in the place of the game `game`: the new game is added first and the old one
+        /// removed after, so a failure never loses it.
+        #[writes(GameDb)]
+        GameDbReplaceGame = "gameDbReplaceGame" fn game_db_replace_game(
+            database: DatabaseId,
+            game: GameDbGameId,
+            pgn: PgnText
+        ) -> GameDbSaved;
+        /// Removes from `database` the games `games` lists, or every game `search` (a search of
+        /// this database) finds; answers how many. The opening tree and the position index are
+        /// built again from the games left (`gamedb:progress`, `indexing`); a failure or a cancel
+        /// leaves the database as it was.
+        #[writes(GameDb)]
+        GameDbDeleteGames = "gameDbDeleteGames" fn game_db_delete_games(
+            database: DatabaseId;
+            games: Option<GameDbGameIds>,
+            search: Option<GameDbQuery>
+        ) -> u64;
+        /// Copies the games `games` lists, or that `search` finds, from `database` into the
+        /// database `into`, or a new one named `name`, as an import adds them.
+        #[writes(GameDb)]
+        GameDbCopyGames = "gameDbCopyGames" fn game_db_copy_games(
+            database: DatabaseId;
+            games: Option<GameDbGameIds>,
+            search: Option<GameDbQuery>,
+            into: Option<DatabaseId>,
+            name: Option<DatabaseName>
+        ) -> GameDbImported;
+        /// Writes the games `games` lists, or that `search` finds, from `database` as one PGN
+        /// file at `path`; answers how many.
+        GameDbExport = "gameDbExport" fn game_db_export(
+            database: DatabaseId,
+            path: PgnSavePath;
+            games: Option<GameDbGameIds>,
+            search: Option<GameDbQuery>
+        ) -> u64;
         #[writes(GameDb)]
         GameDbMasterInstall = "gameDbMasterInstall" fn game_db_master_install(;
             months: Option<MasterMonths>

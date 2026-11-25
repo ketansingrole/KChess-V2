@@ -1,17 +1,28 @@
 //! The local game databases.
 
 use kchess_contracts::check::{
-    DatabaseId, DatabaseName, GameDbGameId, LichessMonth, MasterMonths, PgnFilePath,
+    DatabaseId, DatabaseName, GameDbGameId, GameDbGameIds, LichessMonth, MasterMonths, PgnFilePath,
+    PgnSavePath, PgnText,
 };
 use kchess_contracts::core_api::GameDbApi;
-use kchess_contracts::error::Result;
+use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    DatabaseSource, GameDbImported, GameDbPage, GameDbQuery, GameDbStatus, GameSite,
+    DatabaseSource, GameDbImported, GameDbPage, GameDbQuery, GameDbSaved, GameDbStatus, GameSite,
     LichessArchive, LichessGames, PlayerGames,
 };
 
 use crate::core::Core;
+use crate::gamedb::edit::Selection;
 use crate::gamedb::player;
+
+/// The games an edit acts on: those listed, or those a search finds, never both or neither.
+fn selection(games: Option<GameDbGameIds>, search: Option<GameDbQuery>) -> Result<Selection> {
+    match (games, search) {
+        (Some(games), None) => Ok(Selection::Games(games.0)),
+        (None, Some(search)) => Ok(Selection::Search(search)),
+        _ => Err(CoreError::new("Choose the games, or a search.")),
+    }
+}
 
 impl GameDbApi for Core {
     async fn game_db_status(&self) -> Result<GameDbStatus> {
@@ -59,6 +70,59 @@ impl GameDbApi for Core {
 
     async fn game_db_game(&self, database: DatabaseId, game: GameDbGameId) -> Result<String> {
         self.gamedb.game(&database.0, game.0).await
+    }
+
+    async fn game_db_add_games(&self, database: DatabaseId, pgn: PgnText) -> Result<GameDbSaved> {
+        self.gamedb.add_games(&database.0, pgn.0).await
+    }
+
+    async fn game_db_replace_game(
+        &self,
+        database: DatabaseId,
+        game: GameDbGameId,
+        pgn: PgnText,
+    ) -> Result<GameDbSaved> {
+        self.gamedb.replace_game(&database.0, game.0, pgn.0).await
+    }
+
+    async fn game_db_delete_games(
+        &self,
+        database: DatabaseId,
+        games: Option<GameDbGameIds>,
+        search: Option<GameDbQuery>,
+    ) -> Result<u64> {
+        let selection = selection(games, search)?;
+        self.gamedb.delete_games(&database.0, selection).await
+    }
+
+    async fn game_db_copy_games(
+        &self,
+        database: DatabaseId,
+        games: Option<GameDbGameIds>,
+        search: Option<GameDbQuery>,
+        into: Option<DatabaseId>,
+        name: Option<DatabaseName>,
+    ) -> Result<GameDbImported> {
+        let selection = selection(games, search)?;
+        self.gamedb
+            .copy_games(
+                &database.0,
+                selection,
+                into.map(|id| id.0),
+                name.map(|name| name.0),
+            )
+            .await
+    }
+
+    async fn game_db_export(
+        &self,
+        database: DatabaseId,
+        path: PgnSavePath,
+        games: Option<GameDbGameIds>,
+        search: Option<GameDbQuery>,
+    ) -> Result<u64> {
+        let selection = selection(games, search)?;
+        self.gamedb.export(&database.0, selection, path.0).await
     }
 
     async fn game_db_master_install(&self, months: Option<MasterMonths>) -> Result<GameDbImported> {

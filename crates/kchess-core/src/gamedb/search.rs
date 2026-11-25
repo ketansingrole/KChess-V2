@@ -213,6 +213,22 @@ pub fn games(db: &Connection, query: &GameDbQuery) -> Result<GameDbPage> {
     })
 }
 
+/// The id of every game `query` matches (its page and order aside), in id order: what an edit
+/// of the games a search found acts on.
+pub fn ids(db: &Connection, query: &GameDbQuery) -> Result<Vec<i64>> {
+    let (clauses, args) = filters(query, visible(db)?, worded(db)?);
+    let mut select = db
+        .prepare(&format!(
+            "SELECT g.id FROM games g WHERE {clauses} ORDER BY g.id"
+        ))
+        .sql()?;
+    select
+        .query_map(params_from_iter(args.iter()), |row| row.get(0))
+        .sql()?
+        .collect::<rusqlite::Result<Vec<i64>>>()
+        .sql()
+}
+
 /// The game `id` as stored.
 pub fn stored(db: &Connection, id: u64) -> Result<Option<Stored>> {
     let visible = visible(db)?;

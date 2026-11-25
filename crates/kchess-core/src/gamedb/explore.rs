@@ -732,6 +732,16 @@ impl Listed {
     }
 }
 
+/// The id of every game `query` matches that reached its position, in id order.
+pub fn ids_at(db: &Connection, query: &GameDbQuery, stop: &AtomicBool) -> Result<Vec<i64>> {
+    let mut ids: Vec<i64> = reached(db, query, stop)?
+        .into_iter()
+        .map(|game| game.id)
+        .collect();
+    ids.sort_unstable();
+    Ok(ids)
+}
+
 /// One page of the games `query` matches that reached its position, in its order.
 pub fn games_at(
     db: &Connection,

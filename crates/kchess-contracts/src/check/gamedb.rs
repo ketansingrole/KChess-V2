@@ -69,6 +69,50 @@ impl Validate for GameDbGameId {
     }
 }
 
+/// Games of a database by the ids a search listed: 1 to 10,000 of them, each kept once.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct GameDbGameIds(pub Vec<u64>);
+
+impl Validate for GameDbGameIds {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const GAMES: &str = "Choose 1 to 10,000 games.";
+        let mut ids: Vec<u64> = decode(value, |_| Some(GAMES))?;
+        ensure(
+            (1..=10_000).contains(&ids.len())
+                && ids.iter().all(|id| (1..=i64::MAX as u64).contains(id)),
+            Some(GAMES),
+            "",
+            String::new,
+        )?;
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(GameDbGameIds(ids))
+    }
+}
+
+/// Where to write a PGN file the user chose: an absolute path ending in `.pgn`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct PgnSavePath(pub String);
+
+impl Validate for PgnSavePath {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const PATH: &str = "Save the games as a .pgn file.";
+        let path: String = decode(value, |_| Some(PATH))?;
+        ensure(
+            std::path::Path::new(&path).is_absolute()
+                && path.len() <= 4096
+                && !path.contains('\0')
+                && path.to_ascii_lowercase().ends_with(".pgn"),
+            Some(PATH),
+            "",
+            String::new,
+        )?;
+        Ok(PgnSavePath(path))
+    }
+}
+
 /// A PGN file chosen to import: an absolute path ending in `.pgn`, `.pgn.zst`, `.zip` or `.7z`
 /// (an archive: the PGN files it holds). The core opens it itself (it may be gigabytes), and checks there that it is a
 /// readable file outside the profile.
