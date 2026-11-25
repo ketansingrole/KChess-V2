@@ -911,4 +911,16 @@ fn the_board_marks_where_its_game_left_the_databases(cx: &mut gpui_kit::TestAppC
     for known in ["e2e4", "e2e4 e7e5 g1f3 b8c6", "e2e4 e7e5 g1f3 b8c6 f1b5"] {
         assert!(!app.shows(format!("novelty-{known}")), "{known}");
     }
+    // The board shows the N over f6 while it shows the move, and not on the move before.
+    let badge = |app: &mut Harness| {
+        app.with_window(|_, cx| {
+            crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+                .and_then(|page| page.read(cx).board_badge(cx))
+                .map(|badge| (badge.square, badge.glyph))
+        })
+    };
+    app.click(format!("tree-{novelty}"));
+    assert_eq!(badge(&mut app), Some((shakmaty::Square::F6, "N")));
+    app.click("tree-e2e4 e7e5 g1f3 b8c6 f1b5");
+    assert_eq!(badge(&mut app), None);
 }

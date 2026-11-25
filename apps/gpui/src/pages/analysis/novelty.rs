@@ -13,6 +13,9 @@ use kchess_contracts::types::GameDbNovelty;
 /// The line settles before it is looked up: a game played out move by move asks once.
 const NOVELTY_DELAY: Duration = Duration::from_millis(500);
 
+/// The board's N over the novelty's square: a blue the white letter reads on in either theme.
+const NOVELTY_BADGE: u32 = 0x2f6fbf;
+
 #[derive(Default)]
 pub(super) struct Novelty {
     /// The line, databases and origin the answer is for.
@@ -59,7 +62,11 @@ impl AnalysisPage {
             || !Self::assistance_allowed(cx)
         {
             if self.novelty.found.is_some() || self.novelty.task.is_some() {
+                let shown = self.novelty.found.is_some();
                 self.novelty = Novelty::default();
+                if shown {
+                    self.redraw(cx);
+                }
                 cx.notify();
             }
             return;
@@ -69,7 +76,9 @@ impl AnalysisPage {
             return;
         }
         self.novelty.key = key;
-        self.novelty.found = None;
+        if self.novelty.found.take().is_some() {
+            self.redraw(cx);
+        }
         let name = |header: String| {
             let header = header.trim().to_string();
             (!header.is_empty() && header != "?").then_some(PlayerName(header))
@@ -95,6 +104,7 @@ impl AnalysisPage {
                     this.novelty.key.clear();
                 } else {
                     this.novelty.found = answer.warn_on_err();
+                    this.redraw(cx);
                 }
                 cx.notify();
             })
@@ -110,6 +120,17 @@ impl AnalysisPage {
         let moves = self.mainline();
         let line = moves.get(..=ply)?;
         Some((path_of(line), describe(found).into()))
+    }
+
+    /// The N over the square the novelty moved to, while the board shows it.
+    pub(super) fn novelty_badge(&self, last_move: Option<(Square, Square)>) -> Option<Badge> {
+        let (path, _) = self.novelty_mark()?;
+        let (_, to) = last_move.filter(|_| path == self.path)?;
+        Some(Badge {
+            square: to,
+            glyph: "N",
+            color: rgb(NOVELTY_BADGE).into(),
+        })
     }
 }
 

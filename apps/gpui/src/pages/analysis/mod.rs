@@ -639,6 +639,11 @@ impl AnalysisPage {
     }
 
     #[cfg(test)]
+    pub(crate) fn board_badge(&self, cx: &App) -> Option<Badge> {
+        self.board.read(cx).state().badge.clone()
+    }
+
+    #[cfg(test)]
     pub(crate) fn shown_fen(&self) -> String {
         self.node().fen.clone()
     }
@@ -1164,9 +1169,11 @@ impl AnalysisPage {
             Some(position.turn()),
             last_move,
         );
-        // The review's label on the move just played; without one, checkmate's "#".
+        // The review's label on the move just played; without one, checkmate's "#", then the
+        // game's novelty.
         let marks = self.review_marks(cx);
         let mate = state.badge.take();
+        let novelty = self.novelty_badge(last_move);
         state.badge = marks
             .get(&self.path)
             .and_then(|mark| mark.classification)
@@ -1182,7 +1189,8 @@ impl AnalysisPage {
                     color,
                 }
             })
-            .or(mate);
+            .or(mate)
+            .or(novelty);
         // Practising: the game's move in red, to find a better one, and the piece to move once
         // hinted.
         if let Some(practice::PracticeShapes { played, hint }) = self.practice_shapes() {
