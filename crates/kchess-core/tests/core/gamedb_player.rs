@@ -62,9 +62,7 @@ impl Sites {
                 }
                 let month = rest.trim_start_matches("games/");
                 return match months.iter().find(|(listed, _)| listed == month) {
-                    Some((_, games)) => {
-                        Reply::Json(200, json!({ "games": games }).to_string())
-                    }
+                    Some((_, games)) => Reply::Json(200, json!({ "games": games }).to_string()),
                     None => Reply::Json(404, json!({ "code": 0 }).to_string()),
                 };
             }
@@ -275,7 +273,10 @@ async fn a_chesscom_players_games_are_kept_by_speed_and_rating() {
     sites.chesscom.lock().unwrap().insert(
         "hikaru".into(),
         vec![
-            ("2026/10".into(), Value::Array(vec![played("blitz", true, "chess", "Old")])),
+            (
+                "2026/10".into(),
+                Value::Array(vec![played("blitz", true, "chess", "Old")]),
+            ),
             (
                 "2026/11".into(),
                 Value::Array(vec![
@@ -368,7 +369,9 @@ async fn a_cancelled_download_keeps_the_players_database_as_it_was() {
     let cancelled = running.await.expect("joins").expect_err("cancelled");
     assert_eq!(cancelled.message, "Download cancelled.");
     assert_eq!(
-        host.named("gamedb:progress").last().map(|p| p["phase"].clone()),
+        host.named("gamedb:progress")
+            .last()
+            .map(|p| p["phase"].clone()),
         Some(json!("cancelled"))
     );
     let listed = databases(&core).await;

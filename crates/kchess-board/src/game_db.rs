@@ -10,7 +10,8 @@ use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{DatabaseId, PgnFilePath};
 use kchess_contracts::types::{
-    DatabaseInfo, GameDbPhase, GameDbProgress, GameDbStatus, ProfileArea,
+    DatabaseInfo, GameDbImported, GameDbPhase, GameDbProgress, GameDbStatus, PlayerGames,
+    ProfileArea,
 };
 
 use crate::core::{AppCore, ClientEvent, CoreEvent};
@@ -29,6 +30,17 @@ pub struct GameDb {
     cancelling: bool,
     _events: Subscription,
 }
+
+/// The master games' database, as the core names it.
+const MASTER: &str = "master";
+
+/// What the databases tell the views that asked for something.
+pub enum GameDbEvent {
+    /// A player's games are in their database, `database`.
+    PlayerInstalled { database: String, username: String },
+}
+
+impl EventEmitter<GameDbEvent> for GameDb {}
 
 /// How views reach the databases: `cx.global::<GameDbHandle>().0`.
 #[derive(Clone)]
@@ -72,6 +84,11 @@ pub fn init(cx: &mut App) {
 impl GameDb {
     pub fn databases(&self) -> &[DatabaseInfo] {
         &self.status.databases
+    }
+
+    /// What went wrong with the last import, download or read, as the import card shows it.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
     }
 
     /// Read the list again: a read that works clears the failure an earlier one showed. A read
@@ -119,7 +136,7 @@ impl GameDb {
             into: None,
             name: None,
         });
-        self.run(GameDbPhase::Reading, import, cx);
+        self.run(GameDbPhase::Reading, "", import, |_, _| {}, cx);
     }
 
     /// Downloads the master games the master database lacks: every month at first, then the
@@ -128,14 +145,38 @@ impl GameDb {
         let install = cx
             .global::<AppCore>()
             .request(calls::GameDbMasterInstall { months: None });
-        self.run(GameDbPhase::Downloading, install, cx);
+        self.run(GameDbPhase::Downloading, MASTER, install, |_, _| {}, cx);
     }
 
-    /// Runs an import or download, its progress shown from `phase` until it ends.
+    /// Downloads the games `request` names into its player's database, replacing those an
+    /// earlier download brought; `GameDbEvent::PlayerInstalled` follows once they are in.
+    pub fn install_player(&mut self, request: PlayerGames, cx: &mut Context<Self>) {
+        let username = request.username.clone();
+        let install = cx
+            .global::<AppCore>()
+            .request(calls::GameDbPlayerInstall { request });
+        self.run(
+            GameDbPhase::Downloading,
+            "",
+            install,
+            move |imported: GameDbImported, cx| {
+                cx.emit(GameDbEvent::PlayerInstalled {
+                    database: imported.database.id,
+                    username,
+                });
+            },
+            cx,
+        );
+    }
+
+    /// Runs an import or download into `database` (empty while the core has not named it), its
+    /// progress shown from `phase` until it ends; `then` has its answer once it worked.
     fn run<T: 'static>(
         &mut self,
         phase: GameDbPhase,
+        database: &str,
         work: impl std::future::Future<Output = Result<T, kchess_contracts::CoreError>> + 'static,
+        then: impl FnOnce(T, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) {
         self.changes += 1;
@@ -143,7 +184,7 @@ impl GameDb {
         self.cancelling = false;
         self.progress = Some(GameDbProgress {
             phase,
-            database: String::new(),
+            database: database.to_string(),
             games: 0,
             skipped: 0,
             bytes: 0,
@@ -157,7 +198,10 @@ impl GameDb {
                 this.progress = None;
                 match result {
                     // The new or grown database is listed.
-                    Ok(_) => this.refresh(cx),
+                    Ok(answer) => {
+                        this.refresh(cx);
+                        then(answer, cx);
+                    }
                     // A failed or cancelled run leaves every database as it was, but for the
                     // months a download already added, which the list then shows.
                     Err(_) if this.cancelling => this.refresh(cx),
@@ -259,7 +303,13 @@ pub fn import_card(cx: &App, palette: &Palette) -> impl IntoElement + use<> {
                     .map(|total| (progress.bytes as f64 / total as f64).min(1.) as f32),
                 match &progress.message {
                     Some(month) => format!("Downloading master games · {month}"),
-                    None => "Downloading master games…".to_string(),
+                    None if progress.database == MASTER => "Downloading master games…".to_string(),
+                    // A player's games, counted as they arrive.
+                    None if progress.games > 0 => format!(
+                        "Downloading · {}",
+                        widgets::format_counted(progress.games as f64, "game", "games")
+                    ),
+                    None => "Downloading games…".to_string(),
                 },
             ),
             Some(progress) if progress.phase == GameDbPhase::Indexing => (

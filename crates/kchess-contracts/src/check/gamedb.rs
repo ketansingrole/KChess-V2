@@ -162,6 +162,14 @@ impl Validate for PlayerGames {
     }
 }
 
+/// A download a frontend's form made, checked as the core will check it: the form says what is
+/// wrong before it sends it.
+pub fn player_games(request: &PlayerGames) -> Result<PlayerGames, Refusal> {
+    let value =
+        serde_json::to_value(request).map_err(|_| Refusal::from("Invalid player download."))?;
+    check::<PlayerGames>(J::from(&value))
+}
+
 #[derive(Deserialize)]
 #[serde(expecting = "an object", rename_all = "camelCase", deny_unknown_fields)]
 struct SentQuery {
@@ -312,7 +320,10 @@ mod tests {
         assert!(player.rated);
         let plain = check::<PlayerGames>(sent(json!({ "site": "chesscom", "username": "hikaru" })))
             .unwrap();
-        assert_eq!((plain.months, plain.speeds, plain.rated), (None, None, false));
+        assert_eq!(
+            (plain.months, plain.speeds, plain.rated),
+            (None, None, false)
+        );
         let refused = |value| check::<PlayerGames>(sent(value)).unwrap_err();
         assert_eq!(
             refused(json!({ "site": "lichess", "username": "no spaces" })),

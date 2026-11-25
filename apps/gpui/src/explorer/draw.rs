@@ -85,13 +85,8 @@ pub fn result_bar(entry: &LookupMove, min_label: u64, palette: &Palette) -> impl
 
 impl PositionExplorer {
     fn render_filters(&self, prefs: &Prefs, cx: &mut Context<Self>, palette: &Palette) -> Div {
-        let toggle = |id: SharedString, label: String, on: bool| {
-            Button::new(id)
-                .small()
-                .label(label)
-                .when(on, |button| button.primary())
-                .when(!on, |button| button.ghost())
-        };
+        let toggle =
+            |id: SharedString, label: String, on: bool| widgets::toggle_button(id, label, on);
         v_flex()
             .gap(px(8.))
             .text_size(px(12.))
@@ -105,7 +100,7 @@ impl PositionExplorer {
                         ExplorerSpeed::ALL.iter().map(|&speed| {
                             toggle(
                                 SharedString::from(format!("speed-{}", speed.as_str())),
-                                speed_label(speed).into(),
+                                widgets::speed_label(speed).into(),
                                 prefs.speeds.contains(&speed),
                             )
                             .on_click(cx.listener(

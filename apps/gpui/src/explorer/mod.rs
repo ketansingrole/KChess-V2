@@ -40,7 +40,6 @@ use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
 use kchess_domain::misc::constants::EXPLORER_RATINGS;
-use kchess_domain::perf::Speed;
 use kchess_domain::variant::Variant;
 
 mod draw;
@@ -87,14 +86,8 @@ fn holds_variants(kind: PositionLookupKind) -> bool {
     )
 }
 
-/// A speed's name on its filter button: correspondence is shortened to fit the row.
-fn speed_label(speed: ExplorerSpeed) -> &'static str {
-    match Speed::from_key(speed.as_str()) {
-        Some(Speed::Correspondence) => "Corr",
-        Some(speed) => speed.label(),
-        None => speed.as_str(),
-    }
-}
+#[cfg(test)]
+use crate::widgets::speed_label;
 
 /// How the explorer shows a position's continuations.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

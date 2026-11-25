@@ -334,7 +334,11 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn request(months: Option<u32>, speeds: Option<Vec<ExplorerSpeed>>, rated: bool) -> PlayerGames {
+    fn request(
+        months: Option<u32>,
+        speeds: Option<Vec<ExplorerSpeed>>,
+        rated: bool,
+    ) -> PlayerGames {
         PlayerGames {
             site: GameSite::Lichess,
             username: "Some_Player".to_string(),
@@ -384,10 +388,7 @@ mod tests {
                 .collect()
         };
         let get = |query: &[(String, String)], key: &str| {
-            query
-                .iter()
-                .find(|(k, _)| k == key)
-                .map(|(_, v)| v.clone())
+            query.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
         };
         let every = query(&request(None, None, false));
         assert_eq!(
@@ -411,9 +412,7 @@ mod tests {
 
     #[test]
     fn chesscom_games_are_kept_by_rules_speed_and_rating() {
-        let game = |rules: &str, class: &str, rated: bool| {
-            json!({ "rules": rules, "time_class": class, "rated": rated, "pgn": "1. e4 *" })
-        };
+        let game = |rules: &str, class: &str, rated: bool| json!({ "rules": rules, "time_class": class, "rated": rated, "pgn": "1. e4 *" });
         let every = request(None, None, false);
         assert!(chesscom_keeps(&every, &game("chess", "daily", false)));
         assert!(!chesscom_keeps(&every, &game("chess960", "blitz", true)));
@@ -423,7 +422,10 @@ mod tests {
         ));
         let slow = request(
             None,
-            Some(vec![ExplorerSpeed::Classical, ExplorerSpeed::Correspondence]),
+            Some(vec![
+                ExplorerSpeed::Classical,
+                ExplorerSpeed::Correspondence,
+            ]),
             true,
         );
         assert!(chesscom_keeps(&slow, &game("chess", "rapid", true)));
