@@ -70,6 +70,13 @@ pub enum Open {
     /// One of the library's studies, or a new one named `name` from the start position.
     Study(String),
     NewStudy(String),
+    /// Chapter `chapter` of the library's study `study`, at the end of `moves` (UCI) from its
+    /// start: those it does not have are added to it, as if played on the board.
+    StudyLine {
+        study: String,
+        chapter: String,
+        moves: Vec<String>,
+    },
     /// A library study was replaced (its cloud copy kept): shown again if the board shows it, or
     /// the board's unsaved edits to it saved over it.
     StudyChanged(String),

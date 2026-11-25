@@ -298,6 +298,43 @@ fn open_library_study(id: String, window: &mut Window, cx: &mut App) {
     });
 }
 
+/// Chapter `chapter` of library study `id` at the end of `moves`, those it lacks added to it. A
+/// board showing that chapter goes there; another board is replaced, asking first if unsaved.
+fn open_study_line(
+    id: String,
+    chapter: String,
+    moves: Vec<String>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    when_read(window, cx, move |analysis, window, cx| {
+        let shown = {
+            let board = analysis.read(cx);
+            board.study_id() == id && board.chapter_id() == chapter
+        };
+        if shown {
+            analysis.update(cx, |analysis, cx| analysis.show_line(&moves, cx));
+            crate::shell::open(Page::Analysis, window, cx);
+            return;
+        }
+        replace_read(
+            analysis,
+            window,
+            cx,
+            move |analysis, window, cx| match analysis.open_study(&id, Some(&chapter), cx) {
+                Ok(()) => {
+                    analysis.show_line(&moves, cx);
+                    true
+                }
+                Err(cause) => {
+                    window.push_notification(Notification::error(cause), cx);
+                    false
+                }
+            },
+        );
+    });
+}
+
 /// A new study named `name`: an empty board, kept as a study at once.
 fn new_study(name: String, window: &mut Window, cx: &mut App) {
     replace(window, cx, move |analysis, window, cx| {
@@ -379,6 +416,11 @@ impl AnalysisBoard for Board {
             Open::Line(moves) => open_line(moves, window, cx),
             Open::Study(id) => open_library_study(id, window, cx),
             Open::NewStudy(name) => new_study(name, window, cx),
+            Open::StudyLine {
+                study,
+                chapter,
+                moves,
+            } => open_study_line(study, chapter, moves, window, cx),
             Open::StudyChanged(id) => study_changed(id, window, cx),
             Open::LichessChapter { study, chapter } => open_study(&study, &chapter, window, cx),
             Open::Linked(link) => open_linked(&link, window, cx),
