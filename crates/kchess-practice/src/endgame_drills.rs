@@ -27,7 +27,7 @@ use kchess_domain::voice::PuzzleCommand;
 use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar_height};
 use kchess_ui::icon;
 
-const GROUPS: [&str; 3] = ["Basic mates", "Pawn endings", "Rook endings"];
+pub(crate) const GROUPS: [&str; 3] = ["Basic mates", "Pawn endings", "Rook endings"];
 
 use kchess_domain::training::endgames::san_from;
 

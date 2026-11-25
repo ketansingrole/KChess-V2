@@ -13,6 +13,14 @@ wire_enum!(#[doc = "Everything the runs table (local scores) records."] RunKind,
     Lesson = "lesson",
 });
 
+/// A drill missed at least once (a run of its kind that scored nothing), and when it comes
+/// back: its spaced-repetition card, from its runs in order.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct RunCard {
+    pub variant: String,
+    pub card: kchess_domain::training::repetition::Card,
+}
+
 /// A run's score and details, as the game saves it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
