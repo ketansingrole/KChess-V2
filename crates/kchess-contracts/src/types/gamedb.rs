@@ -358,6 +358,10 @@ pub struct GameDbQuery {
     /// The games that reach this pawn structure and keep it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structure: Option<GameDbStructure>,
+    /// The games that put these pieces on these squares and keep them there ("Nd5 vs e6": one
+    /// side's pieces against the other's), either colour on either side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pieces: Option<String>,
     /// Newest first when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<GameDbSort>,

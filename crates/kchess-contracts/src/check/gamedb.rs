@@ -14,6 +14,7 @@ const DATABASE: &str = "Invalid database.";
 const QUERY: &str = "Invalid game search.";
 const POSITION: &str = "Invalid position.";
 const MATERIAL: &str = "Write the material as each side's pieces, like R vs B.";
+const PIECES: &str = "Write the pieces as each side's, like Nd5 vs e6.";
 
 /// A database's id, as `gameDbStatus` lists it: 1 to 40 lowercase letters, digits and dashes.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -381,6 +382,7 @@ struct SentQuery {
     speed: Option<ExplorerSpeed>,
     material: Option<String>,
     structure: Option<GameDbStructure>,
+    pieces: Option<String>,
     sort: Option<GameDbSort>,
     offset: u64,
     limit: u64,
@@ -405,6 +407,7 @@ impl Validate for GameDbQuery {
             ["position"] => Some(POSITION),
             ["minMoves" | "maxMoves"] => Some("Invalid number of moves."),
             ["material"] => Some(MATERIAL),
+            ["pieces"] => Some(PIECES),
             _ => Some(QUERY),
         })?;
         ensure(
@@ -442,6 +445,15 @@ impl Validate for GameDbQuery {
                 String::new,
             )?;
         }
+        let pieces = search_text(sent.pieces)?;
+        if let Some(pieces) = &pieces {
+            ensure(
+                kchess_domain::gamedb::patterns::Placement::parse(pieces).is_some(),
+                Some(PIECES),
+                "",
+                String::new,
+            )?;
+        }
         within(sent.offset, 0, 10_000_000, Some(QUERY), "")?;
         within(sent.limit, 1, 200, Some(QUERY), "")?;
         let year = |year: Option<i64>| year.and_then(|year| i32::try_from(year).ok());
@@ -462,6 +474,7 @@ impl Validate for GameDbQuery {
             speed: sent.speed,
             material,
             structure: sent.structure,
+            pieces,
             sort: sent.sort,
             offset: u32::try_from(sent.offset).unwrap_or(u32::MAX),
             limit: u32::try_from(sent.limit).unwrap_or(1),
@@ -635,9 +648,15 @@ mod tests {
         );
         let deep = check::<GameDbQuery>(sent(json!({
             "database": "mine", "minMoves": 40, "maxMoves": 80, "speed": "blitz",
-            "material": " R vs B ", "structure": "carlsbad", "offset": 0, "limit": 5
+            "material": " R vs B ", "structure": "carlsbad", "pieces": " Nd5 vs e6 ",
+            "offset": 0, "limit": 5
         })))
         .unwrap();
+        assert_eq!(deep.pieces.as_deref(), Some("Nd5 vs e6"));
+        assert_eq!(
+            refused(json!({"database": "mine", "pieces": "Nd9", "offset": 0, "limit": 5})),
+            PIECES
+        );
         assert_eq!((deep.min_moves, deep.max_moves), (Some(40), Some(80)));
         assert_eq!(deep.speed, Some(ExplorerSpeed::Blitz));
         assert_eq!(deep.material.as_deref(), Some("R vs B"));

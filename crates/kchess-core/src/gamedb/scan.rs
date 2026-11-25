@@ -1,6 +1,6 @@
 //! A deep search: the games a search's other filters keep, replayed to keep those played at a
-//! speed (their time control), and those that reach a material balance or a pawn structure and
-//! keep it (`kchess_domain::gamedb::patterns`). It runs on every core at once, each over a
+//! speed (their time control), and those that reach a material balance, a pawn structure or
+//! pieces on given squares and keep it (`kchess_domain::gamedb::patterns`). It runs on every core at once, each over a
 //! stretch of the games in id order, and stops as soon as its caller does.
 
 use std::path::Path;
@@ -14,7 +14,7 @@ use super::{schema, search};
 use crate::store::sql::Sql as _;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{ExplorerSpeed, GameDbQuery, GameDbStructure};
-use kchess_domain::gamedb::patterns::{self, Material, Speed, Structure};
+use kchess_domain::gamedb::patterns::{self, Material, Placement, Speed, Structure};
 use kchess_domain::gamedb::{self};
 
 const STOPPED: &str = "The search stopped.";
@@ -23,7 +23,10 @@ const BATCH: usize = 256;
 
 /// Whether `query` needs its games replayed.
 pub fn deep(query: &GameDbQuery) -> bool {
-    query.speed.is_some() || query.material.is_some() || query.structure.is_some()
+    query.speed.is_some()
+        || query.material.is_some()
+        || query.structure.is_some()
+        || query.pieces.is_some()
 }
 
 /// What a deep search looks for.
@@ -31,6 +34,7 @@ struct Wanted {
     speed: Option<ExplorerSpeed>,
     material: Option<Material>,
     structure: Option<Structure>,
+    pieces: Option<Placement>,
 }
 
 impl Wanted {
@@ -42,9 +46,16 @@ impl Wanted {
             ),
             None => None,
         };
+        let pieces = match query.pieces.as_deref() {
+            Some(text) => Some(Placement::parse(text).ok_or_else(|| {
+                CoreError::new("Write the pieces as each side's, like Nd5 vs e6.")
+            })?),
+            None => None,
+        };
         Ok(Wanted {
             speed: query.speed,
             material,
+            pieces,
             structure: query.structure.map(|structure| match structure {
                 GameDbStructure::IsolatedQueenPawn => Structure::IsolatedQueenPawn,
                 GameDbStructure::HangingPawns => Structure::HangingPawns,
@@ -65,7 +76,7 @@ impl Wanted {
                 return false;
             }
         }
-        if self.material.is_none() && self.structure.is_none() {
+        if self.material.is_none() && self.structure.is_none() && self.pieces.is_none() {
             return true;
         }
         let Some(start) = gamedb::start_of(fen) else {
@@ -82,6 +93,12 @@ impl Wanted {
             && patterns::reaches(&start, moves, patterns::changes_pawns, |board| {
                 structure.on(board)
             }) != Some(true)
+        {
+            return false;
+        }
+        // Any move can bring a piece to its square or take it away.
+        if let Some(pieces) = &self.pieces
+            && patterns::reaches(&start, moves, |_| true, |board| pieces.on(board)) != Some(true)
         {
             return false;
         }
