@@ -302,7 +302,7 @@ impl Render for GameFinder {
 mod tests {
     use super::GameFinder;
     use gpui_kit::AppContext as _;
-    use kchess_contracts::types::{GameSite, LichessGame};
+    use kchess_contracts::types::LichessGame;
 
     fn lichess_game() -> LichessGame {
         serde_json::from_value(serde_json::json!({
