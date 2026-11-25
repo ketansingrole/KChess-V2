@@ -308,10 +308,15 @@ fn release_block(index: usize, release: &Release, palette: &Palette) -> impl Int
         })
     });
     let untitled = release.items.iter().filter(|item| item.kind.is_none());
+    // "KChess 2026.11.9"; the unreleased notes a development build shows are "Unreleased".
+    let name = match kchess_delta::Version::parse(&release.version) {
+        Some(_) => format!("KChess {}", release.version),
+        None => release.version.clone(),
+    };
     v_flex()
         .id(("whats-new-release", index))
         .test_support()
-        .aria_label(format!("KChess {}", release.version))
+        .aria_label(name.clone())
         .gap(px(14.))
         .when(index > 0, |block| {
             block.pt(px(20.)).border_t_1().border_color(palette.border)
@@ -325,7 +330,7 @@ fn release_block(index: usize, release: &Release, palette: &Palette) -> impl Int
                         .text_size(px(15.))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(palette.highlighted)
-                        .child(format!("KChess {}", release.version)),
+                        .child(name),
                 )
                 .children(release.date.as_deref().and_then(date_label).map(|date| {
                     div()

@@ -44,3 +44,28 @@ fn the_notes_open_from_settings_and_quick_pick(cx: &mut gpui_kit::TestAppContext
     app.press("enter");
     app.find("whats-new");
 }
+
+/// In a short window the notes run past the bottom of the list, and the wheel scrolls to them.
+#[gpui_kit::test]
+fn the_notes_scroll_in_a_short_window(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{px, size};
+    let mut app = Harness::start(cx);
+    app.cx
+        .simulate_window_resize(app.window, size(px(900.), px(480.)));
+    app.settle();
+    app.click("account-menu");
+    app.click_label("What's new");
+    let list = app.find("whats-new").bounds();
+    // The newest notes alone are taller than a short window's list.
+    let first = app.find(("whats-new-release", 0usize)).bounds();
+    assert!(
+        first.size.height > list.size.height,
+        "the newest release {first:?} keeps its height past the list {list:?}, to scroll to"
+    );
+    app.scroll_point(list.center(), px(-300.));
+    let scrolled = app.find(("whats-new-release", 0usize)).bounds();
+    assert!(
+        scrolled.top() < first.top(),
+        "the wheel scrolls the notes: {first:?} then {scrolled:?}"
+    );
+}
