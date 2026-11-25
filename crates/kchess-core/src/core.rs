@@ -94,6 +94,9 @@ pub struct Core {
     /// Where the `gameDbLichess*` methods find Lichess's monthly rated games: Lichess's, or the
     /// test origin's `/database/standard/` in its place.
     pub(crate) lichess_games_url: String,
+    /// Where `gameDbTcecInstall` asks for TCEC's latest release, and finds its files: GitHub's,
+    /// or the test origin's `/tcec/latest` and `/tcec/download/` in their place.
+    pub(crate) tcec_urls: (String, String),
     /// Managed engine installs and deletes in progress, by request id.
     installs: Mutex<HashMap<u64, CancellationToken>>,
     /// Counts the changes to each tournament's memberships, each made in the write that makes
@@ -212,6 +215,20 @@ impl Core {
             || crate::gamedb::lichess::ARCHIVE.to_string(),
             |origin| format!("{origin}/database/standard/"),
         );
+        let tcec_urls = test.lichess_origin.as_deref().map_or_else(
+            || {
+                (
+                    crate::gamedb::tcec::LATEST.to_string(),
+                    crate::gamedb::tcec::DOWNLOADS.to_string(),
+                )
+            },
+            |origin| {
+                (
+                    format!("{origin}/tcec/latest"),
+                    format!("{origin}/tcec/download/"),
+                )
+            },
+        );
         let services = Services::new(
             Arc::clone(&host),
             Arc::clone(&database),
@@ -275,6 +292,7 @@ impl Core {
             puzzle_db_url,
             master_games_url,
             lichess_games_url,
+            tcec_urls,
             installs: Mutex::new(HashMap::new()),
             memberships: Arc::default(),
             busy,

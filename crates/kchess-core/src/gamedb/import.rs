@@ -56,7 +56,13 @@ pub struct Input<R> {
     pub packing: PgnPacking,
     pub label: Option<String>,
     pub keep: Option<Keep>,
+    /// Which files of a `.zip` or `.7z` are read, by name: every PGN file (`archived_pgn`) when
+    /// absent.
+    pub entry: Option<Entry>,
 }
+
+/// Which files of an archive an import reads, by their names in it.
+pub type Entry = fn(&str) -> bool;
 
 /// Which games of a text an import reads, by their header lines (`[White "…"]` and the rest,
 /// each with its line ending), before their moves are read.
@@ -222,7 +228,7 @@ impl<R: Seek> Seek for Counted<R> {
 
 /// Whether an archive's entry named `name` is a PGN file to read: a `.pgn` that is not macOS's
 /// record of another file's attributes (`__MACOSX/`, `._name.pgn`).
-fn archived_pgn(name: &str) -> bool {
+pub fn archived_pgn(name: &str) -> bool {
     let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
     name.to_ascii_lowercase().ends_with(".pgn")
         && !name.starts_with("__MACOSX/")
@@ -233,6 +239,7 @@ fn archived_pgn(name: &str) -> bool {
 /// blank line ends each, so the last game of one never runs into the first of the next.
 fn unzip_pgn(
     reader: impl Read + Seek,
+    wanted: Entry,
     mut sink: impl FnMut(&[u8]) -> io::Result<()>,
 ) -> Result<()> {
     let unreadable = |cause: zip::result::ZipError| {
@@ -251,7 +258,7 @@ fn unzip_pgn(
         let mut entry = {
             let about = archive.by_index_data(index).map_err(unreadable)?;
             let name = about.name().map_err(unreadable)?;
-            if about.is_dir() || !archived_pgn(&name) {
+            if about.is_dir() || !wanted(&name) {
                 continue;
             }
             archive.by_index(index).map_err(unreadable)?
@@ -280,7 +287,11 @@ const SEVEN_ZIP_MEMORY_KB: usize = 2 * 1024 * 1024;
 /// each ended by a blank line as a zip's are. A solid archive decodes as one stream, so the other
 /// files in it are decoded and checked too, but never kept. It decodes on one thread: the import
 /// reading the games is the slower side.
-fn un7z_pgn(reader: impl Read + Seek, mut sink: impl FnMut(&[u8]) -> io::Result<()>) -> Result<()> {
+fn un7z_pgn(
+    reader: impl Read + Seek,
+    wanted_name: Entry,
+    mut sink: impl FnMut(&[u8]) -> io::Result<()>,
+) -> Result<()> {
     use sevenz_rust2::{ArchiveReader, Error, Password};
     let locked = || CoreError::new("That .7z is password-protected.");
     let unreadable = |cause: Error| match cause {
@@ -303,7 +314,7 @@ fn un7z_pgn(reader: impl Read + Seek, mut sink: impl FnMut(&[u8]) -> io::Result<
         entry.has_stream()
             && !entry.is_directory()
             && !entry.is_anti_item
-            && archived_pgn(entry.name())
+            && wanted_name(entry.name())
     };
     let about = archive.archive();
     let pgn: Vec<usize> = (about.files.iter().enumerate())
@@ -344,6 +355,7 @@ fn cancelled_error() -> CoreError {
 pub struct Source {
     file: File,
     name: Option<String>,
+    entry: Option<Entry>,
 }
 
 impl Source {
@@ -364,7 +376,11 @@ impl Source {
         let name = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned());
-        Ok(Source { file, name })
+        Ok(Source {
+            file,
+            name,
+            entry: None,
+        })
     }
 
     /// A file the core downloaded itself (`master`), recorded as the file `name` it came as.
@@ -374,7 +390,16 @@ impl Source {
         Ok(Source {
             file,
             name: Some(name.to_string()),
+            entry: None,
         })
+    }
+
+    /// The same file, of which only the archive's files `entry` names are read.
+    pub fn only(self, entry: Entry) -> Source {
+        Source {
+            entry: Some(entry),
+            ..self
+        }
     }
 }
 
@@ -563,6 +588,7 @@ pub fn run(
     let Source {
         file,
         name: file_name,
+        entry,
     } = source;
     let total_bytes = file.metadata().map(|m| m.len()).unwrap_or(0);
     let input = Input {
@@ -571,6 +597,7 @@ pub fn run(
         packing,
         label: file_name,
         keep: None,
+        entry,
     };
     read_into(input, target, dir, capacity, watch)
 }
@@ -590,7 +617,9 @@ pub fn read_into<R: Read + Seek + Send + 'static>(
         packing,
         label,
         keep,
+        entry,
     } = input;
+    let wanted = entry.unwrap_or(archived_pgn);
     let read = Arc::new(AtomicU64::new(0));
     let counted = Counted {
         inner: reader,
@@ -644,8 +673,8 @@ pub fn read_into<R: Read + Seek + Send + 'static>(
                             .map_err(|_| io::Error::other("import stopped"))
                     };
                     match packing {
-                        PgnPacking::Zip => unzip_pgn(counted, sink),
-                        PgnPacking::SevenZip => un7z_pgn(counted, sink),
+                        PgnPacking::Zip => unzip_pgn(counted, wanted, sink),
+                        PgnPacking::SevenZip => un7z_pgn(counted, wanted, sink),
                         _ => crate::zst::decode(counted, sink).map_err(|cause| {
                             CoreError::wrap("That file is not a readable .pgn.zst", cause)
                         }),

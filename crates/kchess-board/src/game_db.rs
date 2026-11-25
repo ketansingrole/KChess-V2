@@ -33,6 +33,8 @@ pub struct GameDb {
 
 /// The master games' database, as the core names it.
 const MASTER: &str = "master";
+/// The engine games' database.
+const TCEC: &str = "tcec";
 
 /// What the databases tell the views that asked for something.
 pub enum GameDbEvent {
@@ -152,6 +154,12 @@ impl GameDb {
             .global::<AppCore>()
             .request(calls::GameDbMasterInstall { months: None });
         self.run(GameDbPhase::Downloading, MASTER, install, |_, _| {}, cx);
+    }
+
+    /// Downloads TCEC's latest engine games, replacing those of an older release.
+    pub fn install_tcec(&mut self, cx: &mut Context<Self>) {
+        let install = cx.global::<AppCore>().request(calls::GameDbTcecInstall {});
+        self.run(GameDbPhase::Downloading, TCEC, install, |_, _| {}, cx);
     }
 
     /// Downloads the games `request` names into its player's database, replacing those an
@@ -336,6 +344,7 @@ pub fn import_card(cx: &App, palette: &Palette) -> impl IntoElement + use<> {
                     ),
                     Some(month) => format!("Downloading master games · {month}"),
                     None if progress.database == MASTER => "Downloading master games…".to_string(),
+                    None if progress.database == TCEC => "Downloading engine games…".to_string(),
                     // A player's games, counted as they arrive.
                     None if progress.games > 0 => format!(
                         "Downloading · {}",

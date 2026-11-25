@@ -663,6 +663,14 @@ core_api! {
         GameDbMasterInstall = "gameDbMasterInstall" fn game_db_master_install(;
             months: Option<MasterMonths>
         ) -> GameDbImported;
+        /// Downloads TCEC's latest release of engine games (`github.com/TCEC-Chess/tcecgames`,
+        /// CC BY-SA 3.0) into the engine games database (`tcec`), checked against the SHA-256
+        /// GitHub gives it: every standard-chess competition game so far, replacing those of an
+        /// older release. Nothing is downloaded when the database holds the latest release.
+        /// Progress arrives as `gamedb:progress`; `gameDbCancel` stops it and leaves the database
+        /// as it was.
+        #[writes(GameDb)]
+        GameDbTcecInstall = "gameDbTcecInstall" fn game_db_tcec_install() -> GameDbImported;
         /// Downloads one player's games from Lichess or Chess.com into a database of their own,
         /// which the request names and keeps: a later call for the same player replaces its games
         /// with those the new request brings. Progress arrives as `gamedb:progress`

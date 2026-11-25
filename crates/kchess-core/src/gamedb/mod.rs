@@ -16,6 +16,7 @@ pub mod own;
 pub mod player;
 pub mod schema;
 pub mod search;
+pub mod tcec;
 pub mod tree;
 
 use std::collections::HashMap;

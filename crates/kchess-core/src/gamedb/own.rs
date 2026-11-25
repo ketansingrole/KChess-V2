@@ -345,6 +345,7 @@ async fn build(
         packing: PgnPacking::Plain,
         label: Some(fingerprint.to_string()),
         keep: None,
+        entry: None,
     };
     let dir = inner.dir.clone();
     let host = Arc::clone(&inner.host);

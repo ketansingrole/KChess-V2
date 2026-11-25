@@ -296,6 +296,46 @@ fn the_master_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext)
     });
 }
 
+/// The engine games button downloads TCEC's latest release into a database of its own: its
+/// standard competition games alone, listed with the release's attribution; the button then
+/// offers to update them.
+#[gpui_kit::test]
+fn the_engine_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    assert_eq!(
+        app.find("database-tcec").label(),
+        Some("Engine games · 27 MB")
+    );
+    app.click("database-tcec");
+    wait_for_listed(
+        &mut app,
+        "the competition game alone",
+        &["Stockfish dev against LCZero 0.32, 1-0"],
+    );
+    app.wait_for_app("the release's attribution", |cx| {
+        let db = cx
+            .global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx);
+        db.databases().iter().any(|info| {
+            info.source == kchess_contracts::types::DatabaseSource::Tcec
+                && info.games == 1
+                && info
+                    .attribution
+                    .as_deref()
+                    .is_some_and(|text| text.contains("CC BY-SA 3.0"))
+        })
+    });
+    app.wait_for("the button to update them", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .elements()
+            .iter()
+            .any(|element| element.label() == Some("Update engine games"))
+    });
+}
+
 /// Strong Lichess games: the dialog offers Lichess's newest month and says how large it is; the
 /// download keeps only the month's game of two 2400s, in a database of its own, which then offers
 /// to add a month, the one month it lacks.

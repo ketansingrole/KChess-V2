@@ -70,6 +70,9 @@ const RESULTS: [&str; 4] = ["All", "White won", "Draws", "Black won"];
 const MASTERS_LABEL: &str = "Master games · 770 MB";
 const MASTERS_TIP: &str =
     "Games from top over-the-board events since 2020, from Lichess's broadcasts";
+/// TCEC's engine games: its compact release, some 27 MB to download (2026-06).
+const TCEC_LABEL: &str = "Engine games · 27 MB";
+const TCEC_TIP: &str = "Every game of the Top Chess Engine Championship's competitions";
 const LICHESS_TIP: &str = "A month of rated games between strong Lichess players";
 /// Below this width the table keeps the players and the result.
 const NARROW: Pixels = px(720.);
@@ -742,6 +745,10 @@ impl Render for DatabasePage {
             .databases(cx)
             .iter()
             .any(|info| info.source == DatabaseSource::Master);
+        let engines = self
+            .databases(cx)
+            .iter()
+            .any(|info| info.source == DatabaseSource::Tcec);
         let header = h_flex()
             .gap(px(12.))
             .flex_wrap()
@@ -831,6 +838,22 @@ impl Render for DatabasePage {
                         .on_click(|_, _, cx| {
                             let db = cx.global::<GameDbHandle>().0.clone();
                             db.update(cx, |db, cx| db.install_masters(cx));
+                        }),
+                )
+                .child(
+                    Button::new("database-tcec")
+                        .outline()
+                        .small()
+                        .icon(icon("download"))
+                        .label(if engines {
+                            SharedString::new_static("Update engine games")
+                        } else {
+                            SharedString::new_static(TCEC_LABEL)
+                        })
+                        .tooltip(TCEC_TIP)
+                        .on_click(|_, _, cx| {
+                            let db = cx.global::<GameDbHandle>().0.clone();
+                            db.update(cx, |db, cx| db.install_tcec(cx));
                         }),
                 )
             })
@@ -953,6 +976,7 @@ pub enum Action {
     Player,
     Lichess,
     Masters,
+    Tcec,
     ClearFilters,
 }
 
@@ -982,6 +1006,12 @@ impl PageAction for Action {
                 "Download master games",
                 "download",
                 "masters broadcasts otb grandmaster update",
+            ),
+            Action::Tcec => ActionInfo::new(
+                "database:tcec",
+                "Download engine games",
+                "download",
+                "tcec engines stockfish leela computer championship update",
             ),
             Action::ClearFilters => {
                 ActionInfo::new("database:clear", "Clear filters", "x", "reset all")
@@ -1017,6 +1047,7 @@ impl PageView for DatabasePage {
             actions.push(Action::Player);
             actions.push(Action::Lichess);
             actions.push(Action::Masters);
+            actions.push(Action::Tcec);
         }
         if self.filtered(cx) {
             actions.push(Action::ClearFilters);
@@ -1032,6 +1063,10 @@ impl PageView for DatabasePage {
             Action::Masters => {
                 let db = cx.global::<GameDbHandle>().0.clone();
                 db.update(cx, |db, cx| db.install_masters(cx));
+            }
+            Action::Tcec => {
+                let db = cx.global::<GameDbHandle>().0.clone();
+                db.update(cx, |db, cx| db.install_tcec(cx));
             }
             Action::ClearFilters => {
                 this.update(cx, |page, cx| page.clear_filters(window, cx));

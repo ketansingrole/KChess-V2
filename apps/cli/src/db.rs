@@ -1,6 +1,6 @@
 //! `db`: the game databases on this computer — list them, import a PGN file, download the master
-//! games, a player's games or a month of strong Lichess games, search one's games, print a game,
-//! rename and delete.
+//! games, TCEC's engine games, a player's games or a month of strong Lichess games, search one's
+//! games, print a game, rename and delete.
 
 use kchess_contracts::calls;
 use kchess_contracts::check::{DatabaseId, DatabaseName, GameDbGameId, MasterMonths, PgnFilePath};
@@ -29,6 +29,8 @@ pub enum Db {
     Masters {
         months: Option<u32>,
     },
+    /// Download TCEC's latest engine games, unless they are in.
+    Tcec,
     /// Download a player's games into their database, replacing those an earlier download
     /// brought.
     Player(PlayerGames),
@@ -106,6 +108,10 @@ pub fn parse(words: &[String]) -> Result<Db, String> {
             }
             Ok(Db::Masters { months })
         }
+        "tcec" => match rest.first() {
+            None => Ok(Db::Tcec),
+            Some(other) => Err(format!("db tcec does not take {other}.")),
+        },
         "player" => {
             let mut words = rest.iter();
             let site = match words.next().map(String::as_str) {
@@ -250,8 +256,8 @@ pub fn parse(words: &[String]) -> Result<Db, String> {
             database: database(rest)?,
         }),
         other => Err(format!(
-            "Unknown db command {other}: list, import, masters, player, lichess, games, game, \
-             rename or delete."
+            "Unknown db command {other}: list, import, masters, tcec, player, lichess, games, \
+             game, rename or delete."
         )),
     }
 }
@@ -327,6 +333,10 @@ pub async fn run(core: &CoreClient, events: &mut ClientEvents, db: Db) -> Result
             let install = core.request(calls::GameDbMasterInstall {
                 months: months.map(MasterMonths),
             });
+            print(json!(follow(core, events, install).await?));
+        }
+        Db::Tcec => {
+            let install = core.request(calls::GameDbTcecInstall {});
             print(json!(follow(core, events, install).await?));
         }
         Db::Player(request) => {
@@ -424,6 +434,16 @@ mod tests {
             }
         );
         assert_eq!(
+            parse(&words("delete abc")).unwrap(),
+            Db::Delete {
+                database: "abc".into()
+            }
+        );
+    }
+
+    #[test]
+    fn db_download_words_make_their_commands() {
+        assert_eq!(
             parse(&words("masters")).unwrap(),
             Db::Masters { months: None }
         );
@@ -469,12 +489,7 @@ mod tests {
             })
         );
         assert_eq!(parse(&words("lichess months")).unwrap(), Db::LichessMonths);
-        assert_eq!(
-            parse(&words("delete abc")).unwrap(),
-            Db::Delete {
-                database: "abc".into()
-            }
-        );
+        assert_eq!(parse(&words("tcec")).unwrap(), Db::Tcec);
     }
 
     #[test]
@@ -497,6 +512,7 @@ mod tests {
             ("lichess --rating high", "takes a number"),
             ("lichess --month", "needs a value"),
             ("lichess months 3", "does not take 3"),
+            ("tcec S29", "does not take S29"),
             ("lichess --speed blitz", "does not take --speed"),
             ("frobnicate", "Unknown db command"),
         ] {
