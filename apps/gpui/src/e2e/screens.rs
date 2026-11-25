@@ -1590,7 +1590,7 @@ fn event_table() {
                 _ => "0-1",
             };
             pgn += &format!(
-                "[Event \"Tata Steel Masters\"]\n[Site \"Wijk aan Zee NED\"]\n\
+                "[Event \"Tata Steel Masters\"]\n[Site \"Wijk aan Zee\"]\n\
                  [Date \"2025.01.{:02}\"]\n[Round \"{}\"]\n[White \"{w}\"]\n[Black \"{b}\"]\n\
                  [WhiteElo \"{we}\"]\n[BlackElo \"{be}\"]\n[Result \"{result}\"]\n\n1. e4 e5 {result}\n\n",
                 18 + round % 13,
