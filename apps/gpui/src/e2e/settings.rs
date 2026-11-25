@@ -473,6 +473,16 @@ fn storage_lists_every_download_and_asks_before_filling_the_disk(
         .unwrap_or_default()
         .to_string();
     assert!(free.ends_with(" free on this disk"), "{free}");
+    // The profile's own files are counted, whatever else is: nothing KChess keeps is left out.
+    app.wait_for("the profile's files", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        (0..6usize).any(|index| {
+            window
+                .try_find(gpui_kit::ElementId::from(("storage-part", index)))
+                .and_then(|part| part.label().map(str::to_string))
+                .is_some_and(|label| label.starts_with("Logs and other files "))
+        })
+    });
     // No game database yet: the row leads to the Database page.
     app.click("storage-databases-open");
     app.wait_for_page(crate::pages::Page::Database);

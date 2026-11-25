@@ -318,6 +318,12 @@ impl AppCore {
     }
 }
 
+/// The folder the profile's shared core service runs from: one copy of this release's service,
+/// outside the app so an update can replace the app while it runs (`docs/shared-core.md`).
+pub fn service_folder() -> Option<std::path::PathBuf> {
+    kchess_client::discovery::runtime_dir()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Answer, Reads};

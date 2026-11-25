@@ -263,6 +263,9 @@ pub struct SettingsPage {
     mic_asking: bool,
     /// Storage: the bytes free on the profile's disk, when the system says.
     free_space: Option<u64>,
+    /// Storage: every file in the profile, and the installed app with its service's copy.
+    profile_bytes: Option<u64>,
+    app_bytes: Option<u64>,
     /// Storage: what clearing the scores and exporting diagnostics said.
     runs_note: Option<SharedString>,
     diagnostics_note: Option<SharedString>,
@@ -427,14 +430,25 @@ impl SettingsPage {
                 &cx.global::<crate::reviews::ReviewHandle>().0.clone(),
                 |_, _, cx| cx.notify(),
             ),
+            // A download or delete that ended changes what Storage measures.
             cx.observe(
                 &cx.global::<crate::puzzle_db::PuzzleDbHandle>().0.clone(),
-                |_, _, cx| cx.notify(),
+                |this, db, cx| {
+                    if this.section == Section::Storage && !db.read(cx).busy() {
+                        this.refresh_free_space(cx);
+                    }
+                    cx.notify()
+                },
             ),
             // Storage lists the game databases and their size.
             cx.observe(
                 &cx.global::<crate::game_db::GameDbHandle>().0.clone(),
-                |_, _, cx| cx.notify(),
+                |this, db, cx| {
+                    if this.section == Section::Storage && !db.read(cx).busy() {
+                        this.refresh_free_space(cx);
+                    }
+                    cx.notify()
+                },
             ),
             cx.observe(
                 &cx.global::<crate::updates::UpdatesHandle>().0.clone(),
@@ -504,6 +518,8 @@ impl SettingsPage {
             mic: crate::microphone::host(cx),
             mic_asking: false,
             free_space: None,
+            profile_bytes: None,
+            app_bytes: None,
             runs_note: None,
             diagnostics_note: None,
             exporting: false,

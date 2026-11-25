@@ -25,6 +25,17 @@ use sha2::{Digest, Sha256};
 use crate::log::{IoResultExt as _, ResultExt as _};
 use crate::settings::{SettingsChanged, SettingsHandle};
 
+/// Where the running KChess is installed (its bundle, its folder or its AppImage), when it was
+/// installed from a KChess package, for Settings → Storage to measure.
+pub fn install_path() -> Option<PathBuf> {
+    let install = install::installed()?;
+    match install.package {
+        // The .deb's executable sits in `/opt/KChess` with everything it installed.
+        Package::Deb => install.path.parent().map(Path::to_path_buf),
+        Package::MacZip | Package::WindowsInstaller | Package::AppImage => Some(install.path),
+    }
+}
+
 mod download;
 mod install;
 mod patch;

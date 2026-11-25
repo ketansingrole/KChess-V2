@@ -1,5 +1,6 @@
 //! Settings → Storage: everything KChess keeps on this computer in one place. What it takes in
-//! all and what the disk has left, every download with its size and its Download or Delete
+//! all (the app itself, its service and every file in the profile, so nothing is left out) and
+//! what the disk has left, every download with its size and its Download or Delete
 //! (the game databases, the puzzles, the speech model, Stockfish), what each account keeps and
 //! downloaded, and the local scores and diagnostics.
 
@@ -24,26 +25,44 @@ pub struct Part {
     pub bytes: u64,
 }
 
-/// The parts in the bar's order, from what the page knows of each.
-pub fn parts(databases: u64, puzzles: u64, own: u64, speech: u64, engine: u64) -> Vec<Part> {
-    vec![
-        Part {
-            label: "Game databases",
-            bytes: databases,
-        },
-        Part {
-            label: "Puzzles",
-            bytes: puzzles,
-        },
-        Part {
-            label: "Your games and studies",
-            bytes: own,
-        },
-        Part {
-            label: "Speech model and Stockfish",
-            bytes: speech.saturating_add(engine),
-        },
-    ]
+/// What the page has measured, each in bytes.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Measured {
+    /// The installed app and the copy of its service it runs from; unknown in a development run
+    /// outside a bundle.
+    pub app: Option<u64>,
+    /// Every file in the profile's folder, which holds all the rest.
+    pub profile: Option<u64>,
+    pub databases: u64,
+    pub puzzles: u64,
+    pub own: u64,
+    pub speech: u64,
+    pub engine: u64,
+}
+
+/// The parts in the bar's order. What the profile holds besides the named parts (logs, themes,
+/// the databases' working files) is its own part, so the parts add up to all KChess takes.
+pub fn parts(measured: &Measured) -> Vec<Part> {
+    let named = [
+        ("Game databases", measured.databases),
+        ("Puzzles", measured.puzzles),
+        ("Your games and studies", measured.own),
+        (
+            "Speech model and Stockfish",
+            measured.speech.saturating_add(measured.engine),
+        ),
+    ];
+    let named_total = named
+        .iter()
+        .fold(0u64, |total, (_, bytes)| total.saturating_add(*bytes));
+    let other = measured
+        .profile
+        .map_or(0, |profile| profile.saturating_sub(named_total));
+    std::iter::once(("KChess app", measured.app.unwrap_or(0)))
+        .chain(named)
+        .chain(std::iter::once(("Logs and other files", other)))
+        .map(|(label, bytes)| Part { label, bytes })
+        .collect()
 }
 
 /// "KChess uses 1.2 GB", the summary's headline.
@@ -53,13 +72,26 @@ pub fn headline(parts: &[Part]) -> String {
 }
 
 impl SettingsPage {
-    /// The bytes free on the profile's disk, read again.
+    /// The bytes free on the profile's disk, what the profile holds, and what the app and its
+    /// service take, read again.
     pub(super) fn refresh_free_space(&mut self, cx: &mut Context<Self>) {
-        let asked = cx.global::<AppCore>().request(calls::FreeSpace {});
+        let free = cx.global::<AppCore>().request(calls::FreeSpace {});
+        let profile = cx.global::<AppCore>().request(calls::ProfileSize {});
+        let app = cx.background_spawn(async move {
+            let install = crate::updates::install_path()?;
+            let service = crate::core::service_folder();
+            Some(kchess_host::disk::folder_bytes(&install).saturating_add(
+                service.map_or(0, |folder| kchess_host::disk::folder_bytes(&folder)),
+            ))
+        });
         cx.spawn(async move |this, cx| {
-            let free = asked.await.warn_on_err().flatten();
+            let free = free.await.warn_on_err().flatten();
+            let profile = profile.await.warn_on_err();
+            let app = app.await;
             this.update(cx, |this, cx| {
                 this.free_space = free;
+                this.profile_bytes = profile;
+                this.app_bytes = app;
                 cx.notify();
             })
             .ok();
@@ -92,7 +124,15 @@ impl SettingsPage {
             .as_ref()
             .filter(|status| status.managed.installed)
             .map_or(0, |status| status.managed.bytes);
-        parts(databases, puzzles, own, speech, engine)
+        parts(&Measured {
+            app: self.app_bytes,
+            profile: self.profile_bytes,
+            databases,
+            puzzles,
+            own,
+            speech,
+            engine,
+        })
     }
 
     /// What KChess takes in all, what is left on the disk, and a bar of the parts.
@@ -100,10 +140,12 @@ impl SettingsPage {
         let parts = self.storage_parts(cx);
         let total: u64 = parts.iter().map(|part| part.bytes).sum();
         let colors = [
+            palette.dimmed,
             palette.primary,
             palette.info,
             palette.success,
             palette.warning,
+            palette.border_accented,
         ];
         let headline = headline(&parts);
         let free = self
@@ -126,18 +168,19 @@ impl SettingsPage {
                     .w(relative(part.bytes as f32 / total.max(1) as f32))
                     .bg(*color)
             }));
-        let legend = h_flex()
-            .flex_wrap()
-            .gap_x(px(20.))
-            .gap_y(px(6.))
-            .children(shown.iter().map(|(part, color)| {
+        let legend = h_flex().flex_wrap().gap_x(px(20.)).gap_y(px(6.)).children(
+            shown.iter().enumerate().map(|(index, (part, color))| {
                 let text = format!("{} {}", part.label, format_bytes(part.bytes as f64));
                 h_flex()
+                    .id(("storage-part", index))
+                    .test_support()
+                    .aria_label(text.clone())
                     .gap(px(6.))
                     .text_size(px(12.))
                     .child(div().size(px(8.)).rounded_full().bg(*color))
                     .child(div().text_color(palette.text_muted).child(text))
-            }));
+            }),
+        );
         widgets::card(palette)
             .gap(px(12.))
             .child(
@@ -300,25 +343,45 @@ impl SettingsPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{headline, parts};
+    use super::{Measured, headline, parts};
 
-    /// The speech model and Stockfish share a part; the headline is every part's sum.
+    /// The app and what the profile holds besides the named parts are parts too, so the
+    /// headline is all KChess takes.
     #[test]
-    fn the_summary_adds_up_every_part() {
+    fn the_summary_adds_up_everything_kchess_takes() {
         let mb = 1024 * 1024;
-        let all = parts(500 * mb, 100 * mb, 20 * mb, 40 * mb, 60 * mb);
+        let measured = Measured {
+            app: Some(200 * mb),
+            profile: Some(730 * mb),
+            databases: 500 * mb,
+            puzzles: 100 * mb,
+            own: 20 * mb,
+            speech: 40 * mb,
+            engine: 60 * mb,
+        };
+        let all = parts(&measured);
         let labels: Vec<_> = all.iter().map(|part| part.label).collect();
         assert_eq!(
             labels,
             [
+                "KChess app",
                 "Game databases",
                 "Puzzles",
                 "Your games and studies",
-                "Speech model and Stockfish"
+                "Speech model and Stockfish",
+                "Logs and other files"
             ]
         );
-        assert_eq!(all[3].bytes, 100 * mb);
-        assert_eq!(headline(&all), "KChess uses 720 MB");
-        assert_eq!(headline(&parts(0, 0, 0, 0, 0)), "KChess uses 0 B");
+        assert_eq!(all[4].bytes, 100 * mb);
+        assert_eq!(all[5].bytes, 10 * mb, "the profile's other files");
+        assert_eq!(headline(&all), "KChess uses 930 MB");
+        // Not yet measured: only what is known, and never less than nothing.
+        let early = parts(&Measured {
+            profile: Some(mb),
+            databases: 5 * mb,
+            ..Measured::default()
+        });
+        assert_eq!((early[0].bytes, early[5].bytes), (0, 0));
+        assert_eq!(headline(&parts(&Measured::default())), "KChess uses 0 B");
     }
 }

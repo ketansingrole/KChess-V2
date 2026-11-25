@@ -709,6 +709,9 @@ core_api! {
         /// The bytes free on the disk the profile is on, read now; none when the system does not
         /// say. A frontend asks before a download, to warn when it would fill the disk.
         FreeSpace = "freeSpace" fn free_space() -> Option<u64>;
+        /// The bytes of every file in the profile's folder: its databases, downloads, logs,
+        /// themes and working files, so what it takes in all is never less than shown.
+        ProfileSize = "profileSize" fn profile_size() -> u64;
         #[writes(Usage)]
         ResetUsage = "resetUsage" fn reset_usage() -> ();
         /// The user's own app themes from the profile's themes folder, with a line per file that
