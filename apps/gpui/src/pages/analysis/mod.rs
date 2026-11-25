@@ -8,6 +8,7 @@ mod import;
 mod load;
 mod notes;
 mod novelty;
+mod opening_report;
 mod page;
 mod practice;
 mod review;

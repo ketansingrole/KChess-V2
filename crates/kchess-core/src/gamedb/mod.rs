@@ -15,6 +15,7 @@ pub mod lichess;
 pub mod master;
 pub mod names;
 pub mod novelty;
+pub mod opening;
 pub mod own;
 pub mod player;
 pub mod report;
@@ -39,9 +40,9 @@ use kchess_contracts::CoreEvent;
 use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    DatabaseInfo, DatabaseSource, GameDbImported, GameDbNameGroup, GameDbNovelty, GameDbPage,
-    GameDbPhase as Phase, GameDbPlayerReport, GameDbProgress, GameDbQuery, GameDbSaved,
-    GameDbStatus, LookupOptions, PositionLookup,
+    DatabaseInfo, DatabaseSource, GameDbImported, GameDbNameGroup, GameDbNovelty,
+    GameDbOpeningReport, GameDbPage, GameDbPhase as Phase, GameDbPlayerReport, GameDbProgress,
+    GameDbQuery, GameDbSaved, GameDbStatus, LookupOptions, PositionLookup,
 };
 use kchess_domain::gamedb;
 
@@ -397,6 +398,15 @@ impl Inner {
 }
 
 /// The last report of a run that ended in `error`: cancelled when it was asked to stop.
+/// The databases `files` names, open to read; one being written for the first time is left out,
+/// having nothing to read yet.
+fn open_references(files: Vec<(String, PathBuf)>) -> Vec<(String, rusqlite::Connection)> {
+    files
+        .into_iter()
+        .filter_map(|(id, file)| Some((id, schema::open_read(&file).ok()?)))
+        .collect()
+}
+
 fn failed(running: &Running, database: &str, error: &CoreError) -> GameDbProgress {
     let phase = if running.cancel.is_cancelled() {
         Phase::Cancelled
@@ -1032,11 +1042,10 @@ impl GameDbService {
         })
     }
 
-    /// The line's first move no game of the databases played (Your games aside, which follows
-    /// the games you play).
-    pub async fn novelty(&self, line: novelty::Line) -> Result<GameDbNovelty> {
-        let files: Vec<(String, PathBuf)> = self
-            .inner
+    /// Every database but Your games, which follows the games you play: the games the board's
+    /// lookups compare with.
+    fn reference_files(&self) -> Vec<(String, PathBuf)> {
+        self.inner
             .ids()
             .into_iter()
             .filter(|id| id != own::OWN_ID)
@@ -1044,19 +1053,34 @@ impl GameDbService {
                 let file = self.inner.file(&id);
                 (id, file)
             })
-            .collect();
+            .collect()
+    }
+
+    /// The position `fen` through every database but Your games.
+    pub async fn opening_report(&self, fen: String) -> Result<GameDbOpeningReport> {
+        let files = self.reference_files();
+        // Dropped by its caller (the dialog closed), the walk stops at its next lookup.
+        let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
+        let stopped = Arc::clone(&stop.0);
+        let result = tokio::task::spawn_blocking(move || {
+            opening::report(&open_references(files), &fen, &stopped)
+        })
+        .await
+        .map_err(|_| CoreError::new("Game database stopped. Retry the operation."))
+        .and_then(|result| result);
+        drop(stop);
+        self.inner.logged("opening report", result)
+    }
+
+    /// The line's first move no game of the databases played (Your games aside, which follows
+    /// the games you play).
+    pub async fn novelty(&self, line: novelty::Line) -> Result<GameDbNovelty> {
+        let files = self.reference_files();
         // Dropped by its caller (the board moved on), the walk stops at its next lookup.
         let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
         let stopped = Arc::clone(&stop.0);
         let result = tokio::task::spawn_blocking(move || {
-            let mut databases = Vec::with_capacity(files.len());
-            for (id, file) in files {
-                // One being written for the first time has nothing to read yet.
-                if let Ok(db) = schema::open_read(&file) {
-                    databases.push((id, db));
-                }
-            }
-            novelty::find(&databases, &line, &stopped)
+            novelty::find(&open_references(files), &line, &stopped)
         })
         .await
         .map_err(|_| CoreError::new("The databases could not be read. Try again."))

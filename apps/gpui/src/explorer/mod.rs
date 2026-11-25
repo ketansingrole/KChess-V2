@@ -46,6 +46,7 @@ use kchess_domain::variant::Variant;
 mod draw;
 mod prefs;
 
+pub use draw::result_bar;
 use draw::*;
 use prefs::*;
 

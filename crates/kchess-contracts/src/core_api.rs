@@ -707,6 +707,12 @@ core_api! {
             games: Option<GameDbGameIds>,
             search: Option<GameDbQuery>
         ) -> u64;
+        /// The position `fen` through every game database (Your games aside): how its games
+        /// ended, its main lines (the most played move after move) and its strongest games.
+        #[assist(Lookups)]
+        GameDbOpeningReport = "gameDbOpeningReport" fn game_db_opening_report(
+            fen: Fen
+        ) -> crate::types::GameDbOpeningReport;
         /// The player named `name` in `database`: their results and openings with each colour,
         /// their rating by month and their best wins.
         #[assist(Lookups)]

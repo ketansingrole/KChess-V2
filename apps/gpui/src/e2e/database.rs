@@ -1030,3 +1030,46 @@ fn a_player_s_report_reads_their_games_at_a_glance(cx: &mut gpui_kit::TestAppCon
         &[GUKESH_CARLSEN, CARLSEN_GUKESH],
     );
 }
+
+/// More → Opening report on the board: the position's games through the databases, its main
+/// lines, one played onto the board, and its strongest games, one opened.
+#[gpui_kit::test]
+fn the_board_reports_on_its_opening(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::analysis::AnalysisPage;
+    let mut app = Harness::start(cx);
+    import_games(&mut app);
+    app.click_label(SMITH_JONES);
+    app.wait_for_page(crate::pages::Page::Analysis);
+    let page = app.with_window(|_, cx| crate::shell::view::<AnalysisPage>(cx).expect("the page"));
+    app.cx
+        .update(|cx| page.update(cx, |page, cx| page.go_to_start(cx)));
+    app.click("analysis-more");
+    app.click_label("Opening report");
+    assert_eq!(app.find("opening-games").label(), Some("3 games"));
+    let lines: Vec<String> = (0..3usize)
+        .map(|index| {
+            app.find(("opening-line", index))
+                .label()
+                .expect("a line")
+                .to_string()
+        })
+        .collect();
+    let mut sorted = lines.clone();
+    sorted.sort();
+    assert_eq!(sorted, ["Play 1. Nf3", "Play 1. d4", "Play 1. e4"]);
+    // The rated games, the strongest first: Smith against Jones has no ratings.
+    assert_eq!(
+        app.find(("opening-best", 0usize)).label(),
+        Some(CARLSEN_GUKESH)
+    );
+    assert!(!app.shows(("opening-best", 2usize)));
+
+    app.click_label("Play 1. e4");
+    app.find("tree-e2e4");
+    app.click("analysis-more");
+    app.click_label("Opening report");
+    app.click(("opening-best", 0usize));
+    // The board's game has a move of its own now: it asks before the game replaces it.
+    app.click_label("Replace");
+    app.find("tree-e2e4 e7e5 g1f3 b8c6 f1b5 g8f6");
+}

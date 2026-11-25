@@ -545,46 +545,9 @@ impl DatabasePage {
     }
 
     fn open_game(&mut self, row: &GameDbRow, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(database) = self.database.clone() else {
-            return;
-        };
-        let request = cx.global::<AppCore>().request(calls::GameDbGame {
-            database: DatabaseId(database.clone()),
-            game: GameDbGameId(row.id),
-        });
-        let origin = GameOrigin {
-            white: Some(row.white.clone()),
-            black: Some(row.black.clone()),
-            database: Some(DatabaseGame {
-                database: database.clone(),
-                game: row.id,
-            }),
-            ..GameOrigin::default()
-        };
-        cx.spawn_in(window, async move |_, cx| {
-            let pgn = request.await;
-            cx.update(|window, cx| match pgn {
-                Ok(pgn) => kchess_board::analysis::open(
-                    Open::Pgn {
-                        pgn,
-                        opening: Opening {
-                            origin: Some(origin),
-                            ..Opening::default()
-                        },
-                        unreadable: false,
-                    },
-                    window,
-                    cx,
-                ),
-                Err(cause) => window.push_notification(
-                    Notification::error(loading::failure("database", &cause))
-                        .title("Could not open the game"),
-                    cx,
-                ),
-            })
-            .ok();
-        })
-        .detach();
+        if let Some(database) = self.database.clone() {
+            open_game(database, row, window, cx);
+        }
     }
 
     /// Every game the filters find, whatever its page.
@@ -1430,6 +1393,48 @@ impl PageView for DatabasePage {
 }
 
 /// The Database page listing the games that reached `fen` (the analysis board's position).
+/// Opens game `row` of database `database` on the analysis board.
+pub fn open_game(database: String, row: &GameDbRow, window: &mut Window, cx: &mut App) {
+    let request = cx.global::<AppCore>().request(calls::GameDbGame {
+        database: DatabaseId(database.clone()),
+        game: GameDbGameId(row.id),
+    });
+    let origin = GameOrigin {
+        white: Some(row.white.clone()),
+        black: Some(row.black.clone()),
+        database: Some(DatabaseGame {
+            database: database.clone(),
+            game: row.id,
+        }),
+        ..GameOrigin::default()
+    };
+    window
+        .spawn(cx, async move |cx| {
+            let pgn = request.await;
+            cx.update(|window, cx| match pgn {
+                Ok(pgn) => kchess_board::analysis::open(
+                    Open::Pgn {
+                        pgn,
+                        opening: Opening {
+                            origin: Some(origin),
+                            ..Opening::default()
+                        },
+                        unreadable: false,
+                    },
+                    window,
+                    cx,
+                ),
+                Err(cause) => window.push_notification(
+                    Notification::error(loading::failure("database", &cause))
+                        .title("Could not open the game"),
+                    cx,
+                ),
+            })
+            .ok();
+        })
+        .detach();
+}
+
 pub fn games_at(fen: String, window: &mut Window, cx: &mut App) {
     kchess_nav::shell::show::<DatabasePage>(window, cx, move |page, window, cx| {
         page.show_position(fen, window, cx)

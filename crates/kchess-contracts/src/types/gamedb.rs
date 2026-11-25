@@ -142,6 +142,40 @@ pub struct GameDbProgress {
     pub message: Option<String>,
 }
 
+/// A main line from a position through the game databases: each move the one played most, and
+/// how the games through its first move ended.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbOpeningLine {
+    /// Each with the games that played it there.
+    pub moves: Vec<NoveltyMove>,
+    pub white: u64,
+    pub draws: u64,
+    pub black: u64,
+}
+
+/// A game of a database, as a search lists it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbFoundGame {
+    pub database: String,
+    pub game: GameDbRow,
+}
+
+/// A position through every game database (Your games aside): how its games ended, its main
+/// lines and its strongest games.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbOpeningReport {
+    pub white: u64,
+    pub draws: u64,
+    pub black: u64,
+    /// The most played first.
+    pub lines: Vec<GameDbOpeningLine>,
+    /// The highest rated first.
+    pub best: Vec<GameDbFoundGame>,
+}
+
 /// Games' results from one side: won, drawn and lost; `games` counts those with no result too.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
