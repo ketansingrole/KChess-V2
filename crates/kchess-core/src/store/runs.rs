@@ -219,7 +219,12 @@ mod tests {
         let now = 1_800_000_000_000_i64;
         run("endgame", "kr-vs-k", 0.0, now);
         run("endgame", "kr-vs-k", 1.0, now + 60_000);
-        run("endgame", "own:Slip0001", 0.0, now + 120_000);
+        run(
+            "endgame",
+            "own:8/8/8/8/8/8/1k6/R3K3 w - - 0 1",
+            0.0,
+            now + 120_000,
+        );
         run("endgame", "kq-vs-k", 1.0, now);
         run("lesson", "opposition-1", 0.0, now);
         let cards = run_schedule(&db, RunKind::Endgame).unwrap();
@@ -230,7 +235,11 @@ mod tests {
         assert_eq!(
             due,
             [
-                ("own:Slip0001", (now + 120_000) as f64, 1),
+                (
+                    "own:8/8/8/8/8/8/1k6/R3K3 w - - 0 1",
+                    (now + 120_000) as f64,
+                    1
+                ),
                 ("kr-vs-k", (now + 60_000 + DAY) as f64, 1),
             ]
         );
