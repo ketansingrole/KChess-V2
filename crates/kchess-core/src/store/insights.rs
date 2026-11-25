@@ -1,7 +1,8 @@
 //! Patterns in the games synced to this computer: results by
 //! colour, speed, opening, time of day, opponent strength and game length, accuracy where
-//! games were reviewed, time use where they have clocks, and how the endgames the tablebases
-//! decide went (`endgames`). Everything is read locally; nothing
+//! games were reviewed, time use where they have clocks, and, from replaying the games, how
+//! the endgames the tablebases decide went and the pawn structures reached
+//! (`replayed_games`). Everything is read locally; nothing
 //! is sent to Lichess.
 
 use rusqlite::{Connection, params_from_iter, types::Value as Sql};
@@ -18,9 +19,11 @@ use crate::host::{Host, Level};
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
     AccuracyReport, BandRecord, Blunders, BlundersByTime, ByColor, ClockAt, EndgameRecord,
-    EndgameReport, EndingRecord, GameRecord, InsightsQuery, InsightsReport, Judgment, MistakeRates,
-    OpeningRecord, PhaseTime, SpeedRecord, StoredReview, Streaks, TimeUseReport,
+    EndgameReport, EndingRecord, GameDbStructure, GameRecord, InsightsQuery, InsightsReport,
+    Judgment, MistakeRates, OpeningRecord, PhaseTime, SpeedRecord, StoredReview, Streaks,
+    StructureRecord, StructureReport, TimeUseReport,
 };
+use kchess_domain::gamedb::patterns;
 use kchess_domain::js;
 use kchess_domain::js::truthy;
 use kchess_domain::review::MoveVerdict;
@@ -52,8 +55,8 @@ const ROW_LIMIT: i64 = 20_000;
 const REVIEW_LIMIT: i64 = 2_000;
 /// The newest clocked games read for time use: each one's PGN is parsed and replayed.
 const CLOCK_LIMIT: i64 = 2_000;
-/// The newest games read for endgames: each one is replayed.
-const ENDGAME_LIMIT: i64 = 2_000;
+/// The newest games replayed for their endgames and pawn structures.
+const REPLAY_LIMIT: i64 = 2_000;
 /// The kinds of endgame listed, won and drawn each.
 const ENDGAME_LINES: usize = 8;
 /// The moves whose clocks are compared with the opponent's.
@@ -346,41 +349,42 @@ pub fn insights(
         accuracy: accuracy_report(host, db, query, now)?,
         time_use: time_use_report(host, db, query, now)?,
         endgames: None,
+        structures: None,
         variants: played_variants(db, query)?,
     })
 }
 
-/// How the endgames of the games `query` finds went (the newest `ENDGAME_LIMIT`), by the first
-/// position at the player's move that `tables` decide: none for a variant, and none decided
-/// without tables. A game from a set-up position starts from its PGN's `FEN`; a game whose
-/// moves do not replay is left out.
-pub fn endgames(
+/// What replaying the games `query` finds (the newest `REPLAY_LIMIT`) shows: how their
+/// endgames went, by the first position at the player's move that `tables` decide (none
+/// decided without tables), and the pawn structures each side reached and kept. Neither for a
+/// variant. A game from a set-up position starts from its PGN's `FEN`; a game whose moves do
+/// not replay is left out.
+pub fn replayed_games(
     db: &Connection,
     query: &InsightsQuery,
     now: f64,
     tables: Option<&Tablebase<Chess>>,
-) -> Result<Option<EndgameReport>> {
+) -> Result<(Option<EndgameReport>, Option<StructureReport>)> {
     if query
         .variant
         .is_some_and(|variant| variant != Variant::Standard)
     {
-        return Ok(None);
+        return Ok((None, None));
     }
-    let Some(tables) = tables else {
-        return Ok(Some(EndgameReport::default()));
-    };
     let (clauses, params) = clauses(query, "", now)?;
     let where_sql = clauses.join(" AND ");
     let sql = format!(
         "SELECT color, moves, pgn,
            (CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END)
-         FROM games WHERE {where_sql} ORDER BY createdAt DESC LIMIT {ENDGAME_LIMIT}"
+         FROM games WHERE {where_sql} ORDER BY createdAt DESC LIMIT {REPLAY_LIMIT}"
     );
     let mut statement = db.prepare(&sql).sql()?;
     let mut rows = statement.query(params_from_iter(params.iter())).sql()?;
     let mut games = 0;
     let mut won: Slots<EndgameRecord> = Slots::new();
     let mut drawn: Slots<EndgameRecord> = Slots::new();
+    let mut yours: Slots<StructureRecord> = Slots::new();
+    let mut theirs: Slots<StructureRecord> = Slots::new();
     while let Some(row) = rows.next().sql()? {
         let color: String = row.get(0).sql()?;
         let sans: String = row.get(1).sql()?;
@@ -393,6 +397,22 @@ pub fn endgames(
             Color::Black
         };
         let Some((start, moves)) = replayed(pgn.as_deref(), &sans) else {
+            continue;
+        };
+        for (structure, owner) in patterns::structures_held(&start, &moves) {
+            let slots = if owner == you {
+                &mut yours
+            } else {
+                &mut theirs
+            };
+            let structure = GameDbStructure::from(structure);
+            let entry = slots.slot(&format!("{structure:?}"), || StructureRecord {
+                structure,
+                record: GameRecord::default(),
+            });
+            add(&mut entry.record, &result);
+        }
+        let Some(tables) = tables else {
             continue;
         };
         let scanned = endgames::scan(start, &moves, you, tables)?;
@@ -414,7 +434,7 @@ pub fn endgames(
             entry.let_go.push(slip.fen());
         }
     }
-    let lines = |slots: Slots<EndgameRecord>| {
+    let endgame_lines = |slots: Slots<EndgameRecord>| {
         let mut lines: Vec<EndgameRecord> = slots
             .into_items()
             .into_iter()
@@ -424,12 +444,27 @@ pub fn endgames(
         lines.truncate(ENDGAME_LINES);
         lines
     };
-    Ok(Some(EndgameReport {
-        tables: true,
+    let structure_lines = |slots: Slots<StructureRecord>| {
+        let mut lines: Vec<StructureRecord> = slots
+            .into_items()
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect();
+        lines.sort_by_key(|line| std::cmp::Reverse(line.record.total));
+        lines
+    };
+    let endgames = EndgameReport {
+        tables: tables.is_some(),
+        games: if tables.is_some() { games } else { 0 },
+        won: endgame_lines(won),
+        drawn: endgame_lines(drawn),
+    };
+    let structures = StructureReport {
         games,
-        won: lines(won),
-        drawn: lines(drawn),
-    }))
+        yours: structure_lines(yours),
+        theirs: structure_lines(theirs),
+    };
+    Ok((Some(endgames), Some(structures)))
 }
 
 /// A synced game's start, its PGN's `FEN` or the usual one, and its moves (`sans`) from there.
