@@ -39,6 +39,7 @@ use crate::play_layout::Measured;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
+use kchess_board::live_game::Refused;
 use kchess_domain::misc::constants::EXPLORER_RATINGS;
 use kchess_domain::variant::Variant;
 
@@ -124,9 +125,8 @@ pub struct PositionExplorer {
     result: Option<PositionLookup>,
     /// The last lookup's failure: with no account it offers Connect Lichess, otherwise Try again.
     failure: Option<CoreError>,
-    /// The lookup on its way is the one made again as a refusal came back after help was lent:
-    /// refused too, it waits for help to change rather than asking at once again.
-    made_again: bool,
+    /// The last lookup was refused while help was held back: made again once it is lent.
+    refused: Refused,
     busy: bool,
     epoch: Epoch,
     show_filters: bool,
@@ -180,14 +180,8 @@ impl PositionExplorer {
                 }
             }),
             // Help lent again answers a lookup refused while Lichess was asked for a game in
-            // progress: just connected, the lookup went before the check had answered. Told by
-            // the refusal's kind, not by seeing help switch off and on: both can land in one
-            // notification, or while the lookup is still on its way (Linux and Windows CI).
-            cx.observe(&crate::online::handle(cx), |this, online, cx| {
-                if online.read(cx).assistance_allowed() && this.withheld() {
-                    this.lookup(None, false, None, cx);
-                }
-            }),
+            // progress: just connected, the lookup went before the check had answered.
+            Refused::watch(cx, |this| &mut this.refused, Self::look_again),
             cx.subscribe_in(
                 &player,
                 window,
@@ -254,7 +248,7 @@ impl PositionExplorer {
             moves: None,
             result: None,
             failure: None,
-            made_again: false,
+            refused: Refused::default(),
             busy: false,
             epoch: Epoch::default(),
             show_filters: false,
@@ -453,6 +447,7 @@ impl PositionExplorer {
         self.epoch.invalidate();
         self.result = None;
         self.failure = None;
+        self.refused.asking();
         self.busy = false;
         self.lookup_task = None;
         if self.following(cx) {
@@ -478,11 +473,9 @@ impl PositionExplorer {
         }
     }
 
-    /// The lookup shown was refused while help was held back.
-    fn withheld(&self) -> bool {
-        self.failure
-            .as_ref()
-            .is_some_and(|failure| failure.kind == Some(ErrorKind::Withheld))
+    /// The chosen database looked up again, as a refused lookup is once help is lent.
+    fn look_again(&mut self, cx: &mut Context<Self>) {
+        self.lookup(None, false, None, cx);
     }
 
     /// Look the position up in `kind` (the chosen database when None); `asked` by the user, a
@@ -500,6 +493,7 @@ impl PositionExplorer {
             self.update_prefs(cx, |prefs| prefs.kind = kind);
             self.result = None;
             self.failure = None;
+            self.refused.asking();
         }
         if self.needs_player(cx) || self.needs_database(cx) {
             // A lookup still on its way for another database must not land here.
@@ -508,6 +502,7 @@ impl PositionExplorer {
             self.busy = false;
             self.result = None;
             self.failure = None;
+            self.refused.asking();
             if asked
                 && self.needs_player(cx)
                 && let Some(window) = window
@@ -529,7 +524,7 @@ impl PositionExplorer {
         });
         self.busy = true;
         self.failure = None;
-        self.made_again = false;
+        self.refused.asking();
         cx.notify();
         self.lookup_task = Some(cx.spawn(async move |this, cx| {
             let outcome = call.await;
@@ -538,6 +533,8 @@ impl PositionExplorer {
                     return;
                 }
                 this.busy = false;
+                this.refused
+                    .answered(&outcome, |this| &mut this.refused, Self::look_again, cx);
                 match outcome {
                     Ok(data) => {
                         this.result = Some(data);
@@ -557,23 +554,6 @@ impl PositionExplorer {
                         } else {
                             cause
                         });
-                        // Lent while the refusal was on its way: no change of help is left
-                        // to answer it, so it is asked again now, once (after this task, which
-                        // the new lookup replaces).
-                        let lent = crate::online::handle(cx).read(cx).assistance_allowed();
-                        if this.withheld() && lent && !this.made_again {
-                            let explorer = cx.entity().downgrade();
-                            cx.defer(move |cx| {
-                                explorer
-                                    .update(cx, |this, cx| {
-                                        if this.withheld() {
-                                            this.lookup(None, false, None, cx);
-                                            this.made_again = true;
-                                        }
-                                    })
-                                    .ok();
-                            });
-                        }
                     }
                 }
                 cx.notify();

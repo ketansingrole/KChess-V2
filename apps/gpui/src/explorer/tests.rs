@@ -24,39 +24,56 @@ fn a_lookup_for_another_database_does_not_land_on_the_player_tab(
 }
 
 /// A lookup refused while help was held back is made again once help is lent, told by the
-/// refusal's kind. Judged by seeing help switch off and on, the explorer missed both switches
-/// when they came in one notification, or while the lookup was on its way, and kept Try again
-/// (Linux and Windows CI, `the_explorer_offers_connect_lichess_and_looks_up_once_connected`).
+/// refusal's kind (`kchess_board::live_game::Refused`). Judged by seeing help switch off and on,
+/// the explorer missed both switches when they came in one notification, or while the lookup was
+/// on its way, and kept Try again (Linux and Windows CI,
+/// `the_explorer_offers_connect_lichess_and_looks_up_once_connected`).
 #[gpui_kit::test]
 fn a_refusal_while_help_was_held_back_is_looked_up_again(cx: &mut gpui_kit::TestAppContext) {
     use kchess_contracts::{CoreError, ErrorKind};
+    fn answer(
+        explorer: &mut PositionExplorer,
+        cause: CoreError,
+        cx: &mut gpui_kit::Context<PositionExplorer>,
+    ) {
+        let answer: Result<(), CoreError> = Err(cause);
+        explorer.refused.answered(
+            &answer,
+            |explorer| &mut explorer.refused,
+            PositionExplorer::look_again,
+            cx,
+        );
+    }
     let mut app = Harness::start(cx);
     // Help starts unverified until the core answers what it lends, which a loaded machine
     // answered after the window opened: the test read it too soon.
     app.wait_for("engine help to be lent", |_, cx| {
-        crate::online::handle(cx).read(cx).assistance_allowed()
+        kchess_board::live_game::handle(cx)
+            .read(cx)
+            .assistance_allowed()
     });
+    // Refused as help was lent meanwhile: no change of help is left to answer it.
     let (explorer, asked) = app.with_window(|window, cx| {
         let explorer = cx.new(|cx| PositionExplorer::new(Layout::List, window, cx));
-        let asked = explorer.update(cx, |explorer, _| {
-            explorer.failure = Some(CoreError::new("Held back.").with_kind(ErrorKind::Withheld));
+        let asked = explorer.update(cx, |explorer, cx| {
+            answer(
+                explorer,
+                CoreError::new("Held back.").with_kind(ErrorKind::Withheld),
+                cx,
+            );
             explorer.epoch.current()
         });
         (explorer, asked)
     });
-    // Help lent, in the one notification it came with.
-    app.with_window(|_, cx| crate::online::handle(cx).update(cx, |_, cx| cx.notify()));
     let looked_again = app.with_window(|_, cx| !explorer.read(cx).epoch.is_current(asked));
     assert!(looked_again, "no lookup made again");
 
     // Any other failure waits for Try again.
     let asked = app.with_window(|_, cx| {
-        let asked = explorer.update(cx, |explorer, _| {
-            explorer.failure = Some(CoreError::new("Lookup failed."));
+        explorer.update(cx, |explorer, cx| {
+            answer(explorer, CoreError::new("Lookup failed."), cx);
             explorer.epoch.current()
-        });
-        crate::online::handle(cx).update(cx, |_, cx| cx.notify());
-        asked
+        })
     });
     assert!(app.with_window(|_, cx| explorer.read(cx).epoch.is_current(asked)));
 }
