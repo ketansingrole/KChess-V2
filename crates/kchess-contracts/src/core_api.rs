@@ -799,6 +799,11 @@ core_api! {
             color: Side,
             database: DatabaseId
         ) -> crate::types::GameDbRepertoireGames;
+        /// The endgames of Your games with five pieces or fewer where your move gave away a
+        /// win, or a draw, as the endgame tablebases on this computer have it, the newest first.
+        #[assist(Lookups)]
+        GameDbYourEndgames = "gameDbYourEndgames" fn game_db_your_endgames(
+        ) -> crate::types::YourEndgames;
         /// A repertoire of `color` made from the games in `database` (Your games, or a player's
         /// from Player's games) where you, or that player, had it: from the standard start,
         /// the most played move at their turn and the other side's common replies at its turn.

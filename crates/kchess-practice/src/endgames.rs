@@ -1,14 +1,17 @@
-//! Practice → Endgames: the checkmate and endgame courses, and the drills
-//! against Stockfish. The courses and drills are the shared data the Rust rules check
+//! Practice → Endgames: the checkmate and endgame courses, the drills
+//! against Stockfish, and the endgames your own games let slip, found with the endgame
+//! tablebases (`gameDbYourEndgames`) and drilled the same way. The courses and drills are the shared data the Rust rules check
 //! (`data/lessons.json`, `data/training.json`); finished chapters and drills are runs the core keeps.
 
 use kchess_contracts::calls;
 
+use gpui_kit::base::TestSupportExt as _;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use kchess_contracts::types::{RunKind, RunSummary};
+use kchess_contracts::types::{RunKind, RunSummary, YourEndgame, YourEndgames};
 
 use super::endgame_drills::EndgameDrills;
 use super::endgame_lesson::EndgameLesson;
@@ -23,6 +26,11 @@ use kchess_ui::icon;
 const VIEW: &str = "kchess:endgame-view";
 const COURSES: &str = "courses";
 const DRILLS: &str = "drills";
+/// The endgames of your games.
+const YOURS: &str = "yours";
+/// Their groups: a win given away, and a draw.
+const WINS: &str = "Wins let go";
+const DRAWS: &str = "Draws let go";
 const COURSE_GROUPS: [&str; 3] = ["Checkmates", "Pawn endgames", "Rook endgames"];
 /// The cards' columns.
 const CARD_MIN: Pixels = px(300.);
@@ -74,10 +82,39 @@ fn course_icon(id: &str) -> Icon {
     }
 }
 
+/// An endgame of your games as a drill: the position before your move, its goal, and what you
+/// played there.
+pub fn your_drill(endgame: &YourEndgame) -> Drill {
+    let dots = if endgame.side == "white" { "." } else { "..." };
+    let outcome = match (endgame.goal.as_str(), endgame.became.as_str()) {
+        ("win", "draw") => "only draws",
+        _ => "loses",
+    };
+    Drill {
+        id: format!("own:{}", endgame.game),
+        title: endgame.material.clone(),
+        group: if endgame.goal == "win" { WINS } else { DRAWS }.to_string(),
+        fen: endgame.fen.clone(),
+        player: endgame.side.clone(),
+        goal: endgame.goal.clone(),
+        level: endgame.date.clone().unwrap_or_default(),
+        idea: format!(
+            "Against {} you played {}{dots} {} here, which {outcome}.",
+            endgame.opponent, endgame.number, endgame.san
+        ),
+    }
+}
+
 pub struct Endgames {
     lessons: Option<RunSummary>,
     drill_summary: Option<RunSummary>,
     drills: Option<Entity<EndgameDrills>>,
+    /// The endgames of your games, once looked through.
+    yours: Option<YourEndgames>,
+    your_drills: Option<Entity<EndgameDrills>>,
+    /// Whether there is Your games, which the card waits for.
+    own: bool,
+    _subscriptions: Vec<Subscription>,
     lesson: Option<Entity<EndgameLesson>>,
     area: Measured,
     child_subscription: Option<Subscription>,
@@ -85,10 +122,24 @@ pub struct Endgames {
 
 impl Endgames {
     pub fn new(cx: &mut Context<Self>) -> Endgames {
+        let databases = cx.global::<kchess_board::game_db::GameDbHandle>().0.clone();
+        // Your games added or removed shows or hides its card.
+        let subscriptions = vec![cx.observe(&databases, |this, _, cx| {
+            let own = Self::has_own(cx);
+            if own != this.own {
+                this.own = own;
+                this.load(cx);
+                cx.notify();
+            }
+        })];
         let mut hub = Endgames {
             lessons: None,
             drill_summary: None,
             drills: None,
+            yours: None,
+            your_drills: None,
+            own: Self::has_own(cx),
+            _subscriptions: subscriptions,
             lesson: None,
             area: Measured::default(),
             child_subscription: None,
@@ -97,9 +148,37 @@ impl Endgames {
         hub
     }
 
-    /// The finished chapters and drills.
+    fn has_own(cx: &App) -> bool {
+        use kchess_contracts::types::DatabaseSource;
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .iter()
+            .any(|database| database.source == DatabaseSource::Own)
+    }
+
+    /// The finished chapters and drills, and the endgames of your games.
     fn load(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<AppCore>().clone();
+        if self.own {
+            let yours = core.request(calls::GameDbYourEndgames {});
+            cx.spawn(async move |this, cx| match yours.await {
+                Ok(yours) => {
+                    this.update(cx, |this, cx| {
+                        this.yours = Some(yours);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(cause) => crate::log::write(
+                    Level::Warn,
+                    "endgame-training",
+                    &format!("Could not look through your endgames: {}", cause.message),
+                ),
+            })
+            .detach();
+        }
         let (lessons, drills) = (
             core.request(calls::RunSummary {
                 kind: RunKind::Lesson,
@@ -135,7 +214,11 @@ impl Endgames {
 
     /// The drills, while they are on screen.
     pub(crate) fn shown_drills(&self, cx: &App) -> Option<Entity<EndgameDrills>> {
-        self.drills.clone().filter(|_| Self::view(cx) == DRILLS)
+        match Self::view(cx).as_str() {
+            DRILLS => self.drills.clone(),
+            YOURS => self.your_drills.clone(),
+            _ => None,
+        }
     }
 
     fn view(cx: &App) -> String {
@@ -149,6 +232,7 @@ impl Endgames {
     fn back(&mut self, cx: &mut Context<Self>) {
         Self::open(COURSES, cx);
         self.drills = None;
+        self.your_drills = None;
         self.lesson = None;
         self.child_subscription = None;
         self.load(cx);
@@ -165,17 +249,16 @@ impl Endgames {
         }
     }
 
-    /// A course, or the drills, with how much of it is done; it opens `view`.
+    /// A course, or the drills, with how much of it is done when that counts; it opens `view`.
     fn card(
         view: &str,
         glyph: Icon,
         title: String,
         subtitle: String,
-        (done, total): (usize, usize),
+        progress: Option<(usize, usize)>,
         width: Pixels,
         palette: &Palette,
     ) -> impl IntoElement {
-        let complete = done == total;
         let view = view.to_string();
         h_flex()
             .id(SharedString::from(format!("card-{view}")))
@@ -222,7 +305,8 @@ impl Endgames {
                             .child(subtitle),
                     ),
             )
-            .child(
+            .children(progress.map(|(done, total)| {
+                let complete = done == total;
                 div()
                     .flex_none()
                     .px(px(8.))
@@ -241,8 +325,57 @@ impl Endgames {
                         "Done".to_string()
                     } else {
                         format!("{done} / {total}")
-                    }),
+                    })
+            }))
+    }
+
+    /// Your endgames without the tablebases to find them: where to get them.
+    fn render_no_tables(&self, window: &Window, palette: &Palette) -> AnyElement {
+        div()
+            .id("your-endgames")
+            .test_support()
+            .size_full()
+            .px(side_padding(window))
+            .pt(PAGE_TOP)
+            .child(
+                widgets::card(palette).child(
+                    widgets::empty_state(
+                        icon("history"),
+                        "Your endgames",
+                        Some(SharedString::new_static(
+                            "The endgame tablebases find the endgames your games let slip",
+                        )),
+                        palette,
+                    )
+                    .py(px(32.))
+                    .child(
+                        h_flex()
+                            .gap(px(8.))
+                            .child(
+                                Button::new("your-endgames-back")
+                                    .outline()
+                                    .label("All courses")
+                                    .on_click(|_, window, cx| {
+                                        Self::open(COURSES, cx);
+                                        window.refresh();
+                                    }),
+                            )
+                            .child(
+                                Button::new("your-endgames-tablebases")
+                                    .primary()
+                                    .label("Get the tablebases")
+                                    .on_click(|_, window, cx| {
+                                        kchess_nav::shell::open_settings(
+                                            kchess_nav::sections::Section::Storage,
+                                            window,
+                                            cx,
+                                        )
+                                    }),
+                            ),
+                    ),
+                ),
             )
+            .into_any_element()
     }
 
     fn render_courses(
@@ -291,7 +424,7 @@ impl Endgames {
                             course_icon(&course.id),
                             course.title.clone(),
                             course.subtitle.clone(),
-                            (done, course.chapters.len()),
+                            Some((done, course.chapters.len())),
                             card_width,
                             palette,
                         )
@@ -305,24 +438,46 @@ impl Endgames {
             .iter()
             .filter(|drill| finished(self.drill_summary.as_ref(), &drill.id))
             .count();
-        sections.push(
-            group(
-                "Drills",
-                vec![
-                    Self::card(
-                        DRILLS,
-                        icon("swords"),
-                        "Endgame drills".into(),
-                        "Win or hold against Stockfish".into(),
-                        (done, drills().len()),
-                        card_width,
-                        palette,
-                    )
-                    .into_any_element(),
-                ],
+        let mut cards = vec![
+            Self::card(
+                DRILLS,
+                icon("swords"),
+                "Endgame drills".into(),
+                "Win or hold against Stockfish".into(),
+                Some((done, drills().len())),
+                card_width,
+                palette,
             )
             .into_any_element(),
-        );
+        ];
+        // Your endgames, once Your games is looked through: those it let slip, or that the
+        // tablebases are needed to find them.
+        if let Some(yours) = self.yours.as_ref().filter(|_| self.own)
+            && (!yours.tables || !yours.endgames.is_empty())
+        {
+            let done = yours
+                .endgames
+                .iter()
+                .filter(|endgame| finished(self.drill_summary.as_ref(), &your_drill(endgame).id))
+                .count();
+            cards.push(
+                Self::card(
+                    YOURS,
+                    icon("history"),
+                    "Your endgames".into(),
+                    if yours.tables {
+                        "Win or hold what your games let slip".into()
+                    } else {
+                        "Needs the endgame tablebases".into()
+                    },
+                    yours.tables.then_some((done, yours.endgames.len())),
+                    card_width,
+                    palette,
+                )
+                .into_any_element(),
+            );
+        }
+        sections.push(group("Drills", cards).into_any_element());
         div()
             .id("endgame-courses")
             .test_support()
@@ -362,6 +517,23 @@ impl Render for Endgames {
                 lesson
             });
             return div().size_full().child(lesson).into_any_element();
+        }
+        if view == YOURS
+            && let Some(yours) = &self.yours
+        {
+            if !yours.tables {
+                return self.render_no_tables(window, &palette);
+            }
+            if !yours.endgames.is_empty() {
+                let drills = self.your_drills.clone().unwrap_or_else(|| {
+                    let set: Vec<Drill> = yours.endgames.iter().map(your_drill).collect();
+                    let drills = cx.new(|cx| EndgameDrills::of(set, vec![WINS, DRAWS], window, cx));
+                    self.child_subscription = Some(cx.subscribe(&drills, Self::on_event));
+                    self.your_drills = Some(drills.clone());
+                    drills
+                });
+                return div().size_full().child(drills).into_any_element();
+            }
         }
         if view == DRILLS {
             let drills = self.drills.clone().unwrap_or_else(|| {

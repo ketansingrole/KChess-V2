@@ -558,3 +558,41 @@ pub struct GameDbPage {
     pub total: u64,
     pub offset: u32,
 }
+
+/// The endgames of Your games that slipped away (`gameDbYourEndgames`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct YourEndgames {
+    /// Whether the endgame tablebases are on this computer: without them nothing is found.
+    pub tables: bool,
+    /// Your games gone through.
+    pub games: u64,
+    /// The newest first.
+    pub endgames: Vec<YourEndgame>,
+}
+
+/// A position of one of your games with five pieces or fewer where your move gave away a win,
+/// or a draw, as the endgame tablebases have it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct YourEndgame {
+    /// The game's id in Your games.
+    pub game: String,
+    /// The position, before your move.
+    pub fen: String,
+    /// Your side: `white` or `black`.
+    pub side: String,
+    /// What the position held for you: `win` or `draw`.
+    pub goal: String,
+    /// Your move there.
+    pub san: String,
+    /// What it held after your move: `draw` or `loss`.
+    pub became: String,
+    /// The pieces, yours first: "KRP vs KR".
+    pub material: String,
+    /// The move's number in the game.
+    pub number: u32,
+    pub opponent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+}

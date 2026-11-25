@@ -210,6 +210,16 @@ impl GameDbApi for Core {
             .await
     }
 
+    async fn game_db_your_endgames(&self) -> Result<kchess_contracts::types::YourEndgames> {
+        let names = self
+            .database
+            .read_async(|ctx| crate::store::own_games::your_names(ctx.db))
+            .await?;
+        self.gamedb
+            .your_endgames(names, self.tablebases.clone())
+            .await
+    }
+
     async fn game_db_repertoire_build(
         &self,
         color: kchess_contracts::check::Side,

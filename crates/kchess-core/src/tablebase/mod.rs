@@ -419,8 +419,8 @@ impl Tablebases {
         Ok(())
     }
 
-    /// The tables on disk, opened once.
-    fn tables(&self) -> Option<Arc<Tablebase<Chess>>> {
+    /// The tables on disk, opened once; none when there are none.
+    pub(crate) fn tables(&self) -> Option<Arc<Tablebase<Chess>>> {
         let mut state = lock(&self.inner.state);
         if let Some(tables) = &state.tables {
             return Some(Arc::clone(tables));
@@ -515,6 +515,30 @@ fn judged(
     let dtz = tables.probe_dtz(pos)?;
     let wdl = AmbiguousWdl::from_dtz_and_halfmoves(dtz, pos.halfmoves());
     Ok((wdl, i64::from(dtz.ignore_rounding().0)))
+}
+
+/// The outcome of `pos` in `tables` for its side to move: 2 a win, 1 a win the fifty-move rule
+/// may spoil, 0 a draw (a win or loss the fifty-move rule spoils among them), -1 and -2 the same
+/// for a loss. None when they do not cover it: more pieces, castling rights or a missing table.
+pub(crate) fn outcome(
+    tables: &Tablebase<Chess>,
+    pos: &Chess,
+) -> std::result::Result<Option<i8>, SyzygyError> {
+    if pos.board().occupied().count() > PIECES as usize || pos.castles().any() {
+        return Ok(None);
+    }
+    let wdl = match judged(tables, pos) {
+        Ok((wdl, _)) => wdl,
+        Err(SyzygyError::MissingTable { .. }) => return Ok(None),
+        Err(cause) => return Err(cause),
+    };
+    Ok(Some(match wdl {
+        AmbiguousWdl::Win => 2,
+        AmbiguousWdl::MaybeWin => 1,
+        AmbiguousWdl::CursedWin | AmbiguousWdl::Draw | AmbiguousWdl::BlessedLoss => 0,
+        AmbiguousWdl::MaybeLoss => -1,
+        AmbiguousWdl::Loss => -2,
+    }))
 }
 
 /// Where a move's outcome, for the side to move after it, ranks: the opponent's loss first.

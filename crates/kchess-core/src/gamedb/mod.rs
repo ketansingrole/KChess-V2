@@ -9,6 +9,7 @@
 
 pub mod deep;
 pub mod edit;
+pub mod endgames;
 pub mod event;
 pub mod explore;
 pub mod import;
@@ -1173,6 +1174,45 @@ impl GameDbService {
         drop(stop);
         self.inner
             .logged("repertoire check of a player's games", result)
+    }
+
+    /// The endgames of Your games, whose player is any of `names`, where a move gave away a win
+    /// or a draw in `tablebases`; none without the tables or Your games.
+    pub async fn your_endgames(
+        &self,
+        names: Vec<String>,
+        tablebases: crate::tablebase::Tablebases,
+    ) -> Result<kchess_contracts::types::YourEndgames> {
+        use kchess_contracts::types::YourEndgames;
+        let own = self.inner.ids().iter().any(|id| id == own::OWN_ID);
+        let file = self.inner.file(own::OWN_ID);
+        // Dropped by its caller, the search stops at its next game.
+        let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
+        let stopped = Arc::clone(&stop.0);
+        let result = tokio::task::spawn_blocking(move || {
+            // Opening the tables reads their folder: off the async threads.
+            let Some(tables) = tablebases.tables() else {
+                return Ok(YourEndgames::default());
+            };
+            if !own {
+                return Ok(YourEndgames {
+                    tables: true,
+                    ..YourEndgames::default()
+                });
+            }
+            let db = schema::open_read(&file)?;
+            let (games, endgames) = endgames::your_endgames(&db, &names, &tables, &stopped)?;
+            Ok(YourEndgames {
+                tables: true,
+                games,
+                endgames,
+            })
+        })
+        .await
+        .map_err(|_| CoreError::new("Your games could not be read. Try again."))
+        .and_then(|found| found);
+        drop(stop);
+        self.inner.logged("your endgames", result)
     }
 
     /// A repertoire of `color` made from `database`'s games where its player had it: Your

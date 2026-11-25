@@ -1,5 +1,6 @@
 //! Endgame drills: endgames you must convert (or hold) against Stockfish at
-//! full strength, from positions checked to be won or drawn. Results are runs the core keeps.
+//! full strength, from positions checked to be won or drawn: the shared drills, or the endgames
+//! your own games let slip (`EndgameDrills::yours`). Results are runs the core keeps.
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -49,6 +50,9 @@ pub enum DrillAction {
 }
 
 pub struct EndgameDrills {
+    /// The drills listed, each in one of `groups`.
+    set: Vec<Drill>,
+    groups: Vec<&'static str>,
     drill: Drill,
     moves: Vec<String>,
     hint: Option<String>,
@@ -73,7 +77,18 @@ impl HasEngine for EndgameDrills {
 }
 
 impl EndgameDrills {
+    /// The shared drills.
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> EndgameDrills {
+        Self::of(drills().to_vec(), GROUPS.to_vec(), window, cx)
+    }
+
+    /// `set`, listed under `groups` in that order: the endgames of your games, say. Not empty.
+    pub fn of(
+        set: Vec<Drill>,
+        groups: Vec<&'static str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> EndgameDrills {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
                 &kchess_domain::rules::setup_start(
@@ -104,8 +119,11 @@ impl EndgameDrills {
                 this.redraw(cx)
             }),
         ];
+        let first = set.first().cloned().unwrap_or_else(|| drills()[0].clone());
         let mut page = EndgameDrills {
-            drill: drills()[0].clone(),
+            set,
+            groups,
+            drill: first,
             moves: Vec::new(),
             hint: None,
             flipped: false,
@@ -126,6 +144,11 @@ impl EndgameDrills {
         page.redraw(cx);
         page.engine_turn(cx);
         page
+    }
+
+    /// The drill on the board.
+    pub fn drill(&self) -> &Drill {
+        &self.drill
     }
 
     /// Where the drill stands, its title and detail, whose turn it is. A drill whose position
@@ -462,12 +485,13 @@ impl Render for EndgameDrills {
                 status.detail.map(str::to_string),
             )
         };
-        let groups = GROUPS
+        let groups = self
+            .groups
             .iter()
             .map(|label| {
                 (
                     Some(*label),
-                    drills()
+                    self.set
                         .iter()
                         .filter(|drill| drill.group == *label)
                         .map(|drill| TrainingItem {
@@ -476,11 +500,14 @@ impl Render for EndgameDrills {
                             done: finished(self.summary.as_ref(), &drill.id),
                             aside: Some(drill.level.clone()),
                         })
-                        .collect(),
+                        .collect::<Vec<_>>(),
                 )
             })
+            // A group with nothing in it (your games let no draw slip, say) is left out.
+            .filter(|(_, items)| !items.is_empty())
             .collect();
         let page = cx.entity().downgrade();
+        let set = self.set.clone();
         let panel = widgets::side_panel(&palette)
             .h(panel_height)
             .flex_1()
@@ -517,9 +544,9 @@ impl Render for EndgameDrills {
                 format!(
                     "{} {}",
                     if self.drill.goal == "win" {
-                        "Checkmate within 50 moves"
+                        "Checkmate within 50 moves."
                     } else {
-                        "Hold the draw"
+                        "Hold the draw."
                     },
                     self.drill.idea
                 ),
@@ -591,7 +618,7 @@ impl Render for EndgameDrills {
                 groups,
                 &self.drill.id,
                 move |id, _, cx| {
-                    let next = drills().iter().find(|drill| drill.id == id).cloned();
+                    let next = set.iter().find(|drill| drill.id == id).cloned();
                     let _ = page.update(cx, |page, cx| page.restart(next, cx));
                 },
                 &palette,

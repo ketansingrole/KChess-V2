@@ -222,6 +222,11 @@ impl PracticePage {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn endgame_drills(&self, cx: &App) -> Option<Entity<endgame_drills::EndgameDrills>> {
+        self.drills(cx)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn endgame_lesson(&self, cx: &App) -> Option<Entity<endgame_lesson::EndgameLesson>> {
         self.lesson(cx)
     }

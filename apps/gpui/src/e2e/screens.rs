@@ -1956,6 +1956,113 @@ fn repertoire_opponent() {
     }
 }
 
+/// Practice → Endgames with Your endgames, then its drills, in both appearances:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::your_endgames -- --ignored`
+/// writes `<dir>/your-endgames-card-<appearance>.png` and `<dir>/your-endgames-<appearance>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn your_endgames() {
+    use kchess_contracts::calls;
+    use kchess_contracts::check::ArchivedGame;
+    use kchess_contracts::types::DatabaseSource;
+    let out = kchess_host::env::var("KCHESS_SCREENSHOTS")
+        .expect("KCHESS_SCREENSHOTS names the output folder");
+    let out = Path::new(&out).to_path_buf();
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/kchess-core/src/tablebase/fixtures");
+    // Your games: each its start, its moves and with which side you played it.
+    let games: [(&str, &[&str], &str); 4] = [
+        (
+            "8/8/8/8/8/8/1k6/R3K3 w - - 0 61",
+            &["a1a2", "b2a2"],
+            "white",
+        ),
+        (
+            "8/8/8/8/8/8/1K6/r3k3 b - - 0 48",
+            &["a1a2", "b2a2"],
+            "black",
+        ),
+        (
+            "8/8/8/8/8/2k5/8/1Q2K3 w - - 0 55",
+            &["b1b2", "c3b2"],
+            "white",
+        ),
+        ("8/8/8/8/8/8/1k6/R3K3 w - - 0 70", &["a1a8"], "white"),
+    ];
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let folder = profile.path().join("tablebases");
+        std::fs::create_dir_all(&folder).expect("the folder");
+        for table in ["KQvK.rtbw", "KQvK.rtbz", "KRvK.rtbw", "KRvK.rtbz"] {
+            std::fs::copy(fixtures.join(table), folder.join(table)).expect("a table");
+        }
+        let (mut cx, window) = start(profile.path(), 1100., 820.);
+        cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
+        for (count, (fen, moves, side)) in games.iter().enumerate() {
+            let day = count as i64 * 86_400_000;
+            let (white, black) = if *side == "white" {
+                ("You", "Stockfish")
+            } else {
+                ("Stockfish", "You")
+            };
+            let game = serde_json::json!({
+                "id": format!("game-{count}"), "source": "computer",
+                "startedAt": 1_761_091_200_000_i64 + day,
+                "updatedAt": 1_761_091_260_000_i64 + day,
+                "white": white, "black": black, "result": "1/2-1/2",
+                "reason": "Insufficient material", "timeControl": "-", "finished": true,
+                "setup": { "variant": "standard", "fen": fen }, "moves": moves,
+            });
+            let saved = cx.update(|cx| {
+                cx.global::<crate::core::AppCore>()
+                    .request(calls::SaveArchivedGame {
+                        game: ArchivedGame(game),
+                    })
+            });
+            cx.foreground_executor()
+                .block_test(saved)
+                .expect("the game is saved");
+        }
+        let started = std::time::Instant::now();
+        while !cx.update(|cx| {
+            cx.global::<kchess_board::game_db::GameDbHandle>()
+                .0
+                .read(cx)
+                .databases()
+                .iter()
+                .any(|database| database.source == DatabaseSource::Own && database.games == 4)
+        }) {
+            assert!(started.elapsed() < Duration::from_secs(30), "Your games");
+            settle(&mut cx, window);
+        }
+        cx.update_window(window, |_, window, cx| {
+            kchess_practice::open_tab(crate::pages::practice::Tab::Endgames, window, cx)
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        // Down to the drills, the page's last section.
+        cx.update_window(window, |_, window, cx| {
+            use gpui_kit::test::TestWindowExt as _;
+            let by = gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-3000.));
+            window.scroll("endgame-courses", gpui_kit::ScrollDelta::Pixels(by), cx);
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("your-endgames-card-{name}.png")))
+            .expect("the screenshot saves");
+        cx.update(|cx| crate::prefs::set(cx, "kchess:endgame-view", "yours"));
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("your-endgames-{name}.png")))
+            .expect("the screenshot saves");
+    }
+}
+
 /// An event's table, a ten-player round robin with its crosstable, in both appearances:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::event_table -- --ignored`
 /// writes `<dir>/event-table-<appearance>.png`.
