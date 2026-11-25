@@ -14,7 +14,7 @@ use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::types::{RunKind, RunSummary, YourEndgame, YourEndgames};
 
-use super::endgame_drills::EndgameDrills;
+use super::endgame_drills::{EndgameDrills, GROUPS};
 use super::endgame_lesson::EndgameLesson;
 use crate::core::AppCore;
 use crate::theme::{Palette, radii, tint};
@@ -29,6 +29,8 @@ const COURSES: &str = "courses";
 const DRILLS: &str = "drills";
 /// The endgames of your games.
 const YOURS: &str = "yours";
+/// The drills you missed that are due again.
+const DUE: &str = "due";
 /// Their groups: a win given away, and a draw.
 const WINS: &str = "Wins let go";
 const DRAWS: &str = "Draws let go";
@@ -113,6 +115,10 @@ pub struct Endgames {
     /// The endgames of your games, once looked through.
     yours: Option<YourEndgames>,
     your_drills: Option<Entity<EndgameDrills>>,
+    /// The drills you missed that are due again (their ids), the one due longest first, as of
+    /// the last load.
+    due: Vec<String>,
+    due_drills: Option<Entity<EndgameDrills>>,
     /// The positions (FEN) Your endgames was opened on, from Insights; all of them when empty.
     only: Vec<String>,
     /// Whether there is Your games, which the card waits for.
@@ -141,6 +147,8 @@ impl Endgames {
             drills: None,
             yours: None,
             your_drills: None,
+            due: Vec::new(),
+            due_drills: None,
             only: Vec::new(),
             own: Self::has_own(cx),
             _subscriptions: subscriptions,
@@ -183,6 +191,29 @@ impl Endgames {
             })
             .detach();
         }
+        let schedule = core.request(calls::RunSchedule {
+            kind: RunKind::Endgame,
+        });
+        cx.spawn(async move |this, cx| match schedule.await {
+            Ok(cards) => {
+                let now = kchess_games::now_ms();
+                this.update(cx, |this, cx| {
+                    this.due = cards
+                        .into_iter()
+                        .filter(|card| card.card.is_due(now))
+                        .map(|card| card.variant)
+                        .collect();
+                    cx.notify();
+                })
+                .ok();
+            }
+            Err(cause) => crate::log::write(
+                Level::Warn,
+                "endgame-training",
+                &format!("Could not load the missed endgames: {}", cause.message),
+            ),
+        })
+        .detach();
         let (lessons, drills) = (
             core.request(calls::RunSummary {
                 kind: RunKind::Lesson,
@@ -221,6 +252,7 @@ impl Endgames {
         match Self::view(cx).as_str() {
             DRILLS => self.drills.clone(),
             YOURS => self.your_drills.clone(),
+            DUE => self.due_drills.clone(),
             _ => None,
         }
     }
@@ -243,10 +275,31 @@ impl Endgames {
         cx.notify();
     }
 
+    /// The missed drills due again, as drills: the shared ones and your games' endgames still
+    /// listed, in the order they fell due.
+    fn due_drills(&self) -> Vec<Drill> {
+        let yours: Vec<Drill> = self
+            .yours
+            .iter()
+            .flat_map(|yours| yours.endgames.iter().map(your_drill))
+            .collect();
+        self.due
+            .iter()
+            .filter_map(|id| {
+                drills()
+                    .iter()
+                    .chain(&yours)
+                    .find(|drill| drill.id == *id)
+                    .cloned()
+            })
+            .collect()
+    }
+
     fn back(&mut self, cx: &mut Context<Self>) {
         Self::open(COURSES, cx);
         self.drills = None;
         self.your_drills = None;
+        self.due_drills = None;
         self.only.clear();
         self.lesson = None;
         self.child_subscription = None;
@@ -492,6 +545,26 @@ impl Endgames {
                 .into_any_element(),
             );
         }
+        let due = self.due_drills().len();
+        if due > 0 {
+            cards.insert(
+                0,
+                Self::card(
+                    DUE,
+                    icon("refresh-cw"),
+                    "Missed endgames".into(),
+                    if due == 1 {
+                        "1 due again".into()
+                    } else {
+                        format!("{due} due again")
+                    },
+                    None,
+                    card_width,
+                    palette,
+                )
+                .into_any_element(),
+            );
+        }
         sections.push(group("Drills", cards).into_any_element());
         div()
             .id("endgame-courses")
@@ -558,6 +631,25 @@ impl Render for Endgames {
                     self.your_drills = Some(drills.clone());
                     drills
                 });
+                return div().size_full().child(drills).into_any_element();
+            }
+        }
+        if view == DUE {
+            let set = self.due_drills();
+            if let Some(drills) = self.due_drills.clone().or_else(|| {
+                // Their groups in the order the drills and Your endgames list them.
+                let groups: Vec<&'static str> = GROUPS
+                    .into_iter()
+                    .chain([WINS, DRAWS])
+                    .filter(|group| set.iter().any(|drill| drill.group == *group))
+                    .collect();
+                (!set.is_empty()).then(|| {
+                    let drills = cx.new(|cx| EndgameDrills::of(set, groups, window, cx));
+                    self.child_subscription = Some(cx.subscribe(&drills, Self::on_event));
+                    self.due_drills = Some(drills.clone());
+                    drills
+                })
+            }) {
                 return div().size_full().child(drills).into_any_element();
             }
         }

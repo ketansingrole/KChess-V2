@@ -321,6 +321,50 @@ fn endgame_drills_open_and_return_to_the_courses(cx: &mut gpui_kit::TestAppConte
     assert!(!app.shows("chess-board"));
 }
 
+/// Practice → Endgames → Missed endgames: a drill you missed is due again at once and listed
+/// alone, one you only solved is not; solved once it came back, it waits for tomorrow and the
+/// card goes.
+#[gpui_kit::test]
+fn missed_endgame_drills_come_back(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    let save = |app: &mut Harness, drill: &str, success: bool| {
+        let detail = serde_json::json!({ "moves": 3, "success": success });
+        app.request(kchess_contracts::calls::SaveRun {
+            run: kchess_contracts::types::RunInput {
+                kind: kchess_contracts::types::RunKind::Endgame,
+                variant: drill.to_string(),
+                score: if success { 1. } else { 0. },
+                detail: detail.as_object().cloned().unwrap_or_default(),
+            },
+        });
+    };
+    save(&mut app, "kq-vs-k", true);
+    save(&mut app, "kr-vs-k", false);
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
+    reveal(&mut app, "endgame-courses", "card-due");
+    assert_eq!(app.find("card-due").label(), Some("Missed endgames"));
+    app.click("card-due");
+    app.find("drill-hint");
+    let drill = app.with_window(|_, cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).endgame_drills(cx))
+            .expect("the drills")
+            .read(cx)
+            .drill()
+            .clone()
+    });
+    assert_eq!(drill.id, "kr-vs-k");
+    app.find("training-kr-vs-k");
+    assert!(!app.shows("training-kq-vs-k"), "solved, never missed");
+    save(&mut app, "kr-vs-k", true);
+    app.click("drills-back");
+    reveal(&mut app, "endgame-courses", "card-drills");
+    app.wait_for("the missed drill to wait for tomorrow", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find("card-due").is_none()
+    });
+}
+
 /// The fixture tablebases (KQ vs K and KR vs K) in `profile`, where the core finds them.
 pub(super) fn with_tablebases(profile: &std::path::Path) {
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

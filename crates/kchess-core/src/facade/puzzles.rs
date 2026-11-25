@@ -5,8 +5,8 @@ use kchess_contracts::core_api::PuzzlesApi;
 use kchess_contracts::types::{
     LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleActivityEntry, PuzzleAttemptInput,
     PuzzleDashboard, PuzzleDbStatus, PuzzleDraw, PuzzleProgress, PuzzleProgressQuery,
-    PuzzleRequest, PuzzleSolveRequest, PuzzleSolveResult, Reply, RunInput, RunKind, RunSaved,
-    RunSummary, StormDashboard, VoiceAttempt, VoiceAttemptInput, VoiceUpdate,
+    PuzzleRequest, PuzzleSolveRequest, PuzzleSolveResult, Reply, RunCard, RunInput, RunKind,
+    RunSaved, RunSummary, StormDashboard, VoiceAttempt, VoiceAttemptInput, VoiceUpdate,
 };
 
 use crate::core::Core;
@@ -93,6 +93,12 @@ impl PuzzlesApi for Core {
     async fn run_summary(&self, kind: RunKind) -> Result<RunSummary> {
         self.database
             .read_async(move |ctx| runs::run_summary(ctx.host, ctx.db, kind))
+            .await
+    }
+
+    async fn run_schedule(&self, kind: RunKind) -> Result<Vec<RunCard>> {
+        self.database
+            .read_async(move |ctx| runs::run_schedule(ctx.db, kind))
             .await
     }
 

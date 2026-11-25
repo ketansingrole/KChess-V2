@@ -488,6 +488,8 @@ core_api! {
         #[writes(Puzzles)]
         SaveRun = "saveRun" fn save_run(run: RunInput) -> RunSaved;
         RunSummary = "runSummary" fn run_summary(kind: RunKind) -> crate::types::RunSummary;
+        /// The drills of `kind` missed at least once, the one due soonest first.
+        RunSchedule = "runSchedule" fn run_schedule(kind: RunKind) -> Vec<crate::types::RunCard>;
         #[writes(Puzzles)]
         ClearRuns = "clearRuns" fn clear_runs(; kind: Option<RunKind>) -> ();
         /// Local log of voice input (Settings › Voice). It never leaves this computer unless

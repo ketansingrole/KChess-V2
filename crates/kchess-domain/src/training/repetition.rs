@@ -114,6 +114,15 @@ impl Card {
     }
 }
 
+/// The card a drill's answers leave, `(right, at)` oldest first, each reviewed in turn: so a
+/// drill missed, then got right, comes back in a day, then in six, and so on. None without
+/// answers.
+pub fn replay(answers: impl IntoIterator<Item = (bool, f64)>) -> Option<Card> {
+    answers.into_iter().fold(None, |card, (right, at)| {
+        Some(Card::review(card.as_ref(), right, at))
+    })
+}
+
 /// A line's name: the UCI moves from its root, space-separated, after `<8 hex digits>:` (the
 /// root position's [`root_tag`]) when the tree does not start from the standard position.
 pub fn valid_line(line: &str) -> bool {
@@ -268,6 +277,22 @@ mod tests {
     use super::*;
 
     const NOW: f64 = 1_800_000_000_000.0;
+
+    #[test]
+    fn a_drills_answers_replay_into_its_card() {
+        assert_eq!(replay([]), None);
+        // Missed, then solved at once: due tomorrow, its lapse remembered.
+        let card = replay([(false, NOW), (true, NOW + 60_000.0)]).expect("answered");
+        assert_eq!((card.lapses, card.reps, card.interval), (1, 1, 1.0));
+        assert_eq!(card.due, NOW + 60_000.0 + DAY_MS);
+        // Solved again before it was due: the schedule stands.
+        let early =
+            replay([(false, NOW), (true, NOW), (true, NOW + DAY_MS / 2.0)]).expect("answered");
+        assert_eq!(early.due, NOW + DAY_MS);
+        // Solved when due: six days on.
+        let later = replay([(false, NOW), (true, NOW), (true, NOW + DAY_MS)]).expect("answered");
+        assert_eq!((later.reps, later.due), (2, NOW + 7.0 * DAY_MS));
+    }
 
     #[test]
     fn right_answers_space_a_line_out_and_a_wrong_one_brings_it_back() {

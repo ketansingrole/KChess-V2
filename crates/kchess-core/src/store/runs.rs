@@ -1,7 +1,10 @@
 //! Local scores for Storm, Streak, Rush and the practice drills.
 //! Neither is ever sent anywhere.
 
-use kchess_contracts::types::{Keyed, RunBest, RunInput, RunKind, RunRecord, RunSaved, RunSummary};
+use kchess_contracts::types::{
+    Keyed, RunBest, RunCard, RunInput, RunKind, RunRecord, RunSaved, RunSummary,
+};
+use kchess_domain::training::repetition;
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value};
 
@@ -116,6 +119,48 @@ pub fn save_run(host: &dyn Host, db: &Connection, run: &RunInput) -> Result<RunS
     })
 }
 
+/// The drills of `kind` missed at least once (a run that scored nothing), each with the card
+/// its runs leave in order, the one due soonest first.
+pub fn run_schedule(db: &Connection, kind: RunKind) -> Result<Vec<RunCard>> {
+    let mut statement = db
+        .prepare(
+            "SELECT variant, score, playedAt FROM runs
+             WHERE kind = ?1 AND variant IN
+               (SELECT variant FROM runs WHERE kind = ?1 AND score <= 0)
+             ORDER BY variant, playedAt, id",
+        )
+        .sql()?;
+    let rows = statement
+        .query_map(params![kind.as_str()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, f64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })
+        .sql()?;
+    let mut answers: Vec<(String, Vec<(bool, f64)>)> = Vec::new();
+    for row in rows {
+        let (variant, score, played_at) = row.sql()?;
+        let answer = (score > 0.0, played_at as f64);
+        match answers.last_mut() {
+            Some((last, list)) if *last == variant => list.push(answer),
+            _ => answers.push((variant, vec![answer])),
+        }
+    }
+    let mut cards: Vec<RunCard> = answers
+        .into_iter()
+        .filter_map(|(variant, answers)| {
+            Some(RunCard {
+                variant,
+                card: repetition::replay(answers)?,
+            })
+        })
+        .collect();
+    cards.sort_by(|a, b| a.card.due.total_cmp(&b.card.due));
+    Ok(cards)
+}
+
 /// Forget the local scores of one kind, or of all of them.
 pub fn clear_runs(db: &Connection, kind: Option<RunKind>) -> Result<()> {
     match kind {
@@ -155,6 +200,41 @@ mod tests {
 
     fn summary(db: &Connection, host: &TestHost, kind: RunKind) -> Value {
         serde_json::to_value(run_summary(host, db, kind).unwrap()).unwrap()
+    }
+
+    /// Drills missed at least once come back by their runs in order: one missed and then solved
+    /// is due a day after; one only missed is due at once, first; one never missed has no card;
+    /// another kind's misses are its own.
+    #[test]
+    fn missed_drills_come_back_by_their_runs() {
+        let db = database();
+        let run = |kind: &str, variant: &str, score: f64, at: i64| {
+            db.execute(
+                "INSERT INTO runs (kind, variant, score, detail, playedAt) VALUES (?1, ?2, ?3, '{}', ?4)",
+                params![kind, variant, score, at],
+            )
+            .unwrap();
+        };
+        const DAY: i64 = 86_400_000;
+        let now = 1_800_000_000_000_i64;
+        run("endgame", "kr-vs-k", 0.0, now);
+        run("endgame", "kr-vs-k", 1.0, now + 60_000);
+        run("endgame", "own:Slip0001", 0.0, now + 120_000);
+        run("endgame", "kq-vs-k", 1.0, now);
+        run("lesson", "opposition-1", 0.0, now);
+        let cards = run_schedule(&db, RunKind::Endgame).unwrap();
+        let due: Vec<(&str, f64, u32)> = cards
+            .iter()
+            .map(|card| (card.variant.as_str(), card.card.due, card.card.lapses))
+            .collect();
+        assert_eq!(
+            due,
+            [
+                ("own:Slip0001", (now + 120_000) as f64, 1),
+                ("kr-vs-k", (now + 60_000 + DAY) as f64, 1),
+            ]
+        );
+        assert!(run_schedule(&db, RunKind::Storm).unwrap().is_empty());
     }
 
     #[test]
