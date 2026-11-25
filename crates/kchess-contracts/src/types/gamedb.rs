@@ -142,6 +142,60 @@ pub struct GameDbProgress {
     pub message: Option<String>,
 }
 
+/// Games' results from one side: won, drawn and lost; `games` counts those with no result too.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbRecord {
+    pub games: u64,
+    pub wins: u64,
+    pub draws: u64,
+    pub losses: u64,
+}
+
+/// An opening a player played, by its family's name ("Sicilian Defense"), its ECO code or its
+/// first moves, and how it went.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbOpening {
+    pub name: String,
+    pub record: GameDbRecord,
+}
+
+/// What a player did with one colour: their results and their openings, the most played first.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbSideReport {
+    pub record: GameDbRecord,
+    pub openings: Vec<GameDbOpening>,
+}
+
+/// A player's rating in a month: their last rated game's.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbRating {
+    pub year: i32,
+    pub month: u8,
+    pub rating: u32,
+}
+
+/// One player's games in a database at a glance: as White and as Black, their rating over the
+/// months, and their wins over the strongest opponents.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbPlayerReport {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_year: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_year: Option<i32>,
+    pub white: GameDbSideReport,
+    pub black: GameDbSideReport,
+    /// Oldest first.
+    pub ratings: Vec<GameDbRating>,
+    /// The strongest opponent first.
+    pub best: Vec<GameDbRow>,
+}
+
 /// A player's name in a database, with the games it is in.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

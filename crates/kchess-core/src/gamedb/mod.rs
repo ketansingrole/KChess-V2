@@ -17,6 +17,7 @@ pub mod names;
 pub mod novelty;
 pub mod own;
 pub mod player;
+pub mod report;
 pub mod schema;
 pub mod search;
 pub mod tcec;
@@ -39,8 +40,8 @@ use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
     DatabaseInfo, DatabaseSource, GameDbImported, GameDbNameGroup, GameDbNovelty, GameDbPage,
-    GameDbPhase as Phase, GameDbProgress, GameDbQuery, GameDbSaved, GameDbStatus, LookupOptions,
-    PositionLookup,
+    GameDbPhase as Phase, GameDbPlayerReport, GameDbProgress, GameDbQuery, GameDbSaved,
+    GameDbStatus, LookupOptions, PositionLookup,
 };
 use kchess_domain::gamedb;
 
@@ -772,6 +773,13 @@ impl GameDbService {
             .await
             .map(|ids| ids.len() as u64);
         self.inner.logged("duplicates", result)
+    }
+
+    /// The player named `name` in database `id`, at a glance.
+    pub async fn player_report(&self, id: &str, name: String) -> Result<GameDbPlayerReport> {
+        let lane = self.inner.reader(id)?;
+        let result = lane.run(move |db| report::player(db, &name)).await;
+        self.inner.logged("player report", result)
     }
 
     /// The names of database `id` that are likely one player's.

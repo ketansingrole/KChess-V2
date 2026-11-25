@@ -17,6 +17,7 @@ use kchess_ui::theme;
 mod lichess;
 mod manage;
 mod player;
+mod report;
 pub mod target;
 mod tidy;
 
@@ -721,6 +722,13 @@ impl DatabasePage {
         }
     }
 
+    /// The report on the player `name` of the database shown.
+    fn about(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(database) = self.database.clone() {
+            report::open(cx.entity().downgrade(), database, name, window, cx);
+        }
+    }
+
     /// Asks, then deletes the database shown.
     fn delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(info) = self.shown_database(cx).cloned() {
@@ -930,6 +938,30 @@ struct GamesMenu {
 impl GamesMenu {
     fn build(&self, menu: PopupMenu) -> PopupMenu {
         let (copy, export, delete) = (self.clone(), self.clone(), self.clone());
+        // A game's players, each with their report.
+        let players: Vec<String> = self
+            .game
+            .iter()
+            .flat_map(|game| [game.white.clone(), game.black.clone()])
+            .filter(|name| !name.is_empty() && name != "?")
+            .collect();
+        let menu = players.into_iter().fold(menu, |menu, name| {
+            let page = self.page.clone();
+            menu.item(
+                PopupMenuItem::new(format!("About {name}"))
+                    .icon(icon("user"))
+                    .on_click(move |_, window, cx| {
+                        let name = name.clone();
+                        page.update(cx, |page, cx| page.about(name, window, cx))
+                            .ok();
+                    }),
+            )
+        });
+        let menu = if self.game.is_some() {
+            menu.separator()
+        } else {
+            menu
+        };
         menu.when(!self.busy, |menu| {
             menu.item(
                 PopupMenuItem::new("Copy to database…")

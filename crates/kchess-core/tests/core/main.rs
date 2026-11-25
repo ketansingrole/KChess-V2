@@ -50,6 +50,7 @@ mod gamedb_lichess;
 mod gamedb_master;
 mod gamedb_novelty;
 mod gamedb_player;
+mod gamedb_report;
 mod gamedb_scale;
 mod gamedb_tcec;
 mod gamedb_tidy;

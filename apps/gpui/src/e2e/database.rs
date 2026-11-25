@@ -816,9 +816,35 @@ fn the_board_saves_its_game_to_a_database(cx: &mut gpui_kit::TestAppContext) {
     app.press("enter");
     app.find("tree-e2e4");
 
+    // The new game is added first and the old one removed after: three games again, once the
+    // database has changed. Three alone was true before the save, so the games were once read
+    // between the two, four of them (2026-11-25).
+    let changed_at = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            cx.global::<kchess_board::game_db::GameDbHandle>()
+                .0
+                .read(cx)
+                .databases()
+                .iter()
+                .map(|info| (info.games, info.updated_at))
+                .collect::<Vec<_>>()
+        })
+    };
+    let before = changed_at(&mut app);
     app.click("study-actions");
     app.click_label("Save changes to tata");
-    wait_for_databases(&mut app, "still three games", &[("tata", 3)]);
+    let started = std::time::Instant::now();
+    loop {
+        let now = changed_at(&mut app);
+        if now.len() == 1 && now[0].0 == 3 && now != before {
+            break;
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "the game replaced: {now:?}"
+        );
+        app.settle();
+    }
     let pgn = |app: &mut Harness, database: &str| -> Vec<String> {
         let id = app.cx.update(|cx| {
             cx.global::<kchess_board::game_db::GameDbHandle>()
@@ -965,5 +991,42 @@ fn a_database_is_tidied_of_copies_and_spellings(cx: &mut gpui_kit::TestAppContex
             "Carlsen, M against Ding, Liren, 1-0",
             "Carlsen, M against Ding, Liren, 0-1",
         ],
+    );
+}
+
+/// A game's menu opens a report on either player: their games and years, how they did with each
+/// colour and in which openings, and their best wins, one of which opens on the board. Show
+/// games lists all their games.
+#[gpui_kit::test]
+fn a_player_s_report_reads_their_games_at_a_glance(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_games(&mut app);
+    app.click(("database-game-actions", 1usize));
+    app.click_label("About Carlsen, Magnus");
+    assert_eq!(
+        app.find("report-summary").label(),
+        Some("2 games · 2024 · Rated 2830")
+    );
+    assert_eq!(app.find("report-white").label(), Some("As White: 1 game"));
+    assert_eq!(app.find("report-black").label(), Some("As Black: 1 game"));
+    assert_eq!(
+        app.find(("report-white", 0usize)).label(),
+        Some("1. e4 e5, 1 game, Won 1 · Drawn 0 · Lost 0 · 100%")
+    );
+    assert_eq!(
+        app.find(("report-black", 0usize)).label(),
+        Some("1. Nf3 Nc6, 1 game, Won 0 · Drawn 1 · Lost 0 · 50%")
+    );
+    app.click_label("Won against Gukesh D");
+    app.wait_for_page(crate::pages::Page::Analysis);
+
+    app.open("Game database");
+    app.click(("database-game-actions", 0usize));
+    app.click_label("About Gukesh D");
+    app.click("report-games");
+    wait_for_listed(
+        &mut app,
+        "Gukesh's games",
+        &[GUKESH_CARLSEN, CARLSEN_GUKESH],
     );
 }

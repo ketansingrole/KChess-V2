@@ -7,8 +7,8 @@ use kchess_contracts::check::{
 use kchess_contracts::core_api::GameDbApi;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    DatabaseSource, GameDbImported, GameDbNameGroup, GameDbNovelty, GameDbPage, GameDbQuery,
-    GameDbSaved, GameDbStatus, GameSite, LichessArchive, LichessGames, PlayerGames,
+    DatabaseSource, GameDbImported, GameDbNameGroup, GameDbNovelty, GameDbPage, GameDbPlayerReport,
+    GameDbQuery, GameDbSaved, GameDbStatus, GameSite, LichessArchive, LichessGames, PlayerGames,
 };
 
 use crate::core::Core;
@@ -104,6 +104,14 @@ impl GameDbApi for Core {
     ) -> Result<u64> {
         let selection = selection(games, search)?;
         self.gamedb.delete_games(&database.0, selection).await
+    }
+
+    async fn game_db_player(
+        &self,
+        database: DatabaseId,
+        name: PlayerName,
+    ) -> Result<GameDbPlayerReport> {
+        self.gamedb.player_report(&database.0, name.0).await
     }
 
     async fn game_db_duplicates(&self, database: DatabaseId) -> Result<u64> {

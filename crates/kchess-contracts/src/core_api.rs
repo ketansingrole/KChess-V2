@@ -707,6 +707,13 @@ core_api! {
             games: Option<GameDbGameIds>,
             search: Option<GameDbQuery>
         ) -> u64;
+        /// The player named `name` in `database`: their results and openings with each colour,
+        /// their rating by month and their best wins.
+        #[assist(Lookups)]
+        GameDbPlayer = "gameDbPlayer" fn game_db_player(
+            database: DatabaseId,
+            name: PlayerName
+        ) -> GameDbPlayerReport;
         /// How many games of `database` are copies of an earlier one: the same players, date,
         /// result, start and moves.
         GameDbDuplicates = "gameDbDuplicates" fn game_db_duplicates(database: DatabaseId) -> u64;
