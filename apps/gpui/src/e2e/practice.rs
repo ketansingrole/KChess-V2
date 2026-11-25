@@ -365,6 +365,88 @@ fn missed_endgame_drills_come_back(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
+/// Home → Today's practice: a repertoire line answered wrong and an endgame drill missed are
+/// listed, and nothing for mistakes with none saved; each opens its practice on what is due.
+#[gpui_kit::test]
+fn home_lists_todays_practice_and_opens_it(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_contracts::check::{RepertoireKey, RepertoireLine};
+    let mut app = Harness::start(cx);
+    let made = std::rc::Rc::new(std::cell::RefCell::new(None));
+    app.cx.update(|cx| {
+        let save = cx
+            .global::<crate::studies::StudyHandle>()
+            .0
+            .read(cx)
+            .command(kchess_contracts::types::StudyCommand::Save {
+                name: "Open games".into(),
+                pgn: "1. e4 e5 2. Nf3 (2. Bc4) *".into(),
+                id: None,
+                chapter_id: None,
+            });
+        let made = made.clone();
+        cx.spawn(async move |_| {
+            *made.borrow_mut() = save.await.expect("the study is saved").id;
+        })
+        .detach();
+    });
+    app.wait_for("the study", |_, _| made.borrow().is_some());
+    let study = made.borrow().clone().expect("its id");
+    app.request(kchess_contracts::calls::ReviewRepertoireLine {
+        key: RepertoireKey(format!("{study}:white")),
+        line: RepertoireLine("e2e4 e7e5 g1f3".into()),
+        correct: false,
+    });
+    app.request(kchess_contracts::calls::SaveRun {
+        run: kchess_contracts::types::RunInput {
+            kind: kchess_contracts::types::RunKind::Endgame,
+            variant: "kr-vs-k".into(),
+            score: 0.,
+            detail: serde_json::Map::new(),
+        },
+    });
+    // Home reads what is due each time it is shown.
+    app.open("Practice");
+    app.open("Home");
+    app.wait_for("today's practice", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find("home-due-endgames").is_some()
+    });
+    assert_eq!(
+        app.find(("home-due-repertoire", 0usize)).label(),
+        Some("Open games · White: 1 line")
+    );
+    assert_eq!(
+        app.find("home-due-endgames").label(),
+        Some("Missed endgames: 1 endgame")
+    );
+    assert!(!app.shows("home-due-mistakes"));
+    app.click("home-due-endgames");
+    app.find("drill-hint");
+    let drill = app.with_window(|_, cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).endgame_drills(cx))
+            .expect("the drills")
+            .read(cx)
+            .drill()
+            .id
+            .clone()
+    });
+    assert_eq!(drill, "kr-vs-k");
+    app.open("Home");
+    app.click(("home-due-repertoire", 0usize));
+    app.wait_for("the due line", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .elements()
+            .iter()
+            .any(|element| element.label() == Some("Line due for review"))
+    });
+    let chosen = app
+        .cx
+        .update(|cx| crate::prefs::get::<String>(cx, "kchess:repertoire-study", String::new()));
+    assert_eq!(chosen, study);
+}
+
 /// The fixture tablebases (KQ vs K and KR vs K) in `profile`, where the core finds them.
 pub(super) fn with_tablebases(profile: &std::path::Path) {
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

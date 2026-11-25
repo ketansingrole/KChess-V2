@@ -267,6 +267,16 @@ impl Endgames {
         crate::prefs::set(cx, VIEW, view);
     }
 
+    /// The missed endgames due again, as they are now.
+    pub(crate) fn show_due(&mut self, cx: &mut Context<Self>) {
+        Self::open(DUE, cx);
+        self.due_drills = None;
+        self.lesson = None;
+        self.child_subscription = None;
+        self.load(cx);
+        cx.notify();
+    }
+
     /// Your endgames on `positions` (FEN) of them, or on all of them when none is listed.
     pub(crate) fn show_yours(&mut self, positions: Vec<String>, cx: &mut Context<Self>) {
         Self::open(YOURS, cx);

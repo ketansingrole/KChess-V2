@@ -455,8 +455,8 @@ fn computer_variant() {
     }
 }
 
-/// Home as a new person, someone with games played here, and a connected Lichess account with
-/// years of history, in both appearances, wide and narrow:
+/// Home as a new person, someone with games played here, someone with practice due, and a
+/// connected Lichess account with years of history, in both appearances, wide and narrow:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::home -- --ignored` writes
 /// `<dir>/home/<state>-<appearance>-<width>.png`; `KCHESS_HOME_STATES` and `KCHESS_HOME_SIZES`
 /// narrow it down, `KCHESS_HOME_RAIL=1` shoots it with the sidebar collapsed to its rail, and
@@ -472,7 +472,7 @@ fn home() {
     let only = kchess_host::env::var("KCHESS_HOME_STATES").unwrap_or_default();
     let rail = kchess_host::env::var_os("KCHESS_HOME_RAIL").is_some();
     let turn = kchess_host::env::var_os("KCHESS_HOME_TURN").is_some();
-    for state in ["new", "finished", "played", "lichess"] {
+    for state in ["new", "finished", "played", "practice", "lichess"] {
         if !only.is_empty() && !only.split(',').any(|wanted| wanted == state) {
             continue;
         }
@@ -485,6 +485,9 @@ fn home() {
                 });
                 if state != "new" {
                     seed_played(&mut cx, state != "finished");
+                }
+                if state == "practice" {
+                    seed_due(&mut cx);
                 }
                 if state == "lichess" {
                     connect_showcase(&mut cx, window, profile.path(), "Rattiestword5");
@@ -687,6 +690,58 @@ fn home_sizes() -> Vec<(f32, f32)> {
 }
 
 /// A few finished games played here, and an unfinished one against the computer if `unfinished`.
+/// Practice due today: two repertoire lines answered wrong, and two endgame drills missed.
+fn seed_due(cx: &mut HeadlessAppContext) {
+    use kchess_contracts::check::{RepertoireKey, RepertoireLine};
+    let save = cx.update(|cx| {
+        cx.global::<crate::studies::StudyHandle>()
+            .0
+            .read(cx)
+            .command(kchess_contracts::types::StudyCommand::Save {
+                name: "Open games".into(),
+                pgn: "1. e4 e5 2. Nf3 Nc6 (2... d6) 3. Bb5 *".into(),
+                id: None,
+                chapter_id: None,
+            })
+    });
+    let study = cx
+        .foreground_executor()
+        .block_test(save)
+        .expect("the study is saved")
+        .id
+        .expect("its id");
+    for line in ["e2e4 e7e5 g1f3 b8c6 f1b5", "e2e4 e7e5 g1f3 d7d6"] {
+        let answered = cx.update(|cx| {
+            cx.global::<crate::core::AppCore>().request(
+                kchess_contracts::calls::ReviewRepertoireLine {
+                    key: RepertoireKey(format!("{study}:white")),
+                    line: RepertoireLine(line.into()),
+                    correct: false,
+                },
+            )
+        });
+        cx.foreground_executor()
+            .block_test(answered)
+            .expect("the line is answered");
+    }
+    for drill in ["kr-vs-k", "kp-opposition"] {
+        let saved = cx.update(|cx| {
+            cx.global::<crate::core::AppCore>()
+                .request(kchess_contracts::calls::SaveRun {
+                    run: kchess_contracts::types::RunInput {
+                        kind: kchess_contracts::types::RunKind::Endgame,
+                        variant: drill.into(),
+                        score: 0.,
+                        detail: serde_json::Map::new(),
+                    },
+                })
+        });
+        cx.foreground_executor()
+            .block_test(saved)
+            .expect("the run is saved");
+    }
+}
+
 fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
     use kchess_domain::games::Host;
     use kchess_domain::games::computer::ComputerGame;

@@ -1,6 +1,7 @@
-//! The Home page: where to start, the position you left, the recent games played here, and connecting
-//! Lichess.
-//! It reads the unfinished computer game and the accounts again each time it is shown.
+//! The Home page: where to start, the position you left, what practice is due today, the recent
+//! games played here, and connecting Lichess.
+//! It reads the unfinished computer game, what is due and the accounts again each time it is
+//! shown.
 
 // A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
@@ -35,6 +36,7 @@ use kchess_domain::games::Host;
 use kchess_domain::games::computer::ComputerGame;
 use kchess_nav::page::Page;
 use kchess_nav::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, column_width, side_padding};
+use kchess_practice::today::Today;
 use kchess_ui::icon;
 
 pub mod lichess;
@@ -74,6 +76,9 @@ pub struct HomePage {
     /// The newest played games (`RECENT`), as of a revision of the played games: Home drew them
     /// by sorting every played game on every frame.
     recent: std::cell::RefCell<(Option<u64>, Vec<PlayedGame>)>,
+    /// What practice is due, as of the last read, and that read: the latest one alone counts.
+    today: Today,
+    today_read: loading::Epoch,
     /// The page's content, as last laid out: it, not the window, decides what goes beside what.
     area: Measured,
     focus: FocusHandle,
@@ -208,6 +213,8 @@ impl HomePage {
             last_opening: None,
             activity: None,
             recent: Default::default(),
+            today: Today::default(),
+            today_read: loading::Epoch::default(),
             area: Measured::default(),
             focus: cx.focus_handle(),
             _subscriptions: vec![
@@ -534,6 +541,46 @@ impl HomePage {
             activity.update(cx, |activity, cx| activity.load(&account, cx));
         }
         self.refresh_continue(cx);
+        self.refresh_today(cx);
+    }
+
+    /// Read what practice is due again: the library's repertoire schedule and mistakes, and the
+    /// endgame drills missed; the repertoires' lines are worked out from their studies off the
+    /// main thread.
+    fn refresh_today(&mut self, cx: &mut Context<Self>) {
+        let turn = self.today_read.start();
+        let core = cx.global::<AppCore>().clone();
+        let (library, missed) = (
+            core.request(calls::Library {}),
+            core.request(calls::RunSchedule {
+                kind: kchess_contracts::types::RunKind::Endgame,
+            }),
+        );
+        cx.spawn(async move |this, cx| {
+            let (library, missed) = match (library.await, missed.await) {
+                (Ok(library), Ok(missed)) => (library, missed),
+                (Err(cause), _) | (_, Err(cause)) => {
+                    crate::log::write(
+                        kchess_contracts::Level::Warn,
+                        "home",
+                        &format!("Reading what practice is due failed: {}", cause.message),
+                    );
+                    return;
+                }
+            };
+            let now = kchess_games::now_ms();
+            let today = cx
+                .background_spawn(async move { Today::at(&library, &missed, now) })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.today_read.is_current(turn) {
+                    this.today = today;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Read the unfinished computer game again.
@@ -666,6 +713,7 @@ impl Render for HomePage {
         // Before the first game there is nothing to list: the board's card already starts one.
         let has_games = !games.is_empty();
         let recent = recent_card(games, &palette);
+        let today = (!self.today.is_empty()).then(|| today_card(&self.today, &palette));
         // A connected account's (or Chess.com player's) activity follows; until then, one line to
         // connect it.
         let activity = self.activity.as_ref().map(|(_, view)| view.clone());
@@ -675,6 +723,7 @@ impl Render for HomePage {
             .min_w_0()
             .gap(px(16.))
             .child(tiles)
+            .children(today)
             .when(has_games, |starts| starts.child(recent));
         // The connect card is one more card in the grid; a connected account's section, with its
         // own heading, stands further off.
@@ -756,6 +805,101 @@ fn tiles(per_row: usize, palette: &Palette) -> Div {
         rows.push(h_flex().gap(GAP).children(tiles.by_ref().take(per_row)));
     }
     v_flex().gap(GAP).children(rows)
+}
+
+/// What a row of Today's practice opens.
+type Opens = Box<dyn Fn(&mut Window, &mut App)>;
+
+/// What practice is due today: each repertoire with lines due, the mistakes from your games and
+/// the endgames you missed, each opening that practice.
+fn today_card(today: &Today, palette: &Palette) -> Div {
+    let plural = |count: usize, one: &str, many: &str| {
+        if count == 1 {
+            format!("1 {one}")
+        } else {
+            format!("{count} {many}")
+        }
+    };
+    let row = |id: ElementId, label: String, count: String, open: Opens| {
+        h_flex()
+            .id(id)
+            .test_support()
+            .role(Role::Button)
+            .keyboard_focus(palette.primary)
+            .aria_label(format!("{label}: {count}"))
+            .gap(px(12.))
+            .px(px(12.))
+            .py(px(8.))
+            .rounded(radii::BOX)
+            .text_size(px(13.))
+            .cursor_pointer()
+            .pressable(palette)
+            .on_click(move |_, window, cx| open(window, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(label),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_color(palette.text_muted)
+                    .font_features(widgets::tabular())
+                    .child(count),
+            )
+    };
+    let repertoires = today.repertoires.iter().enumerate().map(|(index, due)| {
+        let (study, color) = (due.study.clone(), due.color);
+        let side = if color == Color::White {
+            "White"
+        } else {
+            "Black"
+        };
+        row(
+            ("home-due-repertoire", index).into(),
+            format!("{} · {side}", due.name),
+            plural(due.due, "line", "lines"),
+            Box::new(move |window, cx| {
+                kchess_practice::repertoire::review_study(study.clone(), color, window, cx)
+            }),
+        )
+    });
+    let mistakes = (today.mistakes > 0).then(|| {
+        row(
+            "home-due-mistakes".into(),
+            "Your mistakes".into(),
+            plural(today.mistakes, "position", "positions"),
+            Box::new(|window, cx| {
+                kchess_practice::open_tab(kchess_practice::Tab::Mistakes, window, cx)
+            }),
+        )
+    });
+    let endgames = (today.endgames > 0).then(|| {
+        row(
+            "home-due-endgames".into(),
+            "Missed endgames".into(),
+            plural(today.endgames, "endgame", "endgames"),
+            Box::new(kchess_practice::missed_endgames),
+        )
+    });
+    widgets::card(palette)
+        .min_w_0()
+        .gap(px(4.))
+        .child(
+            div()
+                .mb(px(4.))
+                .child(widgets::heading("Today's practice", palette)),
+        )
+        .child(
+            v_flex()
+                .mx(px(-12.))
+                .children(repertoires)
+                .children(mistakes)
+                .children(endgames),
+        )
 }
 
 /// The last games played, each opening in Game history.
