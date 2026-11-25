@@ -75,7 +75,13 @@ fn query(database: &str) -> GameDbQuery {
 
 async fn imported(games: &GameDbService, path: String) -> GameDbImported {
     games
-        .import(path, false, None, None, DatabaseSource::Imported)
+        .import(
+            path,
+            PgnPacking::Plain,
+            None,
+            None,
+            DatabaseSource::Imported,
+        )
         .await
         .unwrap()
 }
@@ -315,7 +321,7 @@ async fn a_zstd_file_imports_as_its_text_and_a_damaged_one_imports_nothing() {
     let packed = compress_to_vec(GAMES.as_bytes(), CompressionLevel::Fastest);
     let path = source(files.path(), "g.pgn.zst", &packed);
     let result = games
-        .import(path, true, None, None, DatabaseSource::Imported)
+        .import(path, PgnPacking::Zstd, None, None, DatabaseSource::Imported)
         .await
         .unwrap();
     assert_eq!(result.added, 3);
@@ -325,7 +331,7 @@ async fn a_zstd_file_imports_as_its_text_and_a_damaged_one_imports_nothing() {
     damaged.truncate(damaged.len() - 3);
     let path = source(files.path(), "bad.pgn.zst", &damaged);
     let error = games
-        .import(path, true, None, None, DatabaseSource::Imported)
+        .import(path, PgnPacking::Zstd, None, None, DatabaseSource::Imported)
         .await
         .unwrap_err();
     assert!(
@@ -336,6 +342,135 @@ async fn a_zstd_file_imports_as_its_text_and_a_damaged_one_imports_nothing() {
     assert_eq!(games.status().await.unwrap().databases.len(), 1);
     let failed = host.named("gamedb:progress");
     assert_eq!(failed.last().unwrap()["phase"], "failed");
+}
+
+/// A zip of `entries`, deflated.
+fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Write as _;
+    use zip::write::SimpleFileOptions;
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for (name, data) in entries {
+        if name.ends_with('/') {
+            writer.add_directory(*name, options).unwrap();
+        } else {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(data).unwrap();
+        }
+    }
+    writer.finish().unwrap().into_inner()
+}
+
+/// `zip` with each entry marked as encrypted, as a password-protected archive marks them: bit 0
+/// of the flags in every local header (`PK\x03\x04`, at 6) and central directory header
+/// (`PK\x01\x02`, at 8).
+fn locked(mut zip: Vec<u8>) -> Vec<u8> {
+    let headers: Vec<(usize, usize)> = zip
+        .windows(4)
+        .enumerate()
+        .filter_map(|(at, window)| match window {
+            b"PK\x03\x04" => Some((at, 6)),
+            b"PK\x01\x02" => Some((at, 8)),
+            _ => None,
+        })
+        .collect();
+    for (at, flags) in headers {
+        zip[at + flags] |= 1;
+    }
+    zip
+}
+
+#[tokio::test]
+async fn a_zip_imports_every_pgn_file_it_holds_and_nothing_else() {
+    let (profile, files) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (games, host) = service(profile.path());
+    // The first file's last game has no line ending: the next file's first game stays its own.
+    let first = "[White \"First\"]\n[Black \"File\"]\n[Result \"1-0\"]\n\n1. e4 e5 1-0";
+    let packed = zip_of(&[
+        ("twic1620/", b""),
+        ("twic1620/twic1620.pgn", first.as_bytes()),
+        (
+            "twic1620/notes.txt",
+            b"[White \"Not\"]\n[Black \"Games\"]\n\n1. e4 *\n",
+        ),
+        (
+            "__MACOSX/twic1620/._twic1620.pgn",
+            b"\0\x05\x16\x07 attributes",
+        ),
+        ("twic1620/More.PGN", GAMES.as_bytes()),
+    ]);
+    let path = source(files.path(), "TWIC 1620.zip", &packed);
+    let result = games
+        .import(path, PgnPacking::Zip, None, None, DatabaseSource::Imported)
+        .await
+        .unwrap();
+    assert_eq!((result.added, result.skipped), (4, 2));
+    assert_eq!(result.database.name, "TWIC 1620");
+    let listed = games.games(query(&result.database.id)).await.unwrap();
+    let mut players: Vec<String> = listed.games.iter().map(|g| g.white.clone()).collect();
+    players.sort();
+    assert!(players.contains(&"First".to_string()), "{players:?}");
+    assert!(!players.contains(&"Not".to_string()), "{players:?}");
+    // Progress counts the archive's bytes, up to all of them.
+    let progress = host.named("gamedb:progress");
+    let done = progress.last().unwrap();
+    assert_eq!(done["phase"], "done");
+    assert_eq!(done["totalBytes"], packed.len() as u64);
+}
+
+#[tokio::test]
+async fn a_zip_with_no_pgn_or_a_damaged_or_locked_one_imports_nothing() {
+    let (profile, files) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (games, _) = service(profile.path());
+    let refused = |name: &str, bytes: &[u8]| {
+        let path = source(files.path(), name, bytes);
+        let games = &games;
+        async move {
+            games
+                .import(path, PgnPacking::Zip, None, None, DatabaseSource::Imported)
+                .await
+                .unwrap_err()
+                .message
+        }
+    };
+    let scid = zip_of(&[("caissabase.si4", b"SCID"), ("readme.txt", b"hi")]);
+    assert_eq!(
+        refused("caissabase.zip", &scid).await,
+        "That .zip holds no .pgn file."
+    );
+    let whole = zip_of(&[("games.pgn", GAMES.repeat(40).as_bytes())]);
+    let cut = &whole[..whole.len() / 2];
+    assert!(
+        refused("cut.zip", cut)
+            .await
+            .starts_with("That .zip could not be read"),
+        "a zip cut short"
+    );
+    // A damaged byte in the deflated games fails their check, half way through.
+    let mut damaged = whole.clone();
+    let middle = damaged.len() / 3;
+    damaged[middle] ^= 0xff;
+    assert!(
+        refused("damaged.zip", &damaged)
+            .await
+            .starts_with("That .zip could not be read"),
+        "a damaged zip"
+    );
+    let locked = locked(zip_of(&[("games.pgn", GAMES.as_bytes())]));
+    assert_eq!(
+        refused("locked.zip", &locked).await,
+        "That .zip is password-protected."
+    );
+    let status = games.status().await.unwrap();
+    assert!(status.databases.is_empty(), "{:?}", status.databases);
+    let leftovers: Vec<_> = std::fs::read_dir(profile.path().join("databases"))
+        .map(|dir| {
+            dir.filter_map(|entry| entry.ok())
+                .map(|entry| entry.file_name())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
 }
 
 #[tokio::test]
@@ -351,7 +486,7 @@ async fn adding_to_a_database_sums_its_tree_and_a_failed_addition_leaves_it_as_i
     let added = games
         .import(
             source(files.path(), "more.pgn", more.as_bytes()),
-            false,
+            PgnPacking::Plain,
             Some(id.clone()),
             None,
             DatabaseSource::Imported,
@@ -378,7 +513,7 @@ async fn adding_to_a_database_sums_its_tree_and_a_failed_addition_leaves_it_as_i
     let failed = games
         .import(
             source(files.path(), "broken.pgn.zst", &packed),
-            true,
+            PgnPacking::Zstd,
             Some(id.clone()),
             None,
             DatabaseSource::Imported,
@@ -402,7 +537,13 @@ async fn a_cancelled_import_leaves_no_database() {
         let games = Arc::clone(&games);
         tokio::spawn(async move {
             games
-                .import(path, false, None, None, DatabaseSource::Imported)
+                .import(
+                    path,
+                    PgnPacking::Plain,
+                    None,
+                    None,
+                    DatabaseSource::Imported,
+                )
                 .await
         })
     };
@@ -429,7 +570,13 @@ async fn one_import_runs_at_a_time_and_files_of_the_profile_are_refused() {
     let (games, _) = service(profile.path());
     let inside = source(profile.path(), "inside.pgn", GAMES.as_bytes());
     let error = games
-        .import(inside, false, None, None, DatabaseSource::Imported)
+        .import(
+            inside,
+            PgnPacking::Plain,
+            None,
+            None,
+            DatabaseSource::Imported,
+        )
         .await
         .unwrap_err();
     assert!(error.message.contains("outside"), "{}", error.message);
@@ -437,7 +584,7 @@ async fn one_import_runs_at_a_time_and_files_of_the_profile_are_refused() {
     let missing = games
         .import(
             path,
-            false,
+            PgnPacking::Plain,
             Some("nope".into()),
             None,
             DatabaseSource::Imported,
@@ -1019,7 +1166,7 @@ async fn your_games_follow_the_synced_and_played_games() {
         .games
         .import(
             source(files.path(), "more.pgn", GAMES.as_bytes()),
-            false,
+            PgnPacking::Plain,
             Some(own::OWN_ID.into()),
             None,
             DatabaseSource::Imported,
@@ -1131,7 +1278,13 @@ async fn a_rebuild_waits_for_the_import_running() {
         let games = Arc::clone(&own.games);
         tokio::spawn(async move {
             games
-                .import(path, false, None, None, DatabaseSource::Imported)
+                .import(
+                    path,
+                    PgnPacking::Plain,
+                    None,
+                    None,
+                    DatabaseSource::Imported,
+                )
                 .await
         })
     };

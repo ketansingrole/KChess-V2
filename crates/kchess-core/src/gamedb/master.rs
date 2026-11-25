@@ -24,6 +24,7 @@ use crate::download;
 use crate::host::Level;
 use crate::store::sql::Sql as _;
 use crate::usage::Meter;
+use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{DatabaseSource, GameDbImported, GameDbPhase as Phase, UsageKind};
 
@@ -330,7 +331,7 @@ impl GameDbService {
             reporter.send(Phase::Reading, import::Count::default(), true);
             let (path, name) = (partial.0.clone(), month.file.clone());
             let count = inner
-                .run_import(target, true, reporter, move || {
+                .run_import(target, PgnPacking::Zstd, reporter, move || {
                     import::Source::downloaded(&path, &name)
                 })
                 .await?;

@@ -8,7 +8,7 @@ refuses to release with nothing there.
 
 ## Unreleased
 
-- **Your own game database**: import a PGN file with as many games as you like, then pick Database in the explorer to see the moves played from any position, offline. Narrow it to one player, their colour, a rating or a year to prepare for an opponent, and open any game listed.
+- **Your own game database**: import a PGN file, or a .zip of them, with as many games as you like, then pick Database in the explorer to see the moves played from any position, offline. Narrow it to a player, their colour, a rating or a year to prepare for an opponent.
 - **Your games in the database**: your Lichess and Chess.com games and the games you finish here make a Your games database that keeps itself up to date. Pick it in the explorer's Database tab to see how your own games went from any position.
 - **Fair play on every account**: a game you start on any connected Lichess account, on the website or your phone, now turns engine help off until it ends, as a game on the account you play from does.
 - **Database page**: browse the games in your game databases, search them by player, event, year, rating or result, and open any one. Drop a PGN file on the page to import it. On the analysis board, More → Games with this position lists every game that reached it.

@@ -19,6 +19,32 @@ fn pgn_file(dir: &std::path::Path, text: &str) -> String {
     path.to_string_lossy().into_owned()
 }
 
+/// A `.zip` goes through the same method: the core reads the PGN files in it.
+#[tokio::test]
+async fn a_zip_is_imported_through_the_core() {
+    use std::io::Write as _;
+    let (profile, files) = (
+        tempfile::tempdir().expect("profile"),
+        tempfile::tempdir().expect("files"),
+    );
+    let host = support::host();
+    let core = Core::open(Config::new(profile.path().to_path_buf()), host.clone()).expect("opens");
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    writer
+        .start_file("round1.pgn", zip::write::SimpleFileOptions::default())
+        .expect("starts");
+    writer.write_all(GAMES.as_bytes()).expect("writes");
+    let path = files.path().join("twic1620g.zip");
+    std::fs::write(&path, writer.finish().expect("finishes").into_inner()).expect("saves");
+    let imported = core
+        .call("gameDbImport", vec![json!(path.to_string_lossy())])
+        .await
+        .expect("imports");
+    assert_eq!(imported["added"], 2);
+    assert_eq!(imported["database"]["name"], "twic1620g");
+    core.close().await;
+}
+
 #[tokio::test]
 async fn a_file_is_imported_searched_and_read_through_the_core() {
     let (profile, files) = (
@@ -31,7 +57,7 @@ async fn a_file_is_imported_searched_and_read_through_the_core() {
         .call("gameDbImport", vec![json!("relative/open.pgn")])
         .await
         .expect_err("a relative path is refused");
-    assert_eq!(refused.message, "Choose a .pgn or .pgn.zst file.");
+    assert_eq!(refused.message, "Choose a .pgn, .pgn.zst or .zip file.");
     let imported = core
         .call(
             "gameDbImport",

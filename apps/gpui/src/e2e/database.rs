@@ -148,6 +148,42 @@ fn a_pgn_file_dropped_on_the_page_is_imported(cx: &mut gpui_kit::TestAppContext)
     app.find("database-delete");
 }
 
+/// A `.zip` of PGN files dropped on the Database page is imported as one database, named after
+/// the archive, with the games of every PGN file in it.
+#[gpui_kit::test]
+fn a_zip_of_pgn_files_dropped_on_the_page_is_imported(cx: &mut gpui_kit::TestAppContext) {
+    use std::io::Write as _;
+    let (tata, club) = GAMES.split_at(GAMES.find("[Event \"Club\"]").expect("the club game"));
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    // The first file ends without a line ending: its last game stays apart from the next file's.
+    for (name, text) in [("twic/tata.pgn", tata.trim_end()), ("twic/club.pgn", club)] {
+        writer
+            .start_file(name, zip::write::SimpleFileOptions::default())
+            .expect("starts");
+        writer.write_all(text.as_bytes()).expect("writes");
+    }
+    let zipped = writer.finish().expect("finishes").into_inner();
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    app.find("gamedb-import");
+    let _folder = app.drop_file("twic1620g.zip", &zipped);
+    wait_for_listed(
+        &mut app,
+        "the games of both files",
+        &[GUKESH_CARLSEN, CARLSEN_GUKESH, SMITH_JONES],
+    );
+    let names: Vec<String> = app.with_window(|_, cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .iter()
+            .map(|info| info.name.clone())
+            .collect()
+    });
+    assert_eq!(names, ["twic1620g"]);
+}
+
 /// A player's games, downloaded from Lichess to prepare against them, make a database of their
 /// own. It opens on their games, with their name as the player filter, and offers to update
 /// them; an unknown player is refused by name, leaving no database.
