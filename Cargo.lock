@@ -4469,8 +4469,10 @@ dependencies = [
  "kchess-domain",
  "kchess-hack",
  "kchess-nav",
+ "kchess-practice",
  "kchess-ui",
  "serde",
+ "shakmaty",
 ]
 
 [[package]]
