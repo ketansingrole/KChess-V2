@@ -49,6 +49,7 @@ use kchess_nav::page::Page;
 use kchess_nav::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, tab_bar_height};
 use kchess_ui::icon;
 
+pub mod check;
 mod lines;
 use lines::*;
 
@@ -307,6 +308,22 @@ impl Repertoire {
         } else {
             Color::White
         }
+    }
+
+    /// The repertoire's moves checked against the game databases, in a dialog.
+    pub fn check_against_databases(&self, window: &mut Window, cx: &mut App) {
+        let steps = check::steps(&self.roots, Self::color(cx));
+        check::open(steps, window, cx);
+    }
+
+    /// Whether a game database other than Your games is there to check the lines against.
+    fn has_databases(cx: &App) -> bool {
+        let handle = cx.global::<kchess_board::game_db::GameDbHandle>().0.clone();
+        handle
+            .read(cx)
+            .databases()
+            .iter()
+            .any(|database| database.source != kchess_contracts::types::DatabaseSource::Own)
     }
 
     fn study_id(cx: &App) -> String {
@@ -1443,6 +1460,18 @@ impl Render for Repertoire {
                                 cx.listener(|this, _, window, cx| this.clear_misses(window, cx)),
                             ),
                     )
+                    .when(!drills_opening && Self::has_databases(cx), |actions| {
+                        actions.child(
+                            Button::new("repertoire-check")
+                                .ghost()
+                                .icon(icon("database"))
+                                .label("Check against databases")
+                                .disabled(self.roots.is_empty())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.check_against_databases(window, cx)
+                                })),
+                        )
+                    })
                     .when(drills_opening, |actions| {
                         actions.child(
                             Button::new("save-opening")

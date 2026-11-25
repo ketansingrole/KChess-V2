@@ -1152,3 +1152,58 @@ fn more_filters_find_games_by_length_speed_material_and_structure(
     choose(&mut app, "Pawn structure", 3);
     wait_for_listed(&mut app, "the Carlsbad game", &[CARLSBAD]);
 }
+
+/// Practice → Repertoire checks a study's lines against the game databases: Black's 1...c5 is
+/// played in 1 of 21 games, so it is listed to look at, and opens on the analysis board.
+#[gpui_kit::test]
+fn a_repertoire_is_checked_against_the_databases(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let game = |moves: &str| format!("[Result \"1-0\"]\n\n{moves} 1-0\n\n");
+    let pgn = [game("1. e4 e5").repeat(20), game("1. e4 c5")].concat();
+    app.open("Game database");
+    let files = tempfile::tempdir().expect("a folder for the file");
+    let path = files.path().join("club.pgn");
+    std::fs::write(&path, pgn).expect("the file");
+    app.click("gamedb-import");
+    app.wait_for_open_dialog();
+    app.cx
+        .simulate_path_prompt_response(move |_| Some(vec![path]));
+    wait_for_databases(&mut app, "the games in", &[("club", 21)]);
+
+    let made = std::rc::Rc::new(std::cell::RefCell::new(None));
+    app.cx.update(|cx| {
+        let save = cx
+            .global::<crate::studies::StudyHandle>()
+            .0
+            .read(cx)
+            .command(kchess_contracts::types::StudyCommand::Save {
+                name: "Sicilian".into(),
+                pgn: "1. e4 c5 *".into(),
+                id: None,
+                chapter_id: None,
+            });
+        let made = made.clone();
+        cx.spawn(async move |_| {
+            let answer = save.await.expect("the study is saved");
+            *made.borrow_mut() = answer.id;
+        })
+        .detach();
+    });
+    app.wait_for("the study", |_, _| made.borrow().is_some());
+    let id = made.borrow().clone().expect("its id");
+    app.with_window(|window, cx| {
+        crate::prefs::set(cx, "kchess:repertoire-color", "black");
+        kchess_practice::repertoire::train_study(id, window, cx);
+    });
+    app.click("repertoire-check");
+    assert_eq!(
+        app.find("repertoire-check-summary").label(),
+        Some("1 move checked · 1 to look at")
+    );
+    assert_eq!(
+        app.find(("repertoire-check-move", 0usize)).label(),
+        Some("1. e4 c5: 5% of 21 games · most played e5 (95%)")
+    );
+    app.click(("repertoire-check-move", 0usize));
+    app.wait_for_page(crate::pages::Page::Analysis);
+}

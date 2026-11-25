@@ -56,6 +56,37 @@ impl Validate for DatabaseName {
     }
 }
 
+/// A repertoire's positions with its moves there: up to `MOST_STEPS`, each with 1 to
+/// `MOST_STEP_MOVES` UCI moves.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(transparent)]
+pub struct RepertoireSteps(pub Vec<crate::types::RepertoireStep>);
+
+/// The most positions of a repertoire checked at once.
+pub const MOST_STEPS: usize = 2_000;
+/// The most moves a repertoire plays from one position.
+pub const MOST_STEP_MOVES: usize = 32;
+
+impl Validate for RepertoireSteps {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const STEPS: &str = "Invalid repertoire.";
+        let steps: Vec<crate::types::RepertoireStep> = decode(value, |_| Some(STEPS))?;
+        max_items(&steps, MOST_STEPS, Some(STEPS), "")?;
+        for step in &steps {
+            ensure(
+                (1..=MOST_STEP_MOVES).contains(&step.moves.len()),
+                Some(STEPS),
+                "",
+                String::new,
+            )?;
+            for played in &step.moves {
+                uci(played)?;
+            }
+        }
+        Ok(RepertoireSteps(steps))
+    }
+}
+
 /// A player's name as a game's header gives it: 1 to 200 characters, trimmed.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[serde(transparent)]

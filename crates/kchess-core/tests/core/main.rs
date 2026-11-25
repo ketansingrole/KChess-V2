@@ -51,6 +51,7 @@ mod gamedb_master;
 mod gamedb_novelty;
 mod gamedb_opening_report;
 mod gamedb_player;
+mod gamedb_repertoire;
 mod gamedb_report;
 mod gamedb_scale;
 mod gamedb_tcec;

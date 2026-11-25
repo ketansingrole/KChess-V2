@@ -18,6 +18,7 @@ pub mod novelty;
 pub mod opening;
 pub mod own;
 pub mod player;
+pub mod repertoire;
 pub mod report;
 pub mod scan;
 pub mod schema;
@@ -1088,6 +1089,26 @@ impl GameDbService {
         .and_then(|found| found);
         drop(stop);
         self.inner.logged("novelty", result)
+    }
+
+    /// Each of a repertoire's positions through every database but Your games, which follows
+    /// the games you play.
+    pub async fn repertoire(
+        &self,
+        steps: Vec<kchess_contracts::types::RepertoireStep>,
+    ) -> Result<Vec<kchess_contracts::types::GameDbRepertoireCheck>> {
+        let files = self.reference_files();
+        // Dropped by its caller (the dialog closed), the check stops at its next position.
+        let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
+        let stopped = Arc::clone(&stop.0);
+        let result = tokio::task::spawn_blocking(move || {
+            repertoire::check(&open_references(files), &steps, &stopped)
+        })
+        .await
+        .map_err(|_| CoreError::new("The databases could not be read. Try again."))
+        .and_then(|found| found);
+        drop(stop);
+        self.inner.logged("repertoire check", result)
     }
 
     /// Stops the import and the rebuild of "Your games"; `close` waits for them to end.
