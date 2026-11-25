@@ -155,10 +155,51 @@ pub fn your_games(
     names: &[String],
     stop: &AtomicBool,
 ) -> Result<GameDbRepertoireGames> {
+    let (games, reached, gaps) = follow(db, steps, color, names, color, stop)?;
+    Ok(GameDbRepertoireGames {
+        games,
+        reached,
+        gaps,
+    })
+}
+
+/// The games in `db` of `name` with the side the repertoire (`color`) meets, each replayed
+/// through `steps` as `your_games` does: each move they chose where the repertoire waits for
+/// theirs, the ones it has no answer to first, the most played first.
+pub fn player_games(
+    db: &Connection,
+    steps: &[RepertoireStep],
+    color: Color,
+    name: &str,
+    stop: &AtomicBool,
+) -> Result<GameDbRepertoireGames> {
+    let (games, reached, gaps) = follow(db, steps, color, &[name.to_string()], !color, stop)?;
+    Ok(GameDbRepertoireGames {
+        games,
+        reached,
+        gaps,
+    })
+}
+
+/// The games of `db` where one of `names` (in any case) had `side`, each replayed through
+/// `steps`, the repertoire of `color`, until it left them. With `side` the repertoire's, every
+/// move that left it is counted; with the other side, every move that side chose where the
+/// repertoire waits for its reply, in it or not, and only its own moves that left it. Results are
+/// for `color`. Answers the games, those that reached the repertoire, and at most `MOST_GAPS`
+/// moves: those it lacks first, the most played first.
+fn follow(
+    db: &Connection,
+    steps: &[RepertoireStep],
+    color: Color,
+    names: &[String],
+    side: Color,
+    stop: &AtomicBool,
+) -> Result<(u64, u64, Vec<GameDbRepertoireGap>)> {
     let names: HashSet<String> = names
         .iter()
         .map(|name| name.trim().to_lowercase())
         .collect();
+    let choices = side != color;
     // Each position's first step and the repertoire's moves there, packed, from every step
     // that reaches it.
     let mut at: HashMap<u64, (usize, Vec<u16>)> = HashMap::new();
@@ -186,17 +227,17 @@ pub fn your_games(
         )
         .sql()?;
     let mut rows = statement.query([search::visible(db)?]).sql()?;
-    let mut answer = GameDbRepertoireGames::default();
+    let (mut games, mut reached) = (0, 0);
     let mut gaps: HashMap<(usize, u16), Gap> = HashMap::new();
     while let Some(row) = rows.next().sql()? {
         if stop.load(Ordering::Relaxed) {
             return Err(CoreError::new("The repertoire check stopped."));
         }
-        let player: String = row.get(if color == Color::White { 0 } else { 1 }).sql()?;
+        let player: String = row.get(if side == Color::White { 0 } else { 1 }).sql()?;
         if !names.contains(&player.trim().to_lowercase()) {
             continue;
         }
-        answer.games += 1;
+        games += 1;
         let fen: Option<String> = row.get(2).sql()?;
         let code: Vec<u8> = row.get(3).sql()?;
         let Some((mut pos, moves)) = gamedb::start_of(fen.as_deref())
@@ -204,14 +245,20 @@ pub fn your_games(
         else {
             continue;
         };
+        // The moves counted: each its step, the position it was played from, the move and
+        // whether the repertoire has it.
+        let mut counted = Vec::new();
         let mut inside = false;
-        let mut left = None;
         for m in moves {
             match at.get(&gamedb::position_key(&pos)) {
                 Some((step, book)) => {
                     inside = true;
-                    if !book.contains(&gamedb::pack_move(&m)) {
-                        left = Some((*step, pos.clone(), m));
+                    let prepared = book.contains(&gamedb::pack_move(&m));
+                    let theirs = shakmaty::Position::turn(&pos) == side;
+                    if (choices && theirs) || (!choices && !prepared) {
+                        counted.push((*step, pos.clone(), m, prepared));
+                    }
+                    if !prepared {
                         break;
                     }
                 }
@@ -221,50 +268,58 @@ pub fn your_games(
             }
             shakmaty::Position::play_unchecked(&mut pos, m);
         }
-        answer.reached += u64::from(inside);
-        let Some((step, from, m)) = left else {
+        reached += u64::from(inside);
+        if counted.is_empty() {
             continue;
-        };
+        }
         let outcome = Outcome::from_score(row.get(4).sql()?);
         let (date, key): (Option<String>, i64) = (row.get(5).sql()?, row.get(6).sql()?);
-        let gap = gaps
-            .entry((step, gamedb::pack_move(&m)))
-            .or_insert_with(|| Gap {
-                step,
-                found: GameDbRepertoireGap {
-                    step: u32::try_from(step).unwrap_or(u32::MAX),
-                    uci: rules::make_uci(&m),
-                    san: rules::san_and_play(&mut from.clone(), m),
-                    yours: shakmaty::Position::turn(&from) == color,
-                    ..GameDbRepertoireGap::default()
-                },
-                last: i64::MIN,
-            });
-        gap.found.games += 1;
-        match (outcome, color) {
-            (Outcome::White, Color::White) | (Outcome::Black, Color::Black) => gap.found.won += 1,
-            (Outcome::White, Color::Black) | (Outcome::Black, Color::White) => gap.found.lost += 1,
-            (Outcome::Draw, _) => gap.found.drawn += 1,
-            (Outcome::Unknown, _) => {}
-        }
-        if key > gap.last {
-            gap.last = key;
-            gap.found.last = date;
+        for (step, from, m, prepared) in counted {
+            let gap = gaps
+                .entry((step, gamedb::pack_move(&m)))
+                .or_insert_with(|| Gap {
+                    step,
+                    found: GameDbRepertoireGap {
+                        step: u32::try_from(step).unwrap_or(u32::MAX),
+                        uci: rules::make_uci(&m),
+                        san: rules::san_and_play(&mut from.clone(), m),
+                        yours: shakmaty::Position::turn(&from) == color,
+                        prepared,
+                        ..GameDbRepertoireGap::default()
+                    },
+                    last: i64::MIN,
+                });
+            gap.found.games += 1;
+            match (outcome, color) {
+                (Outcome::White, Color::White) | (Outcome::Black, Color::Black) => {
+                    gap.found.won += 1
+                }
+                (Outcome::White, Color::Black) | (Outcome::Black, Color::White) => {
+                    gap.found.lost += 1
+                }
+                (Outcome::Draw, _) => gap.found.drawn += 1,
+                (Outcome::Unknown, _) => {}
+            }
+            if key > gap.last {
+                gap.last = key;
+                gap.found.last = date.clone();
+            }
         }
     }
     let mut gaps: Vec<Gap> = gaps.into_values().collect();
     gaps.sort_by_key(|gap| {
         (
+            gap.found.prepared,
             std::cmp::Reverse(gap.found.games),
             std::cmp::Reverse(gap.last),
             gap.step,
             gap.found.uci.clone(),
         )
     });
-    answer.gaps = gaps
+    let gaps = gaps
         .into_iter()
         .take(MOST_GAPS)
         .map(|gap| gap.found)
         .collect();
-    Ok(answer)
+    Ok((games, reached, gaps))
 }

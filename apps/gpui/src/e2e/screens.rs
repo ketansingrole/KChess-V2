@@ -1770,6 +1770,88 @@ fn repertoire_your_games() {
     }
 }
 
+/// Practice → Repertoire → Check → Against Scouted_Player on a Black repertoire, their games
+/// downloaded from the stand-in Lichess, in both appearances: `KCHESS_SCREENSHOTS=<dir> cargo
+/// test -p kchess-gpui e2e::screens::repertoire_opponent -- --ignored` writes
+/// `<dir>/repertoire-opponent-<appearance>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn repertoire_opponent() {
+    use kchess_contracts::calls;
+    use kchess_contracts::types::{GameSite, PlayerGames};
+    let out = kchess_host::env::var("KCHESS_SCREENSHOTS")
+        .expect("KCHESS_SCREENSHOTS names the output folder");
+    let out = Path::new(&out).to_path_buf();
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    let repertoire = "1. e4 (1. d4 Nf6 2. c4 e6) c5 2. Nc3 (2. c3 Nf6) d6 *";
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), 1100., 820.);
+        cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
+        let installed = cx.update(|cx| {
+            cx.global::<crate::core::AppCore>()
+                .request(calls::GameDbPlayerInstall {
+                    request: PlayerGames {
+                        site: GameSite::Lichess,
+                        username: super::fake_lichess::SCOUTED.into(),
+                        months: None,
+                        speeds: None,
+                        rated: false,
+                    },
+                })
+        });
+        let database = cx
+            .foreground_executor()
+            .block_test(installed)
+            .expect("their games are downloaded")
+            .database
+            .id;
+        let saved = cx.update(|cx| {
+            cx.global::<crate::studies::StudyHandle>()
+                .0
+                .read(cx)
+                .command(kchess_contracts::types::StudyCommand::Save {
+                    name: "Sicilian".into(),
+                    pgn: repertoire.into(),
+                    id: None,
+                    chapter_id: None,
+                })
+        });
+        let id = cx
+            .foreground_executor()
+            .block_test(saved)
+            .expect("the study is saved")
+            .id
+            .expect("its id");
+        cx.update_window(window, |_, window, cx| {
+            crate::prefs::set(cx, "kchess:repertoire-color", "black");
+            kchess_practice::repertoire::train_study(id, window, cx)
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            let trainer = crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+                .and_then(|page| page.read(cx).repertoire())
+                .expect("the repertoire trainer");
+            trainer.update(cx, |trainer, cx| {
+                trainer.check_against_player(
+                    database,
+                    super::fake_lichess::SCOUTED.into(),
+                    window,
+                    cx,
+                )
+            })
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("repertoire-opponent-{name}.png")))
+            .expect("the screenshot saves");
+    }
+}
+
 /// An event's table, a ten-player round robin with its crosstable, in both appearances:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::event_table -- --ignored`
 /// writes `<dir>/event-table-<appearance>.png`.

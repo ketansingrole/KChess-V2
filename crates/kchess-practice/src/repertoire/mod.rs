@@ -321,7 +321,22 @@ impl Repertoire {
     /// The repertoire followed through your games with its side, in a dialog.
     pub fn check_against_your_games(&self, window: &mut Window, cx: &mut App) {
         let steps = check::every_step(&self.roots);
-        your_games::open(steps, self.target(cx), Self::color(cx), window, cx);
+        let whose = your_games::Whose::Yours;
+        your_games::open(steps, self.target(cx), Self::color(cx), whose, window, cx);
+    }
+
+    /// The repertoire followed through the games of `name` (their database from Player's games,
+    /// `database`) with the other side, in a dialog: what they play where it waits for them.
+    pub fn check_against_player(
+        &self,
+        database: String,
+        name: String,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let steps = check::every_step(&self.roots);
+        let whose = your_games::Whose::Player { database, name };
+        your_games::open(steps, self.target(cx), Self::color(cx), whose, window, cx);
     }
 
     /// The study drilled and the chapters its lines come from, which a check's moves join.
@@ -339,12 +354,39 @@ impl Repertoire {
         }
     }
 
-    /// Whether there are game databases other than Your games, and Your games, to check the
-    /// lines against.
-    fn databases(cx: &App) -> (bool, bool) {
+    /// The game databases to check the lines against: whether there are any but Your games,
+    /// whether there is Your games, and each player's from Player's games (its id and the name its
+    /// menu item gives the player: their username, or the database's name when two share one).
+    fn databases(cx: &App) -> (bool, bool, Vec<(String, String)>) {
         use kchess_contracts::types::DatabaseSource;
         let handle = cx.global::<kchess_board::game_db::GameDbHandle>().0.clone();
         let databases = handle.read(cx).databases();
+        let players: Vec<(&str, &str, &str)> = databases
+            .iter()
+            .filter(|database| database.source == DatabaseSource::Player)
+            .filter_map(|database| {
+                let player = database.player.as_ref()?;
+                Some((
+                    database.id.as_str(),
+                    player.username.as_str(),
+                    database.name.as_str(),
+                ))
+            })
+            .collect();
+        let players = players
+            .iter()
+            .map(|&(id, username, name)| {
+                let shared = players
+                    .iter()
+                    .filter(|(_, other, _)| other.eq_ignore_ascii_case(username))
+                    .count()
+                    > 1;
+                (
+                    id.to_string(),
+                    if shared { name } else { username }.to_string(),
+                )
+            })
+            .collect();
         (
             databases
                 .iter()
@@ -352,6 +394,7 @@ impl Repertoire {
             databases
                 .iter()
                 .any(|database| database.source == DatabaseSource::Own),
+            players,
         )
     }
 
@@ -1230,7 +1273,7 @@ impl Render for Repertoire {
                 .into_any_element();
         }
         let drills_opening = Self::drills_opening(cx);
-        let (databases, yours) = Self::databases(cx);
+        let (databases, yours, players) = Self::databases(cx);
         let color = Self::color(cx);
         let your_turn = self.your_turn(cx);
         // The board's column: the board and the move box's row, once a line is on the board.
@@ -1500,28 +1543,51 @@ impl Render for Repertoire {
                                 .disabled(self.roots.is_empty())
                                 .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                                     let (mine, theirs) = (page.clone(), page.clone());
-                                    menu.when(yours, |menu| {
-                                        menu.item(
-                                            PopupMenuItem::new("Against your games")
-                                                .icon(icon("user"))
-                                                .on_click(move |_, window, cx| {
-                                                    mine.update(cx, |this, cx| {
-                                                        this.check_against_your_games(window, cx)
-                                                    })
-                                                    .ok();
-                                                }),
-                                        )
-                                    })
-                                    .when(databases, |menu| {
-                                        menu.item(
-                                            PopupMenuItem::new("Against databases")
-                                                .icon(icon("database"))
-                                                .on_click(move |_, window, cx| {
-                                                    theirs
-                                                        .update(cx, |this, cx| {
-                                                            this.check_against_databases(window, cx)
+                                    let menu = menu
+                                        .when(yours, |menu| {
+                                            menu.item(
+                                                PopupMenuItem::new("Against your games")
+                                                    .icon(icon("user"))
+                                                    .on_click(move |_, window, cx| {
+                                                        mine.update(cx, |this, cx| {
+                                                            this.check_against_your_games(
+                                                                window, cx,
+                                                            )
                                                         })
                                                         .ok();
+                                                    }),
+                                            )
+                                        })
+                                        .when(databases, |menu| {
+                                            menu.item(
+                                                PopupMenuItem::new("Against databases")
+                                                    .icon(icon("database"))
+                                                    .on_click(move |_, window, cx| {
+                                                        theirs
+                                                            .update(cx, |this, cx| {
+                                                                this.check_against_databases(
+                                                                    window, cx,
+                                                                )
+                                                            })
+                                                            .ok();
+                                                    }),
+                                            )
+                                        });
+                                    players.iter().fold(menu, |menu, (database, name)| {
+                                        let (page, database, name) =
+                                            (page.clone(), database.clone(), name.clone());
+                                        menu.item(
+                                            PopupMenuItem::new(format!("Against {name}"))
+                                                .icon(icon("user-search"))
+                                                .on_click(move |_, window, cx| {
+                                                    let (database, name) =
+                                                        (database.clone(), name.clone());
+                                                    page.update(cx, |this, cx| {
+                                                        this.check_against_player(
+                                                            database, name, window, cx,
+                                                        )
+                                                    })
+                                                    .ok();
                                                 }),
                                         )
                                     })

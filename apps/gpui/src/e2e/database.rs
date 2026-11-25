@@ -1330,6 +1330,55 @@ fn a_repertoire_is_checked_against_your_games(cx: &mut gpui_kit::TestAppContext)
     wait_for_chapter(&mut app, &id, "2. Nf3 ( 2. Nc3 )");
 }
 
+/// Practice → Repertoire → Check → Against Scouted_Player: their games with White, downloaded to
+/// prepare against them, followed through a Black repertoire. Their 2. Nf3, which it has no
+/// answer to, comes first and can join it; their 1. e4, which it is ready for, has nothing to add.
+#[gpui_kit::test]
+fn a_repertoire_is_checked_against_an_opponent(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::SCOUTED;
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    app.click("database-player");
+    app.fill_in_dialog("Username", SCOUTED);
+    app.click("player-download");
+    wait_for_listed(
+        &mut app,
+        "their games",
+        &[
+            "Rival against Scouted_Player, 0-1",
+            "Scouted_Player against Rival, 1-0",
+        ],
+    );
+
+    let id = train_repertoire(&mut app, "1. e4 c5 2. Nc3 d6 *", "black");
+    app.click("repertoire-check");
+    app.click_label("Against Scouted_Player");
+    assert_eq!(
+        app.find("repertoire-games-summary").label(),
+        Some("1 game as White · 1 in the repertoire · 1 move without an answer")
+    );
+    assert_eq!(
+        app.find(("repertoire-games-move", 0usize)).label(),
+        Some(
+            "1. e4 c5 2. Nf3: Scouted_Player played it in 1 game · Scouted_Player scored 100% · \
+             No answer in the repertoire · Last\u{a0}2026.11.02"
+        )
+    );
+    assert_eq!(
+        app.find(("repertoire-games-move", 1usize)).label(),
+        Some(
+            "1. e4: Scouted_Player played it in 1 game · Scouted_Player scored 100% · \
+             Last\u{a0}2026.11.02"
+        )
+    );
+    assert!(!app.shows(("repertoire-games-add", 1usize)));
+
+    app.click(("repertoire-games-add", 0usize));
+    app.wait_for_page(crate::pages::Page::Analysis);
+    app.find("tree-e2e4 c7c5 g1f3");
+    wait_for_chapter(&mut app, &id, "2. Nc3 ( 2. Nf3 )");
+}
+
 /// Practice → Repertoire → Check → Against databases checks a study's lines against the game
 /// databases: Black's 1...c5 is played in 1 of 21 games, so it is listed to look at, and 1...e5,
 /// played instead, can join the repertoire.
