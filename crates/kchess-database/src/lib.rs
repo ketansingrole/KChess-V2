@@ -15,11 +15,11 @@ use kchess_board::{game_db, live_game, widgets};
 use kchess_ui::theme;
 
 mod lichess;
+mod manage;
 mod player;
 
 use gpui_kit::base::TestSupportExt as _;
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -548,25 +548,9 @@ impl DatabasePage {
 
     /// Asks, then deletes the database shown.
     fn delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(info) = self.shown_database(cx).cloned() else {
-            return;
-        };
-        let games = widgets::format_counted(info.games as f64, "game", "games");
-        widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let id = info.id.clone();
-            dialog
-                .title(format!("Delete {}?", info.name))
-                .description(format!("Its {games} are removed from this computer."))
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    let db = cx.global::<GameDbHandle>().0.clone();
-                    db.update(cx, |db, cx| db.delete(id.clone(), cx));
-                    true
-                })
-        });
+        if let Some(info) = self.shown_database(cx).cloned() {
+            manage::ask_delete(info, window, cx);
+        }
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>, palette: &Palette) -> impl IntoElement {
@@ -778,7 +762,11 @@ impl Render for DatabasePage {
                     div()
                         .text_size(px(12.))
                         .text_color(palette.text_muted)
-                        .child(widgets::format_counted(info.games as f64, "game", "games"))
+                        .child(format!(
+                            "{} · {}",
+                            widgets::format_counted(info.games as f64, "game", "games"),
+                            widgets::format_bytes(info.bytes as f64)
+                        ))
                 }))
                 .child(div().flex_1())
                 .children(
@@ -810,6 +798,15 @@ impl Render for DatabasePage {
                                     lichess::open(Some(rating), window, cx)
                                 })
                         }),
+                )
+                .child(
+                    Button::new("database-manage")
+                        .ghost()
+                        .small()
+                        .icon(icon("hard-drive"))
+                        .label("Manage")
+                        .tooltip("Every database, its size and the space they take")
+                        .on_click(|_, window, cx| manage::open(window, cx)),
                 )
                 .when(!busy, |row| {
                     row.child(
@@ -997,6 +994,7 @@ pub enum Action {
     Lichess,
     Masters,
     Tcec,
+    Manage,
     ClearFilters,
 }
 
@@ -1032,6 +1030,12 @@ impl PageAction for Action {
                 "Download engine games",
                 "download",
                 "tcec engines stockfish leela computer championship update",
+            ),
+            Action::Manage => ActionInfo::new(
+                "database:manage",
+                "Manage game databases",
+                "hard-drive",
+                "storage disk space size delete free",
             ),
             Action::ClearFilters => {
                 ActionInfo::new("database:clear", "Clear filters", "x", "reset all")
@@ -1069,6 +1073,15 @@ impl PageView for DatabasePage {
             actions.push(Action::Masters);
             actions.push(Action::Tcec);
         }
+        if !cx
+            .global::<GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .is_empty()
+        {
+            actions.push(Action::Manage);
+        }
         if self.filtered(cx) {
             actions.push(Action::ClearFilters);
         }
@@ -1088,6 +1101,7 @@ impl PageView for DatabasePage {
                 let db = cx.global::<GameDbHandle>().0.clone();
                 db.update(cx, |db, cx| db.install_tcec(cx));
             }
+            Action::Manage => manage::open(window, cx),
             Action::ClearFilters => {
                 this.update(cx, |page, cx| page.clear_filters(window, cx));
             }
@@ -1101,6 +1115,13 @@ pub fn games_at(fen: String, window: &mut Window, cx: &mut App) {
         page.show_position(fen, window, cx)
     });
 }
+
+/// The Database page with its databases listed to manage (from Settings → Data).
+pub fn manage_databases(window: &mut Window, cx: &mut App) {
+    kchess_nav::shell::show::<DatabasePage>(window, cx, |_, window, cx| manage::open(window, cx));
+}
+
+pub use manage::total_bytes;
 
 /// Import a PGN file dropped on the Database page.
 pub fn import_dropped(path: std::path::PathBuf, cx: &mut App) {

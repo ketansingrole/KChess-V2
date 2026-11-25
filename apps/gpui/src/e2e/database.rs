@@ -137,6 +137,57 @@ fn a_database_is_imported_searched_opened_and_deleted(cx: &mut gpui_kit::TestApp
     assert!(listed(&mut app).is_empty());
 }
 
+/// Every game database is listed to manage, with where it came from, its games and size, and
+/// their total: from the Database page and from Settings → Data, which shows the total too.
+/// Deleting one there asks first, then leaves the list and the page without it.
+#[gpui_kit::test]
+fn the_databases_are_listed_with_their_size_to_manage(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_games(&mut app);
+    let bytes = app.cx.update(|cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()[0]
+            .bytes
+    });
+    assert!(bytes > 0, "a database takes room");
+    let size = crate::widgets::format_bytes(bytes as f64);
+
+    app.click("database-manage");
+    let row = app
+        .find(("manage-database", 0usize))
+        .label()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        row.contains(&format!("Imported · 3 games · {size}")),
+        "{row}"
+    );
+    // An imported file has nothing to fetch again.
+    assert!(!app.shows(("manage-update", 0usize)));
+    assert_eq!(
+        app.find("manage-total").label(),
+        Some(format!("Total {size}").as_str())
+    );
+    app.press("escape");
+    app.wait_gone("manage-total");
+
+    app.open_settings("Data & storage");
+    assert_eq!(
+        app.find("data-databases-total").label(),
+        Some(format!("{size} · 1 database").as_str())
+    );
+    app.click("data-databases");
+    app.wait_for_page(crate::pages::Page::Database);
+    app.click(("manage-delete", 0usize));
+    app.click_label("Delete");
+    app.wait_gone(("manage-database", 0usize));
+    app.press("escape");
+    app.find("gamedb-import");
+    assert!(!app.shows("database-delete"));
+}
+
 /// 2026-11-25: opened as the app started, the Database page asked for its games before Lichess
 /// had answered whether a game was in progress, was refused ("until your Lichess game status is
 /// verified") and showed that until a filter changed. Refused while help is held back, the games

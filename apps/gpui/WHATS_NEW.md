@@ -16,6 +16,7 @@ refuses to release with nothing there.
 - **Engine games**: on the Database page, download every game of the Top Chess Engine Championship's competitions, the strongest chess ever played, and see which openings the best engines choose. Update engine games brings in each new season.
 - **Strong Lichess games**: on the Database page, Lichess games downloads a month of Lichess's rated games and keeps only those between two strong players, 2400 and up or a level you pick, without bullet or bots. Add a month brings in more.
 - **Prepare against a player**: on the Database page, Player's games downloads anyone's Lichess or Chess.com games from the months, speeds and rated games you pick, suggesting Lichess names as you type. See how they play as White and as Black; Update games brings in their latest.
+- **See what your databases take**: Manage on the Database page, or Settings → Data & storage, lists each game database with its games, size and last update, and their total. Update or delete any of them there.
 - **Fixes**: closing the window on Windows and Linux keeps KChess in the tray if you chose Keep running. Updates download on their own again after an offline start. Settings → Updates shows “Update available” again. Voice input no longer freezes KChess. Plus many smaller fixes.
 
 ## 2026.11.9 (2026-11-22)

@@ -367,6 +367,51 @@ impl SettingsPage {
                         })),
                 )
             });
+        // The game databases are the largest thing kept here, and grow with every download.
+        let databases = {
+            let db = cx
+                .global::<kchess_board::game_db::GameDbHandle>()
+                .0
+                .read(cx);
+            let count = db.databases().len();
+            let bytes = crate::pages::database::total_bytes(db.databases());
+            let summary = if count == 0 {
+                "None".to_string()
+            } else {
+                format!(
+                    "{} · {}",
+                    format_bytes(bytes as f64),
+                    widgets::format_counted(count as f64, "database", "databases")
+                )
+            };
+            widgets::card(palette)
+                .gap(px(12.))
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .gap(px(12.))
+                        .child(widgets::heading("Game databases", palette))
+                        .child(
+                            Button::new("data-databases")
+                                .outline()
+                                .icon(icon("hard-drive"))
+                                .label("Manage")
+                                .disabled(count == 0)
+                                .on_click(|_, window, cx| {
+                                    crate::pages::database::manage_databases(window, cx)
+                                }),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("data-databases-total")
+                        .test_support()
+                        .aria_label(summary.clone())
+                        .text_size(px(13.))
+                        .text_color(palette.text_muted)
+                        .child(summary),
+                )
+        };
         let puzzles = widgets::card(palette)
             .gap(px(12.))
             .child(
@@ -422,6 +467,7 @@ impl SettingsPage {
         v_flex()
             .gap(px(16.))
             .child(usage_card)
+            .child(databases)
             .child(puzzles)
             .child(diagnostics)
     }

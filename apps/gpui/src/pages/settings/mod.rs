@@ -187,7 +187,8 @@ fn other_words(section: Section) -> &'static str {
         Section::Online => "",
         Section::Offline => "Downloaded puzzles voice model Saved games and studies engine",
         Section::Data => {
-            "Export diagnostics Clear local scores Reset counters Database file storage"
+            "Export diagnostics Clear local scores Reset counters Database file storage Game databases \
+             disk space"
         }
         Section::Updates => {
             "version about upgrade Check for updates What's new release notes \
