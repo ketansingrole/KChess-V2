@@ -32,7 +32,7 @@ KChess is now a chess database too. Keep millions of games on your computer, fro
 
 - A game you start on any connected Lichess account, even on the website or your phone, now turns engine help off until it ends.
 - Settings → Storage shows everything KChess takes, the app included, and what your disk has left, with every download in one place. KChess asks first when a download would almost fill your disk.
-- What's new opens with a summary and lists each release's changes as Added, Changed and Fixed. Before an update installs, it shows what the update brings.
+- What's new opens with a summary and lists each release's changes as Added, Changed and Fixed. Before an update installs, it shows what the update brings, including updates you skipped, and only once. You can turn it off in the same window.
 
 ### Fixed
 

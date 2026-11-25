@@ -373,7 +373,7 @@ pub(crate) static TOGGLES: [Toggle; 32] = [
     },
     Toggle {
         id: "update-show-notes",
-        title: "Show what's new before updating",
+        title: "Show what's new with updates",
         hint: None,
         section: Section::Updates,
         on: |s| s.frontend.update_show_notes,

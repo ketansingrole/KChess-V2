@@ -1925,8 +1925,10 @@ fn turning_on_background_downloads_downloads_the_waiting_update(cx: &mut gpui_ki
     );
 }
 
-/// Restart and install first shows what the update brings, from its release's notes; Cancel
-/// leaves it, and once the box turns the notes off, restarting asks plainly.
+/// Restart and install first shows what the update brings, from its release's notes and those
+/// of the releases it skips, newest first; Cancel leaves it; installing marks the notes read, so
+/// the restart does not show them again; and once the box turns the notes off, restarting asks
+/// plainly.
 #[gpui_kit::test]
 fn restarting_shows_what_the_update_brings_first(cx: &mut gpui_kit::TestAppContext) {
     use super::{Phase, UpdatesHandle};
@@ -1937,20 +1939,32 @@ fn restarting_shows_what_the_update_brings_first(cx: &mut gpui_kit::TestAppConte
         ### Fixed\n\n- Clocks no longer skip.\n"
         .into();
     let release: Release = serde_json::from_value(json).unwrap();
+    let mut earlier = release_json("2026.11.5");
+    earlier["body"] = "Quieter clocks.\n\n### Fixed\n\n- The clock ticks softly.\n".into();
+    let earlier: Release = serde_json::from_value(earlier).unwrap();
     app.with_window(|_, cx| {
+        // The notes last read were this app's, older than the update.
+        crate::prefs::set(cx, crate::whats_new::SEEN_KEY, "2026.11.0".to_string());
         let updates = cx.global::<UpdatesHandle>().0.clone();
         updates.update(cx, |updates, cx| {
             updates.current = "2026.11.0".into();
             updates.version = Some("2026.11.9".into());
             updates.release = Some(release);
+            updates.skipped = Some(("2026.11.9".into(), vec![earlier]));
             updates.phase = Phase::Downloaded;
             cx.notify();
         });
     });
     let notes = app.with_window(|_, cx| cx.global::<UpdatesHandle>().0.read(cx).notes());
-    let notes = notes.expect("the release's notes");
-    assert_eq!(notes.date.as_deref(), Some("2026-11-22"));
-    assert_eq!(notes.items.len(), 2);
+    assert_eq!(
+        notes
+            .iter()
+            .map(|notes| notes.version.as_str())
+            .collect::<Vec<_>>(),
+        ["2026.11.9", "2026.11.5"]
+    );
+    assert_eq!(notes[0].date.as_deref(), Some("2026-11-22"));
+    assert_eq!(notes[0].items.len(), 2);
 
     app.open_settings("Updates");
     app.click("update-install");
@@ -1962,6 +1976,10 @@ fn restarting_shows_what_the_update_brings_first(cx: &mut gpui_kit::TestAppConte
         app.find(("whats-new-summary", 0usize)).label(),
         Some("Faster boards.")
     );
+    assert_eq!(
+        app.find(("whats-new-release", 1usize)).label(),
+        Some("KChess 2026.11.5")
+    );
     app.click("whats-new-cancel");
     app.wait_gone("whats-new");
     assert_eq!(
@@ -1969,6 +1987,31 @@ fn restarting_shows_what_the_update_brings_first(cx: &mut gpui_kit::TestAppConte
         Phase::Downloaded,
         "Cancel leaves the update ready"
     );
+    let seen = |app: &mut crate::e2e::Harness| -> Option<String> {
+        app.cx
+            .update(|cx| crate::prefs::get(cx, crate::whats_new::SEEN_KEY, None))
+    };
+    assert_ne!(
+        seen(&mut app).as_deref(),
+        Some("2026.11.9"),
+        "Cancel reads nothing"
+    );
+
+    app.click("update-install");
+    app.click("whats-new-install");
+    app.wait_gone("whats-new");
+    assert_eq!(
+        seen(&mut app).as_deref(),
+        Some("2026.11.9"),
+        "the notes read before installing are not shown after the restart"
+    );
+    app.with_window(|_, cx| {
+        let updates = cx.global::<UpdatesHandle>().0.clone();
+        updates.update(cx, |updates, cx| {
+            updates.phase = Phase::Downloaded;
+            cx.notify();
+        });
+    });
 
     app.click("update-install");
     app.click("whats-new-skip");
@@ -1981,4 +2024,77 @@ fn restarting_shows_what_the_update_brings_first(cx: &mut gpui_kit::TestAppConte
         !app.shows("whats-new"),
         "the notes stay off: the plain question"
     );
+}
+
+/// The releases an update skips are the published ones after this app's and before the update's,
+/// newest first, whatever order the feed lists them in.
+#[test]
+fn the_skipped_releases_lie_between_this_app_and_the_update() {
+    let release = |version: &str, draft: bool, prerelease: bool| -> Release {
+        let mut json = release_json(version);
+        json["draft"] = draft.into();
+        json["prerelease"] = prerelease.into();
+        serde_json::from_value(json).unwrap()
+    };
+    let listed = vec![
+        release("2026.11.9", false, false),
+        release("2026.11.5", false, false),
+        release("2026.11.10", false, true),
+        release("2026.11.8", true, false),
+        release("2026.11.7", false, false),
+        release("2026.11.2", false, false),
+        release("2026.11.0", false, false),
+    ];
+    let versions = |releases: Vec<Release>| -> Vec<String> {
+        releases
+            .into_iter()
+            .map(|release| release.tag_name)
+            .collect()
+    };
+    assert_eq!(
+        versions(super::skipped(listed.clone(), "2026.11.2", "2026.11.9")),
+        ["v2026.11.7", "v2026.11.5"]
+    );
+    assert!(super::skipped(listed.clone(), "2026.11.7", "2026.11.9").is_empty());
+    assert!(super::skipped(listed, "unknown", "2026.11.9").is_empty());
+}
+
+/// Once the update is downloaded, the notes of the releases it skips are asked for once, from
+/// the feed's recent releases.
+#[gpui_kit::test]
+fn the_skipped_releases_notes_are_fetched_once(cx: &mut gpui_kit::TestAppContext) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let mut app = crate::e2e::Harness::start(cx);
+    let mut skipped = release_json("2026.11.5");
+    skipped["body"] = "Quieter clocks.\n".into();
+    let list = serde_json::json!([
+        release_json("2026.11.9"),
+        skipped,
+        release_json("2026.11.0")
+    ]);
+    let (feed, asked) = answers(vec![("200 OK", list.to_string().into_bytes())]);
+    let updates = checking(&mut app, feed);
+    app.cx.update(|cx| {
+        updates.update(cx, |updates, cx| {
+            updates.version = Some("2026.11.9".into());
+            updates.release = Some(release_of("2026.11.9"));
+            updates.fetch_skipped(cx);
+        })
+    });
+    app.wait_for("the skipped releases", |_, cx| {
+        updates.read(cx).skipped.is_some()
+    });
+    assert_eq!(
+        updates.read_with(&app.cx, |updates, _| updates
+            .notes()
+            .into_iter()
+            .map(|notes| notes.version)
+            .collect::<Vec<_>>()),
+        ["2026.11.5"],
+        "the update's own release has no notes here"
+    );
+    app.cx
+        .update(|cx| updates.update(cx, |updates, cx| updates.fetch_skipped(cx)));
+    app.cx.run_until_parked();
+    assert_eq!(asked.load(SeqCst), 1, "asked once for each update");
 }

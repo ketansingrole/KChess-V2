@@ -23,6 +23,42 @@ fn an_update_shows_its_notes_once(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.shows("whats-new"), "the notes show once");
 }
 
+/// The notes after an update say how to stop them: the box turns them off (as Settings →
+/// Updates does), and the next update starts with none, though it still counts as shown.
+#[gpui_kit::test]
+fn the_notes_after_an_update_can_be_turned_off(cx: &mut gpui_kit::TestAppContext) {
+    let app = Harness::start(cx);
+    app.cx
+        .update(|cx| crate::prefs::set(cx, SEEN_KEY, "2026.1.0".to_string()));
+    let mut app = app.restart();
+    app.find("whats-new");
+    app.click("whats-new-skip");
+    app.wait_for_saved("updateShowNotes", serde_json::json!(false));
+    app.click("whats-new-close");
+    app.wait_gone("whats-new");
+    app.cx
+        .update(|cx| crate::prefs::set(cx, SEEN_KEY, "2026.1.0".to_string()));
+    let mut app = app.restart();
+    assert!(!app.shows("whats-new"), "the notes stay off");
+    let seen: Option<String> = app.cx.update(|cx| crate::prefs::get(cx, SEEN_KEY, None));
+    assert_eq!(seen, Some(crate::updates::current_version()));
+}
+
+/// Notes read before installing marked the update's version read; when that install failed, the
+/// app started as the older release, which showed nothing and moved the mark back, so the next
+/// successful install showed the same notes again.
+#[gpui_kit::test]
+fn notes_read_before_a_failed_install_stay_read(cx: &mut gpui_kit::TestAppContext) {
+    let app = Harness::start(cx);
+    let ahead = "2099.1.0".to_string();
+    app.cx
+        .update(|cx| crate::prefs::set(cx, SEEN_KEY, ahead.clone()));
+    let mut app = app.restart();
+    assert!(!app.shows("whats-new"));
+    let seen: Option<String> = app.cx.update(|cx| crate::prefs::get(cx, SEEN_KEY, None));
+    assert_eq!(seen, Some(ahead), "the mark only moves forward");
+}
+
 /// Every release's notes open from the account menu, Settings → Updates and Quick Pick, and Escape
 /// closes them.
 #[gpui_kit::test]

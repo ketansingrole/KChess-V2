@@ -33,19 +33,21 @@ pub fn restart_cost(cx: &App) -> Option<&'static str> {
 
 /// Ask, then restart into the downloaded update (the Updates section and the top bar's button).
 /// The question names what a restart would cost now; unfinished games here are resumed.
-/// With `updateShowNotes` on and the release's notes known, the question is the notes of what
-/// it brings (`whats_new::open_before_update`).
+/// With `updateShowNotes` on and any notes known, the question is the notes of what it brings,
+/// the releases it skips included (`whats_new::open_before_update`).
 pub fn ask_restart(window: &mut Window, cx: &mut App) {
     let handle = cx.global::<UpdatesHandle>().0.clone();
     let version = handle.read(cx).version.clone().unwrap_or_default();
     let cost = restart_cost(cx);
-    let notes = crate::settings::frontend(cx)
-        .update_show_notes
-        .then(|| handle.read(cx).notes())
-        .flatten();
-    if let Some(notes) = notes {
+    let notes = if crate::settings::frontend(cx).update_show_notes {
+        handle.read(cx).notes()
+    } else {
+        Vec::new()
+    };
+    if !notes.is_empty() {
         let handle = handle.downgrade();
         crate::whats_new::open_before_update(
+            version,
             notes,
             cost,
             move |cx| {

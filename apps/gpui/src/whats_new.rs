@@ -1,13 +1,16 @@
-//! What's new: each release's notes (`WHATS_NEW.md`, built into the app), shown once on the first
-//! start after an update and whenever asked for from the sidebar's
-//! account menu, Settings → Updates, Quick Pick or the menu; and the notes of the update about to
-//! install (its GitHub release's text), before it does (`open_before_update`).
+//! What's new: each release's notes (`WHATS_NEW.md`, built into the app), whenever asked for from
+//! the sidebar's account menu, Settings → Updates, Quick Pick or the menu; and with each update,
+//! once: before it installs, from its GitHub releases (`open_before_update`), or else on the first
+//! start after it (`on_start`). `updateShowNotes` turns both off; the box in either dialog is that
+//! setting. Each shows only the releases new to this profile, newest first.
 //!
 //! A release reads as its summary, then its items under Added, Changed and Fixed, each with its
 //! group's icon. A release from before the groups lists its titled items as it was published.
 //!
 //! The version last shown is a view preference (`kchess:whats-new-seen`), so a profile shared by
-//! several installs shows a release's notes once. A fresh profile starts with nothing to catch up
+//! several installs shows a release's notes once, and notes read before installing are not shown
+//! again after the restart. The mark only moves forward: an install that failed after its notes
+//! were read leaves them read. A fresh profile starts with nothing to catch up
 //! on; a profile from before this preference existed gets the running release's notes.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -123,16 +126,27 @@ fn unreleased(text: &str) -> Option<Release> {
         .filter(|release| !release.is_empty())
 }
 
-/// The first start after an update: show what it brought, once. Waits for a later start while a
-/// Lichess game is on, so nothing covers its board.
+/// The first start after an update: show what it brought, once, unless the notes were read
+/// before it installed or updates show no notes. Waits for a later start while a Lichess game is
+/// on, so nothing covers its board.
 pub fn on_start(window: &mut Window, cx: &mut App) {
     let current = crate::updates::current_version();
     let seen: Option<String> = crate::prefs::get(cx, SEEN_KEY, None);
-    if seen.as_deref() == Some(current.as_str()) {
+    let behind = match (
+        seen.as_deref().and_then(parse_version),
+        parse_version(&current),
+    ) {
+        (Some(seen), Some(current)) => seen < current,
+        _ => seen.as_deref() != Some(current.as_str()),
+    };
+    if !behind {
         return;
     }
-    let used = crate::prefs::used(cx);
-    let shown = to_show(NOTES, &current, seen.as_deref(), used);
+    let shown = if crate::settings::frontend(cx).update_show_notes {
+        to_show(NOTES, &current, seen.as_deref(), crate::prefs::used(cx))
+    } else {
+        Vec::new()
+    };
     if !shown.is_empty() {
         let live = cx
             .try_global::<crate::online::OnlineHandle>()
@@ -140,17 +154,14 @@ pub fn on_start(window: &mut Window, cx: &mut App) {
         if live {
             return;
         }
-        open_releases(shown, window, cx);
+        open_after_update(shown, window, cx);
     }
     crate::prefs::set(cx, SEEN_KEY, current);
 }
 
 /// Every release's notes, from the account menu, Settings → Updates, Quick Pick and the menu.
 pub fn open(window: &mut Window, cx: &mut App) {
-    open_releases(releases(), window, cx);
-}
-
-fn open_releases(releases: Vec<Release>, window: &mut Window, cx: &mut App) {
+    let releases = releases();
     crate::widgets::open_dialog(window, cx, move |dialog, window, cx| {
         let palette = *cx.global::<Palette>();
         let (width, room) = room(window, px(180.));
@@ -161,11 +172,49 @@ fn open_releases(releases: Vec<Release>, window: &mut Window, cx: &mut App) {
     });
 }
 
-/// The notes of `release`, the update about to install, with what restarting would cost now
-/// (`cost`): Restart and install puts it in place (`install`), Cancel leaves it for later, and
-/// the box turns these notes off for later updates (`updateShowNotes`).
+/// The box that turns the notes off for later updates (`updateShowNotes`), in both dialogs.
+fn skip_box(cx: &App) -> Checkbox {
+    Checkbox::new("whats-new-skip")
+        .checked(!crate::settings::frontend(cx).update_show_notes)
+        .label("Don't show what's new with updates")
+        .on_click(|checked, _, cx| {
+            let show = !*checked;
+            crate::settings::change(cx, move |s| s.frontend.update_show_notes = show);
+        })
+}
+
+/// What the update just installed brought: `releases`, those new to this profile.
+fn open_after_update(releases: Vec<Release>, window: &mut Window, cx: &mut App) {
+    crate::widgets::open_dialog(window, cx, move |dialog, window, cx| {
+        let palette = *cx.global::<Palette>();
+        let (width, room) = room(window, px(240.));
+        let footer = h_flex()
+            .w_full()
+            .gap(px(8.))
+            .child(skip_box(cx))
+            .child(div().flex_1())
+            .child(
+                Button::new("whats-new-close")
+                    .primary()
+                    .small()
+                    .label("Close")
+                    .on_click(|_, window, cx| window.close_dialog(cx)),
+            );
+        dialog
+            .title("What's new")
+            .w(width)
+            .child(list(&releases, &palette, room))
+            .footer(footer)
+    });
+}
+
+/// What the update `version` brings, `releases` newest first (its own and those it skips), with
+/// what restarting would cost now (`cost`): Restart and install marks them read and puts it in
+/// place (`install`), Cancel leaves it for later, and the box turns the notes off for later
+/// updates (`updateShowNotes`).
 pub fn open_before_update(
-    release: Release,
+    version: String,
+    releases: Vec<Release>,
     cost: Option<&'static str>,
     install: impl Fn(&mut App) + 'static,
     window: &mut Window,
@@ -175,20 +224,11 @@ pub fn open_before_update(
     crate::widgets::open_dialog(window, cx, move |dialog, window, cx| {
         let palette = *cx.global::<Palette>();
         let (width, room) = room(window, px(240.));
-        let skip = !crate::settings::frontend(cx).update_show_notes;
-        let install = install.clone();
+        let (install, version) = (install.clone(), version.clone());
         let footer = h_flex()
             .w_full()
             .gap(px(8.))
-            .child(
-                Checkbox::new("whats-new-skip")
-                    .checked(skip)
-                    .label("Don't show what's new before updating")
-                    .on_click(|checked, _, cx| {
-                        let show = !*checked;
-                        crate::settings::change(cx, move |s| s.frontend.update_show_notes = show);
-                    }),
-            )
+            .child(skip_box(cx))
             .child(div().flex_1())
             .child(
                 Button::new("whats-new-cancel")
@@ -205,6 +245,7 @@ pub fn open_before_update(
                     .label("Restart and install")
                     .on_click(move |_, window, cx| {
                         window.close_dialog(cx);
+                        crate::prefs::set(cx, SEEN_KEY, version.clone());
                         install(cx);
                     }),
             );
@@ -214,7 +255,7 @@ pub fn open_before_update(
             .child(
                 v_flex()
                     .gap(px(12.))
-                    .child(list(std::slice::from_ref(&release), &palette, room))
+                    .child(list(&releases, &palette, room))
                     .children(cost.map(|cost| {
                         div()
                             .id("whats-new-cost")
