@@ -473,6 +473,128 @@ async fn a_zip_with_no_pgn_or_a_damaged_or_locked_one_imports_nothing() {
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
 
+/// A `.7z` fixture (`fixtures/README.md` says what each holds): files rather than archives these
+/// tests write, so no build turns on the 7z encoders or AES.
+fn seven_zip(name: &str) -> &'static [u8] {
+    match name {
+        "mixed-lzma2" => include_bytes!("fixtures/mixed-lzma2.7z"),
+        "mixed-solid-ppmd" => include_bytes!("fixtures/mixed-solid-ppmd.7z"),
+        "no-pgn" => include_bytes!("fixtures/no-pgn.7z"),
+        "many" => include_bytes!("fixtures/many.7z"),
+        "locked" => include_bytes!("fixtures/locked.7z"),
+        "locked-names" => include_bytes!("fixtures/locked-names.7z"),
+        _ => panic!("no fixture {name}"),
+    }
+}
+
+#[tokio::test]
+async fn a_7z_imports_every_pgn_file_it_holds_solid_or_not() {
+    let (profile, files) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (games, host) = service(profile.path());
+    // A folder, a text file, macOS's attributes and two PGN files (the first ending without a
+    // line ending, the second `GAMES`), each compressed on its own with LZMA2, 7-Zip's default.
+    let packed = seven_zip("mixed-lzma2");
+    let path = source(files.path(), "CCRL-4040.[5].pgn.7z", packed);
+    let result = games
+        .import(
+            path,
+            PgnPacking::SevenZip,
+            None,
+            None,
+            DatabaseSource::Imported,
+        )
+        .await
+        .unwrap();
+    assert_eq!((result.added, result.skipped), (4, 2));
+    assert_eq!(result.database.name, "CCRL-4040.[5]");
+    let listed = games.games(query(&result.database.id)).await.unwrap();
+    let players: Vec<String> = listed.games.iter().map(|g| g.white.clone()).collect();
+    assert!(players.contains(&"First".to_string()), "{players:?}");
+    assert!(!players.contains(&"Not".to_string()), "{players:?}");
+    let done = host.named("gamedb:progress");
+    let done = done.last().unwrap();
+    assert_eq!(done["phase"], "done");
+    assert_eq!(done["totalBytes"], packed.len() as u64);
+    // The same files in one solid PPMd stream, as 7-Zip packs text: the others decode on the way.
+    let path = source(
+        files.path(),
+        "Lumbra OTB Elite.7z",
+        seven_zip("mixed-solid-ppmd"),
+    );
+    let result = games
+        .import(
+            path,
+            PgnPacking::SevenZip,
+            None,
+            None,
+            DatabaseSource::Imported,
+        )
+        .await
+        .unwrap();
+    assert_eq!((result.added, result.skipped), (4, 2));
+    assert_eq!(result.database.name, "Lumbra OTB Elite");
+}
+
+#[tokio::test]
+async fn a_7z_with_no_pgn_or_a_damaged_or_locked_one_imports_nothing() {
+    let (profile, files) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (games, _) = service(profile.path());
+    let refused = |name: &str, bytes: &[u8]| {
+        let path = source(files.path(), name, bytes);
+        let games = &games;
+        async move {
+            games
+                .import(
+                    path,
+                    PgnPacking::SevenZip,
+                    None,
+                    None,
+                    DatabaseSource::Imported,
+                )
+                .await
+                .unwrap_err()
+                .message
+        }
+    };
+    assert_eq!(
+        refused("lumbra si5.7z", seven_zip("no-pgn")).await,
+        "That .7z holds no .pgn file."
+    );
+    let whole = seven_zip("many");
+    let message = refused("cut.7z", &whole[..whole.len() / 2]).await;
+    assert!(
+        message.starts_with("That .7z could not be read"),
+        "{message}"
+    );
+    // A damaged byte in the packed games (they start after the 32-byte signature header) fails
+    // their check.
+    let mut damaged = whole.to_vec();
+    damaged[40] ^= 0xff;
+    let message = refused("damaged.7z", &damaged).await;
+    assert!(
+        message.starts_with("That .7z could not be read"),
+        "{message}"
+    );
+    // Encrypted files, then encrypted names too: the reader has no AES, and refuses either.
+    for locked in ["locked", "locked-names"] {
+        assert_eq!(
+            refused(&format!("{locked}.7z"), seven_zip(locked)).await,
+            "That .7z is password-protected.",
+            "{locked}"
+        );
+    }
+    let status = games.status().await.unwrap();
+    assert!(status.databases.is_empty(), "{:?}", status.databases);
+    let leftovers: Vec<_> = std::fs::read_dir(profile.path().join("databases"))
+        .map(|dir| {
+            dir.filter_map(|entry| entry.ok())
+                .map(|entry| entry.file_name())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
 #[tokio::test]
 async fn adding_to_a_database_sums_its_tree_and_a_failed_addition_leaves_it_as_it_was() {
     let (profile, files) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());

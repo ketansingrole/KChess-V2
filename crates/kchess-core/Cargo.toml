@@ -43,6 +43,9 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 tar = { version = "0.4", default-features = false }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 tempfile = "3"
+# Game database imports of a `.7z` of PGN files (`gamedb::import`): pure Rust (Apache-2.0), with
+# LZMA, LZMA2, PPMd and BZip2 and no encryption, so a password-protected archive is refused.
+sevenz-rust2 = { version = "0.25", default-features = false, features = ["ppmd", "bzip2"] }
 
 # Lichess OAuth PKCE: the S256 challenge is base64url(SHA-256(verifier)) (`base64` 0.23 is already
 # in Cargo.lock through reqwest; MIT/Apache-2.0, GPL-compatible).

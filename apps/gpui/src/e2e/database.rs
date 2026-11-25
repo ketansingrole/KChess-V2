@@ -148,10 +148,10 @@ fn a_pgn_file_dropped_on_the_page_is_imported(cx: &mut gpui_kit::TestAppContext)
     app.find("database-delete");
 }
 
-/// A `.zip` of PGN files dropped on the Database page is imported as one database, named after
-/// the archive, with the games of every PGN file in it.
+/// A `.zip` or a `.7z` of PGN files dropped on the Database page is imported as one database,
+/// named after the archive, with the games of every PGN file in it.
 #[gpui_kit::test]
-fn a_zip_of_pgn_files_dropped_on_the_page_is_imported(cx: &mut gpui_kit::TestAppContext) {
+fn an_archive_of_pgn_files_dropped_on_the_page_is_imported(cx: &mut gpui_kit::TestAppContext) {
     use std::io::Write as _;
     let (tata, club) = GAMES.split_at(GAMES.find("[Event \"Club\"]").expect("the club game"));
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
@@ -172,16 +172,34 @@ fn a_zip_of_pgn_files_dropped_on_the_page_is_imported(cx: &mut gpui_kit::TestApp
         "the games of both files",
         &[GUKESH_CARLSEN, CARLSEN_GUKESH, SMITH_JONES],
     );
-    let names: Vec<String> = app.with_window(|_, cx| {
+    let names = |app: &mut Harness| -> Vec<String> {
+        app.with_window(|_, cx| {
+            let mut names: Vec<String> = cx
+                .global::<kchess_board::game_db::GameDbHandle>()
+                .0
+                .read(cx)
+                .databases()
+                .iter()
+                .map(|info| info.name.clone())
+                .collect();
+            names.sort();
+            names
+        })
+    };
+    assert_eq!(names(&mut app), ["twic1620g"]);
+
+    // The core's own `.7z` fixture (`crates/kchess-core/src/gamedb/fixtures/README.md`).
+    let packed = include_bytes!("../../../../crates/kchess-core/src/gamedb/fixtures/many.7z");
+    let _folder = app.drop_file("Lumbra OTB Elite.7z", packed);
+    app.wait_for_app("the 7z's database", |cx| {
         cx.global::<kchess_board::game_db::GameDbHandle>()
             .0
             .read(cx)
             .databases()
-            .iter()
-            .map(|info| info.name.clone())
-            .collect()
+            .len()
+            == 2
     });
-    assert_eq!(names, ["twic1620g"]);
+    assert_eq!(names(&mut app), ["Lumbra OTB Elite", "twic1620g"]);
 }
 
 /// A player's games, downloaded from Lichess to prepare against them, make a database of their
