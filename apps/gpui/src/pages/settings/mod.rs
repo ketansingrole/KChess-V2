@@ -10,6 +10,7 @@ mod engine;
 mod rows;
 mod speech_model;
 mod storage;
+mod tablebases;
 mod toggles;
 pub(crate) use toggles::{Quick, TOGGLES, Toggle};
 pub mod updates;
@@ -184,7 +185,7 @@ fn other_words(section: Section) -> &'static str {
         Section::Online => "",
         Section::Storage => {
             "Offline downloads Data disk space free Downloads Game databases Puzzles voice speech \
-             model Stockfish engine Accounts downloaded Export diagnostics Clear local scores \
+             model Stockfish engine endgame tablebases syzygy Accounts downloaded Export diagnostics Clear local scores \
              Reset counters"
         }
         Section::Updates => {
@@ -275,6 +276,10 @@ pub struct SettingsPage {
     voice_model: Option<kchess_contracts::voice::Status>,
     voice_model_error: Option<SharedString>,
     voice_downloading: bool,
+    /// The endgame tablebases, a download's progress and what went wrong.
+    tablebases: Option<kchess_contracts::types::TablebaseStatus>,
+    tablebase_progress: Option<kchess_contracts::types::TablebaseProgress>,
+    tablebase_error: Option<SharedString>,
     /// My accounts: the Chess.com username to add.
     chesscom_input: Entity<gpui_kit::component::input::InputState>,
     focus: FocusHandle,
@@ -341,6 +346,28 @@ impl SettingsPage {
                     let _ = page.update(cx, |page, cx| page.engine_changed(cx));
                 }
             }),
+            crate::core::profile_changes(cx, &[ProfileArea::Tablebases], {
+                let page = page.clone();
+                move |cx| {
+                    let _ = page.update(cx, |page, cx| {
+                        if page.section == Section::Storage {
+                            page.refresh_tablebases(cx);
+                        }
+                    });
+                }
+            }),
+            // A tablebase download's progress, whichever window started it.
+            cx.subscribe(
+                &cx.global::<crate::core::AppCore>().events.clone(),
+                |this, _, event: &crate::core::ClientEvent, cx| {
+                    if let crate::core::ClientEvent::Event(
+                        crate::core::CoreEvent::TablebaseProgress(progress),
+                    ) = event
+                    {
+                        this.tablebase_progress(progress, cx);
+                    }
+                },
+            ),
             crate::core::profile_changes(cx, &[ProfileArea::VoiceHistory], move |cx| {
                 let _ = page.update(cx, |page, cx| page.voice_history_changed(cx));
             }),
@@ -527,6 +554,9 @@ impl SettingsPage {
             voice_model: None,
             voice_model_error: None,
             voice_downloading: false,
+            tablebases: None,
+            tablebase_progress: None,
+            tablebase_error: None,
             chesscom_input,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -566,6 +596,8 @@ impl SettingsPage {
         if section == Section::Storage {
             self.voice_model_error = None;
             self.refresh_voice_model(cx);
+            self.tablebase_error = None;
+            self.refresh_tablebases(cx);
             self.refresh_free_space(cx);
             let db = cx.global::<crate::puzzle_db::PuzzleDbHandle>().0.clone();
             db.update(cx, |db, cx| db.refresh(cx));

@@ -458,7 +458,9 @@ mod tests {
             ProfileArea::Accounts | ProfileArea::Usage => "accounts.rs",
             ProfileArea::DesktopSettings => "settings.rs: the SettingsSaved event",
             ProfileArea::Puzzles => "puzzle_db.rs",
-            ProfileArea::VoiceHistory | ProfileArea::Engine => "pages/settings",
+            ProfileArea::VoiceHistory | ProfileArea::Engine | ProfileArea::Tablebases => {
+                "pages/settings"
+            }
             ProfileArea::ViewPreferences => "prefs.rs",
             ProfileArea::Broadcasts => "kchess-watch broadcasts.rs: the alerts shown",
             ProfileArea::Notifications => "apps/gpui notifications/centre.rs",

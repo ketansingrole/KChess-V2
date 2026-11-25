@@ -48,6 +48,9 @@ tempfile = "3"
 sevenz-rust2 = { version = "0.25", default-features = false, features = ["ppmd", "bzip2"] }
 # `.pgn.bz2` imports (FICS's games): the Rust port of libbzip2, as the app's update patches use.
 bzip2 = "0.6"
+# Offline endgame tablebases (`tablebase`): probes the Syzygy tables of up to five pieces
+# (GPL-3.0-or-later, as KChess is; no memory map, so a table read is an ordinary file read).
+shakmaty-syzygy = "0.28"
 
 # Lichess OAuth PKCE: the S256 challenge is base64url(SHA-256(verifier)) (`base64` 0.23 is already
 # in Cargo.lock through reqwest; MIT/Apache-2.0, GPL-compatible).

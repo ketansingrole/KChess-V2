@@ -1,8 +1,8 @@
 //! Settings → Storage: everything KChess keeps on this computer in one place. What it takes in
 //! all (the app itself, its service and every file in the profile, so nothing is left out) and
 //! what the disk has left, every download with its size and its Download or Delete
-//! (the game databases, the puzzles, the speech model, Stockfish), what each account keeps and
-//! downloaded, and the local scores and diagnostics.
+//! (the game databases, the puzzles, the speech model, Stockfish, the endgame tablebases), what
+//! each account keeps and downloaded, and the local scores and diagnostics.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
@@ -38,6 +38,7 @@ pub struct Measured {
     pub own: u64,
     pub speech: u64,
     pub engine: u64,
+    pub tablebases: u64,
 }
 
 /// The parts in the bar's order. What the profile holds besides the named parts (logs, themes,
@@ -48,8 +49,11 @@ pub fn parts(measured: &Measured) -> Vec<Part> {
         ("Puzzles", measured.puzzles),
         ("Your games and studies", measured.own),
         (
-            "Speech model and Stockfish",
-            measured.speech.saturating_add(measured.engine),
+            "Stockfish, speech and tablebases",
+            measured
+                .speech
+                .saturating_add(measured.engine)
+                .saturating_add(measured.tablebases),
         ),
     ];
     let named_total = named
@@ -132,6 +136,7 @@ impl SettingsPage {
             own,
             speech,
             engine,
+            tablebases: self.tablebase_bytes(),
         })
     }
 
@@ -315,6 +320,7 @@ impl SettingsPage {
             Some(crate::puzzle_db::row(cx)),
             Some(self.voice_model_row(cx)),
             self.engine_row(cx),
+            Some(self.tablebase_row(cx)),
         ]
         .into_iter()
         .flatten()
@@ -357,7 +363,8 @@ mod tests {
             puzzles: 100 * mb,
             own: 20 * mb,
             speech: 40 * mb,
-            engine: 60 * mb,
+            engine: 50 * mb,
+            tablebases: 10 * mb,
         };
         let all = parts(&measured);
         let labels: Vec<_> = all.iter().map(|part| part.label).collect();
@@ -368,7 +375,7 @@ mod tests {
                 "Game databases",
                 "Puzzles",
                 "Your games and studies",
-                "Speech model and Stockfish",
+                "Stockfish, speech and tablebases",
                 "Logs and other files"
             ]
         );

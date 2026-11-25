@@ -16,6 +16,7 @@ refuses to release with nothing there.
 - **Opening reports**: on the analysis board, More → Opening report shows how the games in your databases went from the position, its main lines (pick one to play it on the board) and its strongest games.
 - **Player reports**: on the Database page, a game's menu → About opens a report on either player: how they score with White and with Black, the openings they play, their rating over time and their best wins.
 - **Tidy up a database**: on the Database page, Tidy up removes games that came in twice and merges the spellings of one player's name, like "Carlsen, M" and "Carlsen, Magnus", so a search finds all their games.
+- **Endgames offline**: download the endgame tablebases in Settings → Storage, and the analysis board's Tablebase shows how every position with up to five pieces ends, and the best moves, with no connection.
 - **Novelties**: the analysis board marks N, on the board and in the moves, on the first move of your game that no game in your databases played, and shows how many games reached that position and what they played there.
 - **Master games**: on the Database page, download over a million games from top over-the-board events since 2020, then add each new month's games with Update master games.
 - **Engine games**: on the Database page, download every game of the Top Chess Engine Championship's competitions, the strongest chess ever played, and see which openings the best engines choose. Update engine games brings in each new season.

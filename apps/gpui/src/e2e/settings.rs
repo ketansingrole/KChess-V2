@@ -458,7 +458,12 @@ fn storage_lists_every_download_and_asks_before_filling_the_disk(
     let mut app = Harness::start(cx);
     app.online();
     app.open_settings("Storage");
-    for row in ["storage-databases", "storage-puzzles", "storage-voice"] {
+    for row in [
+        "storage-databases",
+        "storage-puzzles",
+        "storage-voice",
+        "storage-tablebases",
+    ] {
         app.find(row);
     }
     app.wait_for("the free space", |window, _| {
@@ -501,6 +506,58 @@ fn storage_lists_every_download_and_asks_before_filling_the_disk(
         window.try_find_by_label("Download anyway").is_none()
     });
     assert!(app.shows("db-install"), "nothing downloads");
+}
+
+/// Tablebases partly on disk (a download stopped part way): Storage counts what is there and
+/// offers to resume; Delete, once confirmed, removes them and offers the whole download.
+#[gpui_kit::test]
+fn storage_resumes_or_deletes_the_endgame_tablebases(cx: &mut gpui_kit::TestAppContext) {
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/kchess-core/src/tablebase/fixtures");
+    let mut app = Harness::start_with(cx, |profile| {
+        let folder = profile.join("tablebases");
+        std::fs::create_dir_all(&folder).expect("the folder");
+        for name in ["KQvK.rtbw", "KQvK.rtbz", "KRvK.rtbw", "KRvK.rtbz"] {
+            std::fs::copy(fixtures.join(name), folder.join(name)).expect("a table");
+        }
+    });
+    app.online();
+    app.open_settings("Storage");
+    let row = |app: &mut Harness| {
+        app.find("storage-tablebases")
+            .label()
+            .unwrap_or_default()
+            .to_string()
+    };
+    app.wait_for("the tables on disk", |window, _| {
+        window
+            .try_find(gpui_kit::ElementId::from("storage-tablebases-delete"))
+            .is_some()
+    });
+    assert_eq!(
+        row(&mut app),
+        "Endgame tablebases, Up to 5 pieces · 13.2 KB of 938 MB"
+    );
+    assert_eq!(
+        app.find("storage-tablebases-download").label(),
+        Some("Resume")
+    );
+    app.click("storage-tablebases-delete");
+    app.click_label("Delete");
+    app.wait_for("the tables to go", |window, _| {
+        window
+            .try_find(gpui_kit::ElementId::from("storage-tablebases-delete"))
+            .is_none()
+    });
+    assert_eq!(row(&mut app), "Endgame tablebases, Up to 5 pieces · 938 MB");
+    assert_eq!(
+        app.find("storage-tablebases-download").label(),
+        Some("Download")
+    );
+    let profile = crate::profile::TEST_DATA_DIR
+        .with_borrow(Clone::clone)
+        .expect("a profile");
+    assert!(!profile.join("tablebases").exists());
 }
 
 /// A setting saved elsewhere (another window, the command line) is shown here at once: the

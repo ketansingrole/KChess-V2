@@ -30,6 +30,7 @@ pub mod profile_lock;
 pub mod puzzles;
 pub mod secrets;
 pub mod store;
+pub mod tablebase;
 pub mod tasks;
 #[doc(hidden)]
 pub mod test_host;

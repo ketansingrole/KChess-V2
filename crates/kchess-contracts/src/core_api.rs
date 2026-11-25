@@ -31,6 +31,17 @@ core_api! {
             fen: Fen;
             options: Option<LookupOptions>
         ) -> crate::types::PositionLookup;
+        /// The offline endgame tablebases, which answer `positionLookup`'s tablebase on this
+        /// computer for the positions they cover.
+        TablebaseStatus = "tablebaseStatus" fn tablebase_status() -> crate::types::TablebaseStatus;
+        /// Downloads and verifies the tables not yet on disk, reporting `tablebase:progress`.
+        #[writes(Tablebases)]
+        TablebaseInstall = "tablebaseInstall" fn tablebase_install(
+        ) -> crate::types::TablebaseStatus;
+        TablebaseCancel = "tablebaseCancel" fn tablebase_cancel() -> ();
+        /// Refused while they download.
+        #[writes(Tablebases)]
+        TablebaseDelete = "tablebaseDelete" fn tablebase_delete() -> crate::types::TablebaseStatus;
         /// Studies an account owns or belongs to on Lichess.
         LichessStudies = "lichessStudies" fn lichess_studies(
             account: Username
