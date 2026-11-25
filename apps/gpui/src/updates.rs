@@ -131,6 +131,9 @@ pub struct Release {
     published_at: Option<String>,
     #[serde(default)]
     html_url: Option<String>,
+    /// Its notes: its `WHATS_NEW.md` section's Markdown.
+    #[serde(default)]
+    body: Option<String>,
     #[serde(default)]
     assets: Vec<Asset>,
 }
@@ -638,6 +641,16 @@ impl Updates {
                 }
             });
         }));
+    }
+
+    /// What the newer release brings, from its notes; none when it has no notes.
+    pub fn notes(&self) -> Option<crate::whats_new::Release> {
+        let release = self.release.as_ref()?;
+        let version = self.version.as_deref()?;
+        // `2026-11-25` of `2026-11-25T10:00:00Z`.
+        let date = release.published_at.as_deref().and_then(|at| at.get(..10));
+        let notes = crate::whats_new::Release::from_body(version, date, release.body.as_deref()?);
+        (!notes.is_empty()).then_some(notes)
     }
 
     /// The release's page, for its notes or a manual download.

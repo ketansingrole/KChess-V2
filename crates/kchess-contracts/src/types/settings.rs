@@ -187,6 +187,8 @@ pub struct FrontendPreferences {
     /// Show KChess's icon and menu in the menu bar (macOS) or the system tray (Windows, Linux).
     /// Off, closing the window quits on Windows and Linux, where nothing else would show it runs.
     pub show_tray_icon: bool,
+    /// Show what an update brings before it installs.
+    pub update_show_notes: bool,
 }
 
 /// Every setting: the core's preferences and the desktop's.

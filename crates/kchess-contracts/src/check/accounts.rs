@@ -135,7 +135,7 @@ fn settings_messages(keys: &[&str]) -> Msg {
         ["promotion"] => "Invalid promotion setting.",
         ["showLegalMoves"] => "Invalid legal moves setting.",
         ["voicePushToTalk" | "voiceConfirmMoves" | "voiceHistory"] => "Invalid voice setting.",
-        ["updateAutoCheck" | "updateAutoDownload" | "updateInstallOnQuit"] => {
+        ["updateAutoCheck" | "updateAutoDownload" | "updateInstallOnQuit" | "updateShowNotes"] => {
             "Invalid update setting."
         }
         ["engineLevels"] => "Invalid computer levels.",
@@ -283,6 +283,8 @@ struct SentSettings {
     close_action: String,
     #[serde(default = "on")]
     show_tray_icon: bool,
+    #[serde(default = "on")]
+    update_show_notes: bool,
 }
 
 fn on() -> bool {
@@ -371,6 +373,7 @@ impl Validate for Settings {
                 open_at_login: s.open_at_login,
                 close_action: chosen(s.close_action)?,
                 show_tray_icon: s.show_tray_icon,
+                update_show_notes: s.update_show_notes,
             },
         })
     }
@@ -571,6 +574,7 @@ mod tests {
             "figurineNotation",
             "openAtLogin",
             "showTrayIcon",
+            "updateShowNotes",
         ] {
             fields.push((flag, J::Bool(true)));
         }
@@ -619,7 +623,12 @@ mod tests {
     /// opened at login); a close action that is not one of the choices is refused.
     #[test]
     fn settings_without_the_background_ones_keep_their_defaults() {
-        let newer = ["openAtLogin", "closeAction", "showTrayIcon"];
+        let newer = [
+            "openAtLogin",
+            "closeAction",
+            "showTrayIcon",
+            "updateShowNotes",
+        ];
         let older: Vec<_> = settings()
             .into_iter()
             .filter(|(key, _)| !newer.contains(key))
@@ -631,6 +640,7 @@ mod tests {
             crate::types::CloseAction::Default
         );
         assert!(normalized.frontend.show_tray_icon);
+        assert!(normalized.frontend.update_show_notes);
         let sent = check::<Settings>(obj(settings())).unwrap();
         assert_eq!(sent.frontend.close_action, crate::types::CloseAction::Quit);
         assert!(sent.frontend.open_at_login);

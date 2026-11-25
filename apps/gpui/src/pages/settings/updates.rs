@@ -33,10 +33,30 @@ pub fn restart_cost(cx: &App) -> Option<&'static str> {
 
 /// Ask, then restart into the downloaded update (the Updates section and the top bar's button).
 /// The question names what a restart would cost now; unfinished games here are resumed.
+/// With `updateShowNotes` on and the release's notes known, the question is the notes of what
+/// it brings (`whats_new::open_before_update`).
 pub fn ask_restart(window: &mut Window, cx: &mut App) {
     let handle = cx.global::<UpdatesHandle>().0.clone();
     let version = handle.read(cx).version.clone().unwrap_or_default();
     let cost = restart_cost(cx);
+    let notes = crate::settings::frontend(cx)
+        .update_show_notes
+        .then(|| handle.read(cx).notes())
+        .flatten();
+    if let Some(notes) = notes {
+        let handle = handle.downgrade();
+        crate::whats_new::open_before_update(
+            notes,
+            cost,
+            move |cx| {
+                // Unsaved work reaches the profile first, as on any quit (`Updates::install`).
+                handle.update(cx, |updates, cx| updates.install(cx)).ok();
+            },
+            window,
+            cx,
+        );
+        return;
+    }
     crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
         let handle = handle.clone();
         dialog

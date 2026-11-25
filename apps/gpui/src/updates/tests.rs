@@ -1924,3 +1924,61 @@ fn turning_on_background_downloads_downloads_the_waiting_update(cx: &mut gpui_ki
         Some(NO_FOLDER)
     );
 }
+
+/// Restart and install first shows what the update brings, from its release's notes; Cancel
+/// leaves it, and once the box turns the notes off, restarting asks plainly.
+#[gpui_kit::test]
+fn restarting_shows_what_the_update_brings_first(cx: &mut gpui_kit::TestAppContext) {
+    use super::{Phase, UpdatesHandle};
+    let mut app = crate::e2e::Harness::start(cx);
+    let mut json = release_json("2026.11.9");
+    json["published_at"] = "2026-11-22T10:00:00Z".into();
+    json["body"] = "Faster boards.\n\n### Added\n\n- You can flip the board with F.\n\n\
+        ### Fixed\n\n- Clocks no longer skip.\n"
+        .into();
+    let release: Release = serde_json::from_value(json).unwrap();
+    app.with_window(|_, cx| {
+        let updates = cx.global::<UpdatesHandle>().0.clone();
+        updates.update(cx, |updates, cx| {
+            updates.current = "2026.11.0".into();
+            updates.version = Some("2026.11.9".into());
+            updates.release = Some(release);
+            updates.phase = Phase::Downloaded;
+            cx.notify();
+        });
+    });
+    let notes = app.with_window(|_, cx| cx.global::<UpdatesHandle>().0.read(cx).notes());
+    let notes = notes.expect("the release's notes");
+    assert_eq!(notes.date.as_deref(), Some("2026-11-22"));
+    assert_eq!(notes.items.len(), 2);
+
+    app.open_settings("Updates");
+    app.click("update-install");
+    assert_eq!(
+        app.find(("whats-new-release", 0usize)).label(),
+        Some("KChess 2026.11.9")
+    );
+    assert_eq!(
+        app.find(("whats-new-summary", 0usize)).label(),
+        Some("Faster boards.")
+    );
+    app.click("whats-new-cancel");
+    app.wait_gone("whats-new");
+    assert_eq!(
+        app.with_window(|_, cx| cx.global::<UpdatesHandle>().0.read(cx).phase),
+        Phase::Downloaded,
+        "Cancel leaves the update ready"
+    );
+
+    app.click("update-install");
+    app.click("whats-new-skip");
+    app.wait_for_saved("updateShowNotes", serde_json::json!(false));
+    app.click("whats-new-cancel");
+    app.wait_gone("whats-new");
+    app.click("update-install");
+    app.find("ok");
+    assert!(
+        !app.shows("whats-new"),
+        "the notes stay off: the plain question"
+    );
+}

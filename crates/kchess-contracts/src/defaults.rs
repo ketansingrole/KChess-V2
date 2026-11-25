@@ -77,6 +77,7 @@ pub fn default_settings() -> Result<Settings, String> {
             open_at_login: false,
             close_action: CloseAction::Default,
             show_tray_icon: true,
+            update_show_notes: true,
         },
     })
 }

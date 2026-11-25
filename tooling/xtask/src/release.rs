@@ -52,8 +52,9 @@ pub fn date_notes(notes: &str, version: &str, date: &str) -> Result<String> {
     let empty = notes::section(notes, UNRELEASED).is_none_or(|section| section.items().is_empty());
     let Some((head, rest)) = split.filter(|_| !empty) else {
         return Err(format!(
-            "{NOTES} has nothing under {unreleased}. Write what this release brings there, one \
-             `- **Title**: what it does` line each, then run release-version again."
+            "{NOTES} has nothing under {unreleased}. Write what this release brings there: a \
+             summary, then one plain sentence each under `### Added`, `### Changed` or \
+             `### Fixed`, then run release-version again."
         ));
     };
     if notes::section(notes, version).is_some() {

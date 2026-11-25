@@ -1,15 +1,22 @@
 //! What's new: each release's notes (`WHATS_NEW.md`, built into the app), shown once on the first
 //! start after an update and whenever asked for from the sidebar's
-//! account menu, Settings → Updates, Quick Pick or the menu.
+//! account menu, Settings → Updates, Quick Pick or the menu; and the notes of the update about to
+//! install (its GitHub release's text), before it does (`open_before_update`).
+//!
+//! A release reads as its summary, then its items under Added, Changed and Fixed, each with its
+//! group's icon. A release from before the groups lists its titled items as it was published.
 //!
 //! The version last shown is a view preference (`kchess:whats-new-seen`), so a profile shared by
 //! several installs shows a release's notes once. A fresh profile starts with nothing to catch up
 //! on; a profile from before this preference existed gets the running release's notes.
 
-use gpui_kit::component::v_flex;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::{Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::assets::icon;
 use crate::theme::Palette;
 use crate::updates::parse_version;
 
@@ -23,23 +30,47 @@ pub struct Release {
     pub version: String,
     /// `YYYY-MM-DD`.
     pub date: Option<String>,
+    /// What the release is about, in a few sentences.
+    pub summary: Option<String>,
     pub items: Vec<Item>,
 }
 
-pub use kchess_delta::notes::Item;
+impl Release {
+    fn of(section: &kchess_delta::notes::Section) -> Release {
+        Release {
+            version: section.version.to_string(),
+            date: section.date.map(str::to_string),
+            summary: section.summary(),
+            items: section.items(),
+        }
+    }
+
+    /// Release `version`'s notes from its GitHub release's text (its section's Markdown,
+    /// `kchess_delta::notes::Section::body`), released on `date` (`YYYY-MM-DD`).
+    pub fn from_body(version: &str, date: Option<&str>, body: &str) -> Release {
+        Release::of(&kchess_delta::notes::Section {
+            version,
+            date,
+            lines: body.lines().collect(),
+        })
+    }
+
+    /// Whether there is anything to read.
+    pub fn is_empty(&self) -> bool {
+        self.summary.is_none() && self.items.is_empty()
+    }
+}
+
+pub use kchess_delta::notes::{Item, Kind};
 
 /// The released sections of `text`, in its order: `## 2026.11.4 (2026-11-20)` headings, each with
-/// `- **Title**: text` items. The `## Unreleased` section and anything before the first heading
-/// are left out.
+/// its summary and items. The `## Unreleased` section and anything before the first heading are
+/// left out.
 pub fn parse(text: &str) -> Vec<Release> {
     kchess_delta::notes::sections(text)
         .into_iter()
         .filter(|section| section.release().is_some())
-        .map(|section| Release {
-            version: section.version.to_string(),
-            date: section.date.map(str::to_string),
-            items: section.items(),
-        })
+        .map(|section| Release::of(&section))
         .collect()
 }
 
@@ -73,9 +104,23 @@ pub fn to_show(text: &str, current: &str, seen: Option<&str>, used: bool) -> Vec
     }
 }
 
-/// Every release's notes up to the running one, newest first.
+/// Every release's notes up to the running one, newest first. A development build shows the
+/// unreleased notes first, as players will read them.
 pub fn releases() -> Vec<Release> {
-    releases_up_to(NOTES, &crate::updates::current_version())
+    let mut releases = releases_up_to(NOTES, &crate::updates::current_version());
+    if cfg!(debug_assertions)
+        && let Some(next) = unreleased(NOTES)
+    {
+        releases.insert(0, next);
+    }
+    releases
+}
+
+/// The `## Unreleased` notes, when there are any.
+fn unreleased(text: &str) -> Option<Release> {
+    kchess_delta::notes::section(text, kchess_delta::notes::UNRELEASED)
+        .map(|section| Release::of(&section))
+        .filter(|release| !release.is_empty())
 }
 
 /// The first start after an update: show what it brought, once. Waits for a later start while a
@@ -108,15 +153,89 @@ pub fn open(window: &mut Window, cx: &mut App) {
 fn open_releases(releases: Vec<Release>, window: &mut Window, cx: &mut App) {
     crate::widgets::open_dialog(window, cx, move |dialog, window, cx| {
         let palette = *cx.global::<Palette>();
-        // A short window scrolls the notes rather than cut them off.
-        let room = (window.viewport_size().height - px(180.)).max(px(160.));
-        // Wide enough that most notes take a line or two, inside a narrow window's margins.
-        let width = (window.viewport_size().width - px(64.)).clamp(px(320.), px(640.));
+        let (width, room) = room(window, px(180.));
         dialog
             .title("What's new")
             .w(width)
             .child(list(&releases, &palette, room))
     });
+}
+
+/// The notes of `release`, the update about to install, with what restarting would cost now
+/// (`cost`): Restart and install puts it in place (`install`), Cancel leaves it for later, and
+/// the box turns these notes off for later updates (`updateShowNotes`).
+pub fn open_before_update(
+    release: Release,
+    cost: Option<&'static str>,
+    install: impl Fn(&mut App) + 'static,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let install = std::rc::Rc::new(install);
+    crate::widgets::open_dialog(window, cx, move |dialog, window, cx| {
+        let palette = *cx.global::<Palette>();
+        let (width, room) = room(window, px(240.));
+        let skip = !crate::settings::frontend(cx).update_show_notes;
+        let install = install.clone();
+        let footer = h_flex()
+            .w_full()
+            .gap(px(8.))
+            .child(
+                Checkbox::new("whats-new-skip")
+                    .checked(skip)
+                    .label("Don't show what's new before updating")
+                    .on_click(|checked, _, cx| {
+                        let show = !*checked;
+                        crate::settings::change(cx, move |s| s.frontend.update_show_notes = show);
+                    }),
+            )
+            .child(div().flex_1())
+            .child(
+                Button::new("whats-new-cancel")
+                    .outline()
+                    .small()
+                    .label("Cancel")
+                    .on_click(|_, window, cx| window.close_dialog(cx)),
+            )
+            .child(
+                Button::new("whats-new-install")
+                    .small()
+                    .when(cost.is_some(), |button| button.danger())
+                    .when(cost.is_none(), |button| button.primary())
+                    .label("Restart and install")
+                    .on_click(move |_, window, cx| {
+                        window.close_dialog(cx);
+                        install(cx);
+                    }),
+            );
+        dialog
+            .title("What's new")
+            .w(width)
+            .child(
+                v_flex()
+                    .gap(px(12.))
+                    .child(list(std::slice::from_ref(&release), &palette, room))
+                    .children(cost.map(|cost| {
+                        div()
+                            .id("whats-new-cost")
+                            .test_support()
+                            .aria_label(cost)
+                            .text_size(px(13.))
+                            .text_color(palette.warning)
+                            .child(cost)
+                    })),
+            )
+            .footer(footer)
+    });
+}
+
+/// The dialog's width, and the height its notes may take before they scroll: a short window
+/// scrolls them rather than cut them off, leaving `chrome` for the title and buttons.
+fn room(window: &Window, chrome: Pixels) -> (Pixels, Pixels) {
+    let viewport = window.viewport_size();
+    // Wide enough that most notes take a line or two, inside a narrow window's margins.
+    let width = (viewport.width - px(64.)).clamp(px(320.), px(640.));
+    (width, (viewport.height - chrome).max(px(160.)))
 }
 
 /// `Nov 4, 2026` from `2026-11-04`.
@@ -126,12 +245,111 @@ fn date_label(date: &str) -> Option<String> {
         .map(|date| date.strftime("%b %-d, %Y").to_string())
 }
 
+/// A group's icon and its colour.
+fn look(kind: Kind, palette: &Palette) -> (&'static str, Hsla) {
+    match kind {
+        Kind::Added => ("circle-plus", palette.success),
+        Kind::Changed => ("sliders-horizontal", palette.primary),
+        Kind::Fixed => ("circle-check", palette.info),
+    }
+}
+
+/// An item's text, its title (in a release from before the groups) leading in bold.
+fn item_text(item: &Item) -> StyledText {
+    let lead = item.title.as_ref().map_or(0, |title| title.len() + 2);
+    let line = match &item.title {
+        Some(title) => format!("{title}. {}", item.text),
+        None => item.text.clone(),
+    };
+    let bold = HighlightStyle {
+        font_weight: Some(FontWeight::MEDIUM),
+        ..HighlightStyle::default()
+    };
+    StyledText::new(line).with_highlights((lead > 0).then_some((0..lead, bold)))
+}
+
+fn release_block(index: usize, release: &Release, palette: &Palette) -> impl IntoElement + use<> {
+    let text = |child: AnyElement| {
+        div()
+            .text_size(px(13.))
+            .line_height(relative(1.5))
+            .text_color(palette.text)
+            .child(child)
+    };
+    let groups = Kind::ALL.into_iter().filter_map(|kind| {
+        let items: Vec<&Item> = release
+            .items
+            .iter()
+            .filter(|item| item.kind == Some(kind))
+            .collect();
+        (!items.is_empty()).then(|| {
+            let (name, color) = look(kind, palette);
+            v_flex()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(palette.text_muted)
+                        .child(kind.heading()),
+                )
+                .children(items.into_iter().map(move |item| {
+                    h_flex()
+                        .items_start()
+                        .gap(px(10.))
+                        .child(
+                            div()
+                                .flex_none()
+                                .pt(px(2.))
+                                .child(icon(name).size(px(16.)).text_color(color)),
+                        )
+                        .child(text(item_text(item).into_any_element()).flex_1().min_w_0())
+                }))
+        })
+    });
+    let untitled = release.items.iter().filter(|item| item.kind.is_none());
+    v_flex()
+        .id(("whats-new-release", index))
+        .test_support()
+        .aria_label(format!("KChess {}", release.version))
+        .gap(px(14.))
+        .when(index > 0, |block| {
+            block.pt(px(20.)).border_t_1().border_color(palette.border)
+        })
+        .child(
+            h_flex()
+                .items_baseline()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .text_size(px(15.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(palette.highlighted)
+                        .child(format!("KChess {}", release.version)),
+                )
+                .children(release.date.as_deref().and_then(date_label).map(|date| {
+                    div()
+                        .text_size(px(12.))
+                        .text_color(palette.text_muted)
+                        .child(date)
+                })),
+        )
+        .children(release.summary.clone().map(|summary| {
+            text(summary.clone().into_any_element())
+                .id(("whats-new-summary", index))
+                .test_support()
+                .aria_label(summary)
+        }))
+        .children(groups)
+        .children(untitled.map(|item| text(item_text(item).into_any_element())))
+}
+
 fn list(releases: &[Release], palette: &Palette, height: Pixels) -> impl IntoElement {
     v_flex()
         .id("whats-new")
         .max_h(height)
         .overflow_y_scroll()
-        .gap(px(16.))
+        .gap(px(20.))
         .when(releases.is_empty(), |list| {
             list.child(
                 div()
@@ -140,51 +358,18 @@ fn list(releases: &[Release], palette: &Palette, height: Pixels) -> impl IntoEle
                     .child("No release notes in this build"),
             )
         })
-        .children(releases.iter().map(|release| {
-            v_flex()
-                .gap(px(6.))
-                .child(
-                    div()
-                        .flex()
-                        .items_baseline()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .text_size(px(14.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(palette.highlighted)
-                                .child(format!("KChess {}", release.version)),
-                        )
-                        .children(release.date.as_deref().and_then(date_label).map(|date| {
-                            div()
-                                .text_size(px(12.))
-                                .text_color(palette.text_muted)
-                                .child(date)
-                        })),
-                )
-                .children(release.items.iter().map(|item| {
-                    // The title leads its line in bold, wrapping with the text after it.
-                    let lead = item.title.as_ref().map_or(0, |title| title.len() + 2);
-                    let line = match &item.title {
-                        Some(title) => format!("{title}. {}", item.text),
-                        None => item.text.clone(),
-                    };
-                    let bold = HighlightStyle {
-                        font_weight: Some(FontWeight::MEDIUM),
-                        ..HighlightStyle::default()
-                    };
-                    div().text_size(px(13.)).text_color(palette.text).child(
-                        StyledText::new(line)
-                            .with_highlights((lead > 0).then_some((0..lead, bold))),
-                    )
-                }))
-        }))
+        .children(
+            releases
+                .iter()
+                .enumerate()
+                .map(|(index, release)| release_block(index, release, palette)),
+        )
         .test_support()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Item, NOTES, date_label, parse, releases_up_to, to_show};
+    use super::{Item, Kind, NOTES, date_label, parse, releases_up_to, to_show};
 
     const SAMPLE: &str = "# What's new\n\nIntro text.\n\n## Unreleased\n\n- **Next**: not yet.\n\n\
         ## 2026.11.4 (2026-11-20)\n\n- **Guess the move**: a drill, see [Practice](https://x).\n  \
@@ -200,16 +385,39 @@ mod tests {
             releases[0].items,
             [
                 Item {
+                    kind: None,
                     title: Some("Guess the move".into()),
                     text: "a drill, see Practice. It carries on.".into(),
                 },
                 Item {
+                    kind: None,
                     title: None,
                     text: "A plain fix.".into(),
                 },
             ]
         );
         assert_eq!(date_label("2026-11-04").as_deref(), Some("Nov 4, 2026"));
+    }
+
+    /// A release written with its summary and groups reads them; one from its GitHub release's
+    /// text reads the same.
+    #[test]
+    fn a_release_reads_its_summary_and_groups() {
+        let notes = "## 2026.11.10 (2026-11-25)\n\nKChess is a database.\n\n### Added\n\n\
+            - You can import games.\n\n### Fixed\n\n- Clocks no longer skip.\n";
+        let release = &parse(notes)[0];
+        assert_eq!(release.summary.as_deref(), Some("KChess is a database."));
+        let kinds: Vec<_> = release.items.iter().map(|item| item.kind).collect();
+        assert_eq!(kinds, [Some(Kind::Added), Some(Kind::Fixed)]);
+        let body = notes.split_once('\n').unwrap().1;
+        assert_eq!(
+            &super::Release::from_body("2026.11.10", Some("2026-11-25"), body),
+            release
+        );
+        assert!(super::Release::from_body("2026.11.10", None, "").is_empty());
+        let next = super::unreleased(SAMPLE).expect("the unreleased notes");
+        assert_eq!(next.version, "Unreleased");
+        assert_eq!(super::unreleased(notes), None);
     }
 
     /// Only releases this build has reached are listed: a newer section is a later build's.
