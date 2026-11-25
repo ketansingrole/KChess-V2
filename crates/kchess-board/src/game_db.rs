@@ -163,9 +163,11 @@ impl GameDb {
     }
 
     /// Downloads the games `request` names into its player's database, replacing those an
-    /// earlier download brought; `GameDbEvent::PlayerInstalled` follows once they are in.
+    /// earlier download brought; `GameDbEvent::PlayerInstalled` follows once they are in, and the
+    /// player is among the site's recent ones.
     pub fn install_player(&mut self, request: PlayerGames, cx: &mut Context<Self>) {
         let username = request.username.clone();
+        let site = request.site;
         let install = cx
             .global::<AppCore>()
             .request(calls::GameDbPlayerInstall { request });
@@ -174,6 +176,7 @@ impl GameDb {
             "",
             install,
             move |imported: GameDbImported, cx| {
+                crate::player_search::remember(site, &username, cx);
                 cx.emit(GameDbEvent::PlayerInstalled {
                     database: imported.database.id,
                     username,

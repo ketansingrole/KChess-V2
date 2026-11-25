@@ -10,81 +10,46 @@ impl PlayersPage {
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> Div {
-        // The player open is already in the field, so not offered again.
-        let shown = self.username().unwrap_or_default().to_lowercase();
-        let others = |names: Vec<String>| -> Vec<String> {
-            names
-                .into_iter()
-                .filter(|name| name.to_lowercase() != shown)
-                .collect()
-        };
-        let recent = others(player_search::recent(cx));
-        let (recent, followed) = suggestions(&recent, &others(followed.to_vec()));
         let online = crate::network::online(cx);
         let typed = !self.input.read(cx).value().trim().is_empty();
-        let pick = |name: String| {
-            cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
-                this.show_player(&name, window, cx)
-            })
-        };
+        let clear = Button::new("players-recent-clear")
+            .ghost()
+            .small()
+            .icon(icon("x"))
+            // gpui-lints: allow(icon_per_label) empties the recent names; Clear elsewhere deletes
+            .label("Clear")
+            .accessibility_label("Clear recent players")
+            .on_click(cx.listener(|_, _, _, cx| {
+                player_search::clear_recent(GameSite::Lichess, cx);
+                cx.notify();
+            }));
         // Names typed so far match these players; otherwise the ones looked up lately and
-        // followed. Each group is a row: its label in a column of its own, then its names.
-        let chips = |id: &'static str, names: Vec<String>| -> Vec<AnyElement> {
-            names
-                .into_iter()
-                .enumerate()
-                .map(|(index, name)| {
-                    name_chip((id, index), &name, None, false, palette, pick(name.clone()))
-                        .into_any_element()
-                })
-                .collect()
-        };
-        let groups: Vec<AnyElement> = if self.names.found().is_empty() {
-            let mut groups = Vec::new();
-            if !recent.is_empty() {
-                let clear = Button::new("players-recent-clear")
-                    .ghost()
-                    .small()
-                    .icon(icon("x"))
-                    // gpui-lints: allow(icon_per_label) empties the recent names; Clear elsewhere deletes
-                    .label("Clear")
-                    .accessibility_label("Clear recent players")
-                    .on_click(cx.listener(|_, _, _, cx| {
-                        player_search::clear_recent(cx);
-                        cx.notify();
-                    }));
-                groups.push(
-                    chip_row(
-                        "Recent",
-                        chips("players-suggestion", recent),
-                        Some(clear.into_any_element()),
-                        palette,
-                    )
-                    .into_any_element(),
-                );
-            }
-            if !followed.is_empty() {
-                groups.push(
-                    chip_row(
-                        "Following",
-                        chips("players-followed", followed),
-                        None,
-                        palette,
-                    )
-                    .into_any_element(),
-                );
-            }
-            groups
-        } else {
-            let page = cx.entity().downgrade();
-            let found = player_search::match_chips("players-match", &self.names, palette, |name| {
+        // followed, the player open (already in the field) left out.
+        let known = vec![
+            NameGroup {
+                action: Some(clear.into_any_element()),
+                ..NameGroup::new(
+                    "Recent",
+                    "players-suggestion",
+                    player_search::recent(GameSite::Lichess, cx),
+                )
+            },
+            NameGroup::new("Following", "players-followed", followed.to_vec()),
+        ];
+        let page = cx.entity().downgrade();
+        let groups = player_search::name_rows(
+            "players-match",
+            &self.names,
+            known,
+            self.username().as_deref(),
+            palette,
+            |name| {
                 let page = page.clone();
                 Box::new(move |_, window, cx| {
                     let _ = page.update(cx, |page, cx| page.show_player(&name, window, cx));
                 })
-            });
-            vec![chip_row("Matches", found, None, palette).into_any_element()]
-        };
+            },
+        );
         widgets::card(palette)
             .gap(px(12.))
             .child(

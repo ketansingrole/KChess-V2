@@ -357,6 +357,55 @@ fn a_players_games_are_downloaded_to_prepare_against_them(cx: &mut gpui_kit::Tes
     app.find("database-update-player");
 }
 
+/// The player download offers names: the Lichess players whose names start with what is typed,
+/// which Chess.com has no search for, and once a player's games are in, that player as a recent
+/// one on their site. Picking a name puts it in the field.
+#[gpui_kit::test]
+fn the_player_download_offers_names_to_pick(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::SCOUTED;
+    use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
+    let mut app = Harness::start(cx);
+    app.online();
+    app.open("Game database");
+    app.click("database-player");
+    app.fill_in_dialog("Username", "mag");
+    assert_eq!(
+        app.find(("player-match", 0usize)).label(),
+        Some("GM MagnusCarlsen, online")
+    );
+    // Chess.com has no name search: its matches go with Lichess.
+    app.click(("player-site", 1usize));
+    app.wait_for("the Lichess matches to go", |window, _| {
+        window.try_find(("player-match", 0usize)).is_none()
+    });
+    app.click(("player-site", 0usize));
+    app.click(("player-match", 1usize));
+    app.wait_for("the picked name in the field", |window, _| {
+        window
+            .try_find_by_label("Username")
+            .is_some_and(|input| input.value() == Some("MagicMike"))
+            && window.try_find(("player-match", 0usize)).is_none()
+    });
+
+    app.fill_in_dialog("Username", SCOUTED);
+    app.click("player-download");
+    app.wait_for_app("their database", |cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .len()
+            == 1
+    });
+    // Their name is offered next time on Lichess, not on Chess.com.
+    app.click("database-player");
+    assert_eq!(app.find(("player-recent", 0usize)).label(), Some(SCOUTED));
+    app.click(("player-site", 1usize));
+    app.wait_for("no Lichess name on Chess.com", |window, _| {
+        window.try_find(("player-recent", 0usize)).is_none()
+    });
+}
+
 /// The master games button downloads Lichess's broadcast archive (here the stand-in's one month)
 /// into a database of their own, whose games are listed with the archive's attribution; the
 /// button then offers to bring in newer months.
