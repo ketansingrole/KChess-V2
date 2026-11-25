@@ -61,7 +61,7 @@ pub struct Input<R> {
 pub struct Count {
     pub games: u64,
     pub skipped: u64,
-    /// Bytes of the file read (compressed bytes for a `.zst` or `.zip`).
+    /// Bytes of the file read (compressed bytes for a `.zst`, `.zip` or `.7z`).
     pub bytes: u64,
     pub total_bytes: u64,
 }
@@ -98,9 +98,9 @@ impl<R: Seek> Seek for Counted<R> {
     }
 }
 
-/// Whether a zip's entry named `name` is a PGN file to read: a `.pgn` that is not macOS's
+/// Whether an archive's entry named `name` is a PGN file to read: a `.pgn` that is not macOS's
 /// record of another file's attributes (`__MACOSX/`, `._name.pgn`).
-fn zipped_pgn(name: &str) -> bool {
+fn archived_pgn(name: &str) -> bool {
     let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
     name.to_ascii_lowercase().ends_with(".pgn")
         && !name.starts_with("__MACOSX/")
@@ -129,7 +129,7 @@ fn unzip_pgn(
         let mut entry = {
             let about = archive.by_index_data(index).map_err(unreadable)?;
             let name = about.name().map_err(unreadable)?;
-            if about.is_dir() || !zipped_pgn(&name) {
+            if about.is_dir() || !archived_pgn(&name) {
                 continue;
             }
             archive.by_index(index).map_err(unreadable)?
@@ -148,6 +148,70 @@ fn unzip_pgn(
         return Err(CoreError::new("That .zip holds no .pgn file."));
     }
     Ok(())
+}
+
+/// The most memory a `.7z`'s decoder may take, in KiB: room for 7-Zip's largest dictionary
+/// (1.5 GiB), so an archive asking for more is refused rather than taking the computer's memory.
+const SEVEN_ZIP_MEMORY_KB: usize = 2 * 1024 * 1024;
+
+/// Every PGN file a 7-Zip archive holds, one after another, to `sink`, in the archive's order,
+/// each ended by a blank line as a zip's are. A solid archive decodes as one stream, so the other
+/// files in it are decoded and checked too, but never kept. It decodes on one thread: the import
+/// reading the games is the slower side.
+fn un7z_pgn(reader: impl Read + Seek, mut sink: impl FnMut(&[u8]) -> io::Result<()>) -> Result<()> {
+    use sevenz_rust2::{ArchiveReader, Error, Password};
+    let locked = || CoreError::new("That .7z is password-protected.");
+    let unreadable = |cause: Error| match cause {
+        Error::PasswordRequired | Error::MaybeBadPassword(_) => locked(),
+        // Encryption is not built in: an encrypted archive names AES as its method.
+        Error::UnsupportedCompressionMethod(method) if method.contains("AES") => locked(),
+        Error::UnsupportedCompressionMethod(_) => {
+            CoreError::new("That .7z uses a compression KChess can't read.")
+        }
+        Error::MaxMemLimited { .. } => {
+            CoreError::new("That .7z needs more memory than KChess allows.")
+        }
+        cause => CoreError::wrap("That .7z could not be read", cause),
+    };
+    let mut archive =
+        ArchiveReader::new_with_memory_limit(reader, Password::empty(), SEVEN_ZIP_MEMORY_KB)
+            .map_err(unreadable)?;
+    archive.set_thread_count(1);
+    let wanted = |entry: &sevenz_rust2::ArchiveEntry| {
+        entry.has_stream()
+            && !entry.is_directory()
+            && !entry.is_anti_item
+            && archived_pgn(entry.name())
+    };
+    let about = archive.archive();
+    let pgn: Vec<usize> = (about.files.iter().enumerate())
+        .filter(|(_, entry)| wanted(entry))
+        .map(|(index, _)| index)
+        .collect();
+    if pgn.is_empty() {
+        return Err(CoreError::new("That .7z holds no .pgn file."));
+    }
+    if pgn.iter().any(|&index| about.is_file_encrypted(index)) {
+        return Err(locked());
+    }
+    let mut chunk = vec![0u8; 64 * 1024];
+    archive
+        .for_each_entries(|entry, read| {
+            // Another file's bytes are left unread: the reader decodes and checks them itself.
+            if !wanted(entry) {
+                return Ok(true);
+            }
+            loop {
+                let n = read.read(&mut chunk)?;
+                if n == 0 {
+                    break;
+                }
+                sink(&chunk[..n])?;
+            }
+            sink(b"\n\n")?;
+            Ok(true)
+        })
+        .map_err(unreadable)
 }
 
 fn cancelled_error() -> CoreError {
@@ -173,7 +237,7 @@ impl Source {
         }
         let file = File::open(&real).map_err(unreadable)?;
         if !file.metadata().map_err(unreadable)?.is_file() {
-            return Err(CoreError::new("Choose a .pgn, .pgn.zst or .zip file."));
+            return Err(CoreError::new("Choose a .pgn, .pgn.zst, .zip or .7z file."));
         }
         let name = path
             .file_name()
@@ -457,6 +521,7 @@ pub fn read_into<R: Read + Seek + Send + 'static>(
                     };
                     match packing {
                         PgnPacking::Zip => unzip_pgn(counted, sink),
+                        PgnPacking::SevenZip => un7z_pgn(counted, sink),
                         _ => crate::zst::decode(counted, sink).map_err(|cause| {
                             CoreError::wrap("That file is not a readable .pgn.zst", cause)
                         }),

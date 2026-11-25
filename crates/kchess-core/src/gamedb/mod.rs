@@ -204,14 +204,14 @@ fn new_id(name: &str) -> String {
     format!("{stem}-{:02x}{:02x}{:02x}", suffix[0], suffix[1], suffix[2])
 }
 
-/// The name a file gives a database: its name without `.pgn`, `.pgn.zst` or `.zip`.
+/// The name a file gives a database: its name without `.pgn`, `.pgn.zst`, `.zip` or `.7z`.
 fn file_stem(path: &Path) -> String {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let lower = name.to_ascii_lowercase();
-    let stem = [".pgn.zst", ".pgn.zip", ".zip", ".pgn"]
+    let stem = [".pgn.zst", ".pgn.zip", ".pgn.7z", ".zip", ".7z", ".pgn"]
         .iter()
         .find_map(|ext| {
             lower

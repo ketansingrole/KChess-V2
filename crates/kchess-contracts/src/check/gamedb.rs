@@ -68,8 +68,8 @@ impl Validate for GameDbGameId {
     }
 }
 
-/// A PGN file chosen to import: an absolute path ending in `.pgn`, `.pgn.zst` or `.zip` (the PGN
-/// files it holds). The core opens it itself (it may be gigabytes), and checks there that it is a
+/// A PGN file chosen to import: an absolute path ending in `.pgn`, `.pgn.zst`, `.zip` or `.7z`
+/// (an archive: the PGN files it holds). The core opens it itself (it may be gigabytes), and checks there that it is a
 /// readable file outside the profile.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[serde(transparent)]
@@ -84,6 +84,8 @@ pub enum PgnPacking {
     Zstd,
     /// A zip archive: every `.pgn` file in it (`.zip`).
     Zip,
+    /// A 7-Zip archive: every `.pgn` file in it (`.7z`).
+    SevenZip,
 }
 
 impl PgnFilePath {
@@ -94,6 +96,8 @@ impl PgnFilePath {
             PgnPacking::Zstd
         } else if lower.ends_with(".zip") {
             PgnPacking::Zip
+        } else if lower.ends_with(".7z") {
+            PgnPacking::SevenZip
         } else {
             PgnPacking::Plain
         }
@@ -102,14 +106,14 @@ impl PgnFilePath {
 
 impl Validate for PgnFilePath {
     fn validate(value: J) -> Result<Self, Refusal> {
-        const PATH: &str = "Choose a .pgn, .pgn.zst or .zip file.";
+        const PATH: &str = "Choose a .pgn, .pgn.zst, .zip or .7z file.";
         let path: String = decode(value, |_| Some(PATH))?;
         let lower = path.to_ascii_lowercase();
         ensure(
             std::path::Path::new(&path).is_absolute()
                 && path.len() <= 4096
                 && !path.contains('\0')
-                && [".pgn", ".pgn.zst", ".zip"]
+                && [".pgn", ".pgn.zst", ".zip", ".7z"]
                     .iter()
                     .any(|extension| lower.ends_with(extension)),
             Some(PATH),
@@ -322,7 +326,16 @@ mod tests {
                 .packing(),
             PgnPacking::Plain
         );
-        for bad in ["games/twic.pgn", "/games/twic.txt", "/games/twic.7z", ""] {
+        let seven = if cfg!(windows) {
+            "C:\\g\\CCRL-4040.[2494855].pgn.7z"
+        } else {
+            "/g/CCRL-4040.[2494855].pgn.7z"
+        };
+        assert_eq!(
+            check::<PgnFilePath>(sent(json!(seven))).unwrap().packing(),
+            PgnPacking::SevenZip
+        );
+        for bad in ["games/twic.pgn", "/games/twic.txt", "/games/twic.rar", ""] {
             assert!(check::<PgnFilePath>(sent(json!(bad))).is_err(), "{bad}");
         }
     }

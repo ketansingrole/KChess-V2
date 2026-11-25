@@ -48,6 +48,9 @@ exceptions = [
   { crate = "enum-iterator-derive", allow = ["0BSD"] },
   { crate = "notify", allow = ["CC0-1.0"] },
   { crate = "tiny-keccak", allow = ["CC0-1.0"] },
+  # The PPMd decoder of `.7z` imports (through sevenz-rust2), CC0-1.0 OR MIT-0: a public-domain
+  # dedication.
+  { crate = "ppmd-rust", allow = ["CC0-1.0"] },
   # bzip2's own BSD-style license, for the Rust port of libbzip2 that compresses update patches
   # (qbsdiff, `crates/kchess-delta`).
   { crate = "libbz2-rs-sys", allow = ["bzip2-1.0.6"] },
