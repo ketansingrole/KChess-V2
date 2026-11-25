@@ -25,6 +25,7 @@ KChess is now a chess database too. Keep millions of games on your computer, fro
 - A game's menu → About opens a report on either player: how they score with each colour, their openings, their rating over time and their best wins.
 - A game's menu → Event table shows the tournament it was played in: who finished where, with tiebreaks and performance ratings, and for up to 16 players each one's result against every other. Click a result to open that game.
 - Practice → Repertoire → Check lists moves worth a look: in your databases, moves of yours few chose or that scored poorly; in your games, where you left your lines; in a player's downloaded games, what they play against it, unanswered first. One click adds the move you need.
+- Practice → Repertoire → From games makes a repertoire out of your games, or a player's you downloaded: the move played most each time and the common replies, ready to drill.
 - More filters on the Database page finds games by length and time control, by an ending they reach, like rook against bishop (R vs B), by a pawn structure, like an isolated queen pawn, or by pieces kept on squares, like a knight on d5 against a pawn on e6 (Nd5 vs e6).
 - You can copy games into another database, save them as a PGN file or delete them, one at a time or every game a search finds, and save a game from the analysis board into any database.
 - Tidy up removes games that came in twice and merges the spellings of one player's name, like "Carlsen, M" and "Carlsen, Magnus".

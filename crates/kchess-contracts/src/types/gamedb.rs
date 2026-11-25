@@ -381,6 +381,19 @@ pub struct GameDbRepertoireGames {
     pub gaps: Vec<GameDbRepertoireGap>,
 }
 
+/// A repertoire made from one player's games with one side (`gameDbRepertoireBuild`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbRepertoireBuilt {
+    /// Their games with that side from the standard start.
+    pub games: u64,
+    /// The moves it has.
+    pub moves: u64,
+    /// Its lines as PGN: their most played move at their turn, the other side's common replies
+    /// at its turn, the most played first.
+    pub pgn: String,
+}
+
 /// A move your games played where the repertoire has none: yours, where it plays another, or
 /// your opponent's, which it has no answer to. With the games that played it, how they ended
 /// for you and when the last one was played.

@@ -489,3 +489,55 @@ async fn a_repertoire_is_checked_against_a_players_games() {
     assert_eq!(refused.message, "Choose a player's games.");
     core.close().await;
 }
+
+/// A repertoire made from a player's games with Black: the other side's replies played in two
+/// games or more (1. e4 and 1. d4, not 1. c4), their most played answer to each (1...e5, not
+/// 1...c5) and nothing where no answer of theirs came twice (after 1. d4).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repertoire_is_made_from_a_players_games() {
+    let profile = tempfile::tempdir().expect("profile");
+    let sites = Sites::default();
+    sites.lichess.lock().unwrap().insert(
+        "rival".into(),
+        [
+            game("Ann", "Rival", "1-0", "1. e4 e5 2. Nf3 Nc6"),
+            game("Bo", "Rival", "0-1", "1. e4 e5 2. Nf3 Nf6"),
+            game("Cy", "Rival", "0-1", "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6"),
+            game("Ann", "Rival", "1/2-1/2", "1. e4 c5 2. Nf3"),
+            game("Bo", "Rival", "1-0", "1. e4 c5 2. Nc3"),
+            game("Cy", "Rival", "0-1", "1. d4 d5"),
+            game("Ann", "Rival", "0-1", "1. d4 Nf6 2. c4"),
+            game("Bo", "Rival", "0-1", "1. c4 e5"),
+            // With White: not the side asked for.
+            game("Rival", "Ann", "1-0", "1. e4 e6"),
+        ]
+        .concat(),
+    );
+    let fixture = sites.serve().await;
+    let (core, _) = open(profile.path(), &fixture.base);
+    ready(&core).await;
+    let installed = core
+        .call(
+            "gameDbPlayerInstall",
+            vec![json!({ "site": "lichess", "username": "Rival", "rated": false })],
+        )
+        .await
+        .expect("downloads");
+    let id = installed["database"]["id"].clone();
+    let built = core
+        .call("gameDbRepertoireBuild", vec![json!("black"), id])
+        .await
+        .expect("makes it");
+    assert_eq!((&built["games"], &built["moves"]), (&json!(8), &json!(5)));
+    let pgn = built["pgn"].as_str().expect("PGN");
+    assert!(
+        pgn.contains("1. e4 ( 1. d4 ) 1... e5 2. Nf3 Nc6 *"),
+        "{pgn}"
+    );
+
+    let refused = core
+        .call("gameDbRepertoireBuild", vec![json!("white"), json!("gone")])
+        .await
+        .expect_err("no such database");
+    assert_eq!(refused.message, "That database is not on this computer.");
+}
