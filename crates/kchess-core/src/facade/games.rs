@@ -37,8 +37,14 @@ impl GamesApi for Core {
 
     async fn insights(&self, query: InsightsQuery) -> Result<InsightsReport> {
         let now = now_ms() as f64;
+        let tablebases = self.tablebases.clone();
         self.database
-            .read_async(move |ctx| insights::insights(ctx.host, ctx.db, &query, now))
+            .read_async(move |ctx| {
+                let mut report = insights::insights(ctx.host, ctx.db, &query, now)?;
+                let tables = tablebases.tables();
+                report.endgames = insights::endgames(ctx.db, &query, now, tables.as_deref())?;
+                Ok(report)
+            })
             .await
     }
 

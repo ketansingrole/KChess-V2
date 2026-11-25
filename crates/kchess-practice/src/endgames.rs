@@ -1,6 +1,7 @@
 //! Practice → Endgames: the checkmate and endgame courses, the drills
 //! against Stockfish, and the endgames your own games let slip, found with the endgame
-//! tablebases (`gameDbYourEndgames`) and drilled the same way. The courses and drills are the shared data the Rust rules check
+//! tablebases (`gameDbYourEndgames`) and drilled the same way; Insights' endgame lines open them
+//! on the positions behind each line (`show_yours`). The courses and drills are the shared data the Rust rules check
 //! (`data/lessons.json`, `data/training.json`); finished chapters and drills are runs the core keeps.
 
 use kchess_contracts::calls;
@@ -112,6 +113,8 @@ pub struct Endgames {
     /// The endgames of your games, once looked through.
     yours: Option<YourEndgames>,
     your_drills: Option<Entity<EndgameDrills>>,
+    /// The positions (FEN) Your endgames was opened on, from Insights; all of them when empty.
+    only: Vec<String>,
     /// Whether there is Your games, which the card waits for.
     own: bool,
     _subscriptions: Vec<Subscription>,
@@ -138,6 +141,7 @@ impl Endgames {
             drills: None,
             yours: None,
             your_drills: None,
+            only: Vec::new(),
             own: Self::has_own(cx),
             _subscriptions: subscriptions,
             lesson: None,
@@ -229,10 +233,21 @@ impl Endgames {
         crate::prefs::set(cx, VIEW, view);
     }
 
+    /// Your endgames on `positions` (FEN) of them, or on all of them when none is listed.
+    pub(crate) fn show_yours(&mut self, positions: Vec<String>, cx: &mut Context<Self>) {
+        Self::open(YOURS, cx);
+        self.only = positions;
+        self.your_drills = None;
+        self.lesson = None;
+        self.child_subscription = None;
+        cx.notify();
+    }
+
     fn back(&mut self, cx: &mut Context<Self>) {
         Self::open(COURSES, cx);
         self.drills = None;
         self.your_drills = None;
+        self.only.clear();
         self.lesson = None;
         self.child_subscription = None;
         self.load(cx);
@@ -526,7 +541,18 @@ impl Render for Endgames {
             }
             if !yours.endgames.is_empty() {
                 let drills = self.your_drills.clone().unwrap_or_else(|| {
-                    let set: Vec<Drill> = yours.endgames.iter().map(your_drill).collect();
+                    // Those Insights opened it on, while Your endgames still lists them.
+                    let only: Vec<Drill> = yours
+                        .endgames
+                        .iter()
+                        .filter(|endgame| self.only.contains(&endgame.fen))
+                        .map(your_drill)
+                        .collect();
+                    let set: Vec<Drill> = if only.is_empty() {
+                        yours.endgames.iter().map(your_drill).collect()
+                    } else {
+                        only
+                    };
                     let drills = cx.new(|cx| EndgameDrills::of(set, vec![WINS, DRAWS], window, cx));
                     self.child_subscription = Some(cx.subscribe(&drills, Self::on_event));
                     self.your_drills = Some(drills.clone());

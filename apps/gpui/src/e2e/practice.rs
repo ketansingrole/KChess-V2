@@ -321,20 +321,71 @@ fn endgame_drills_open_and_return_to_the_courses(cx: &mut gpui_kit::TestAppConte
     assert!(!app.shows("chess-board"));
 }
 
+/// The fixture tablebases (KQ vs K and KR vs K) in `profile`, where the core finds them.
+pub(super) fn with_tablebases(profile: &std::path::Path) {
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/kchess-core/src/tablebase/fixtures");
+    let folder = profile.join("tablebases");
+    std::fs::create_dir_all(&folder).expect("the folder");
+    for name in ["KQvK.rtbw", "KQvK.rtbz", "KRvK.rtbw", "KRvK.rtbz"] {
+        std::fs::copy(fixtures.join(name), folder.join(name)).expect("a table");
+    }
+}
+
+/// Insights → Won endgames: the synced games that reached a won KR vs K, one won and one drawn
+/// after a rook left to be taken, are its line, which opens that position in Your endgames.
+#[gpui_kit::test]
+fn an_insights_endgame_opens_the_positions_it_let_go(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::set_up;
+    use crate::pages::insights::InsightsPage;
+    let fen = "8/8/8/8/8/8/1k6/R3K3 w - - 0 1";
+    let mut app = Harness::start_with(cx, with_tablebases);
+    let _lichess = app.connect_with("Endgamer", false, |session| {
+        session.synced = vec![
+            set_up("Kept0001", "Endgamer", true, fen, "Ra8 Kc2", Some("white")),
+            set_up("Slip0001", "Endgamer", true, fen, "Ra2+ Kxa2", None),
+        ];
+    });
+    app.wait_for_app("Your games", |cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .iter()
+            .any(|database| database.source == kchess_contracts::types::DatabaseSource::Own)
+    });
+    app.open("Insights");
+    app.wait_for("the synced games' report", |_, cx| {
+        crate::shell::view::<InsightsPage>(cx).is_some_and(|page| {
+            let page = page.read(cx);
+            page.settled() && page.report_total() == Some(2.)
+        })
+    });
+    let line = app.find(("insights-endgame-won", 0usize));
+    assert_eq!(line.label(), Some("KR vs K: 1 let go"));
+    app.click(("insights-endgame-won", 0usize));
+    app.find("drill-hint");
+    let drill = app.with_window(|_, cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).endgame_drills(cx))
+            .expect("the drills")
+            .read(cx)
+            .drill()
+            .clone()
+    });
+    assert_eq!((drill.fen.as_str(), drill.goal.as_str()), (fen, "win"));
+    assert_eq!(
+        drill.idea,
+        "Against Bob you played 1. Ra2+ here, which only draws."
+    );
+}
+
 /// Practice → Endgames → Your endgames: with the tablebases on disk, the KR vs K your game drew
 /// by leaving the rook to be taken is a drill from the position before that move, with White,
 /// to win; the game that kept the rook safe is not one.
 #[gpui_kit::test]
 fn your_endgames_replay_what_your_games_let_slip(cx: &mut gpui_kit::TestAppContext) {
-    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../crates/kchess-core/src/tablebase/fixtures");
-    let mut app = Harness::start_with(cx, |profile| {
-        let folder = profile.join("tablebases");
-        std::fs::create_dir_all(&folder).expect("the folder");
-        for name in ["KQvK.rtbw", "KQvK.rtbz", "KRvK.rtbw", "KRvK.rtbz"] {
-            std::fs::copy(fixtures.join(name), folder.join(name)).expect("a table");
-        }
-    });
+    let mut app = Harness::start_with(cx, with_tablebases);
     let fen = "8/8/8/8/8/8/1k6/R3K3 w - - 0 1";
     for (id, moves) in [("slip", &["a1a2", "b2a2"][..]), ("safe", &["a1a8"][..])] {
         let game = serde_json::json!({

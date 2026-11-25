@@ -1060,8 +1060,20 @@ fn connect_showcase(
     profile: &Path,
     username: &str,
 ) {
+    connect_showcase_with(cx, window, profile, username, Vec::new());
+}
+
+/// `connect_showcase`, with `synced` among its games (`fake_lichess::set_up`).
+fn connect_showcase_with(
+    cx: &mut HeadlessAppContext,
+    window: AnyWindowHandle,
+    profile: &Path,
+    username: &str,
+    synced: Vec<serde_json::Value>,
+) {
     let (code, session) = super::fake_lichess::session(username, false);
     session.lock().showcase = true;
+    session.lock().synced = synced;
     let opened = profile.join("opened-urls.txt");
     // The login pages opened so far: a second account's is the one opened after them.
     let logins = || -> Vec<String> {
@@ -1953,6 +1965,68 @@ fn repertoire_opponent() {
             .expect("a screenshot")
             .save(out.join(format!("repertoire-opponent-{name}.png")))
             .expect("the screenshot saves");
+    }
+}
+
+/// Insights with the showcase account's games and a few endgames from set-up positions: won and
+/// drawn ones by their pieces, in both appearances:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::insights_endgames -- --ignored`
+/// writes `<dir>/insights-endgames-<appearance>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn insights_endgames() {
+    use super::fake_lichess::set_up;
+    let out = kchess_host::env::var("KCHESS_SCREENSHOTS")
+        .expect("KCHESS_SCREENSHOTS names the output folder");
+    let out = Path::new(&out).to_path_buf();
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    const ROOK: &str = "8/8/8/8/8/8/1k6/R3K3 w - - 0 1";
+    const QUEEN: &str = "8/8/8/8/8/2k5/8/1Q2K3 w - - 0 1";
+    const HELD: &str = "8/8/8/8/8/8/kR6/4K3 b - - 0 1";
+    let me = "Rattiestword5";
+    let synced = || {
+        vec![
+            set_up("Rook0001", me, true, ROOK, "Ra8 Kc2", Some("white")),
+            set_up("Rook0002", me, true, ROOK, "Ra8 Kc3", Some("white")),
+            set_up("Rook0003", me, true, ROOK, "Ra2+ Kxa2", None),
+            set_up("Queen001", me, true, QUEEN, "Qb2+ Kxb2", None),
+            set_up("Queen002", me, true, QUEEN, "Qb8 Kc2", Some("white")),
+            set_up("Held0001", me, false, HELD, "Kxb2", None),
+            set_up("Held0002", me, false, HELD, "Ka3 Rb8", Some("white")),
+        ]
+    };
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        super::practice::with_tablebases(profile.path());
+        let (mut cx, window) = start(profile.path(), 1320., 1500.);
+        cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
+        connect_showcase_with(&mut cx, window, profile.path(), me, synced());
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Insights, window, cx)
+        })
+        .expect("the window");
+        let started = std::time::Instant::now();
+        while !cx.update(|cx| {
+            crate::shell::view::<crate::pages::insights::InsightsPage>(cx).is_some_and(|page| {
+                let page = page.read(cx);
+                page.settled() && page.report_total().is_some_and(|total| total > 7.)
+            })
+        }) {
+            assert!(started.elapsed() < Duration::from_secs(30), "the report");
+            settle(&mut cx, window);
+        }
+        for _ in 0..8 {
+            std::thread::sleep(Duration::from_millis(60));
+            settle(&mut cx, window);
+        }
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("insights-endgames-{name}.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::quit::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
     }
 }
 
