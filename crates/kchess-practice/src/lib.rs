@@ -28,6 +28,7 @@ pub mod mistakes;
 pub mod repertoire;
 pub mod run;
 mod square_color;
+pub mod today;
 mod under_board;
 
 use gpui_kit::component::v_flex;
@@ -301,6 +302,17 @@ impl PracticePage {
             .get_or_insert_with(|| cx.new(endgames::Endgames::new))
             .clone();
         endgames.update(cx, |endgames, cx| endgames.show_yours(positions, cx));
+        cx.notify();
+    }
+
+    /// Practice → Endgames → Missed endgames.
+    pub(crate) fn missed_endgames(&mut self, cx: &mut Context<Self>) {
+        Tab::Endgames.store(cx);
+        let endgames = self
+            .endgames
+            .get_or_insert_with(|| cx.new(endgames::Endgames::new))
+            .clone();
+        endgames.update(cx, |endgames, cx| endgames.show_due(cx));
         cx.notify();
     }
 
@@ -586,6 +598,13 @@ pub fn open_tab(tab: Tab, window: &mut Window, cx: &mut App) {
 pub fn your_endgames(positions: Vec<String>, window: &mut Window, cx: &mut App) {
     kchess_nav::shell::show::<PracticePage>(window, cx, move |practice, _, cx| {
         practice.your_endgames(positions, cx)
+    });
+}
+
+/// The missed endgames due again, on Practice.
+pub fn missed_endgames(window: &mut Window, cx: &mut App) {
+    kchess_nav::shell::show::<PracticePage>(window, cx, |practice, _, cx| {
+        practice.missed_endgames(cx)
     });
 }
 

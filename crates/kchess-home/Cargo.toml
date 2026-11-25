@@ -16,7 +16,11 @@ kchess-board.workspace = true
 kchess-history.workspace = true
 kchess-contracts.workspace = true
 kchess-domain.workspace = true
+# The clock what is due is read against.
+kchess-games.workspace = true
 kchess-nav.workspace = true
+# Today's practice: what each practice has due, and where it opens.
+kchess-practice.workspace = true
 kchess-ui.workspace = true
 # Pinned with the app's (apps/gpui/Cargo.toml).
 gpui-kit = "=0.11.0"

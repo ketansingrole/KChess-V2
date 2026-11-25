@@ -52,6 +52,7 @@ use kchess_ui::icon;
 
 pub mod check;
 mod lines;
+pub(crate) use lines::due_in_study;
 pub mod your_games;
 use lines::*;
 
@@ -1844,6 +1845,15 @@ impl Render for Repertoire {
 /// Practice → Repertoire on a study.
 pub fn train_study(id: String, window: &mut Window, cx: &mut App) {
     crate::prefs::set(cx, STUDY, id);
+    super::open_tab(super::Tab::Openings, window, cx);
+}
+
+/// Practice → Repertoire on a study's lines for `color`, every chapter, where its due lines
+/// come first (Home's Today's practice).
+pub fn review_study(id: String, color: Color, window: &mut Window, cx: &mut App) {
+    crate::prefs::set(cx, STUDY, id);
+    crate::prefs::set(cx, COLOR, kchess_domain::color::name(color));
+    crate::prefs::set(cx, CHAPTER, ALL_CHAPTERS);
     super::open_tab(super::Tab::Openings, window, cx);
 }
 
