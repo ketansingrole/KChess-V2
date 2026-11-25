@@ -9,6 +9,10 @@
 //! both sides', found by position (so a transposition stays in it), until a move it does not
 //! have: one of yours, where it plays another, or your opponent's, which it has no answer to.
 //! Your games are a few thousand, so replaying each once costs less than a lookup a position.
+//!
+//! A repertoire is built from the games too (`gameDbRepertoireBuild`): the opening moves of
+//! one player's games with one side counted move by move, their most played move kept where it
+//! is their turn and the other side's common replies where it is not.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,6 +36,16 @@ use kchess_domain::training::repertoire_check::{self, Counts, Verdict};
 pub const OTHERS: usize = 3;
 /// The most places your games left a repertoire that an answer lists.
 pub const MOST_GAPS: usize = 100;
+/// How deep a built repertoire goes, in half-moves.
+pub const BUILT_PLIES: usize = 20;
+/// The fewest games a move of a built repertoire was played in.
+pub const BUILT_GAMES: u64 = 2;
+/// The most replies of the other side a built repertoire keeps at a position.
+pub const BUILT_REPLIES: usize = 4;
+/// The smallest share of a position's games, in percent, a reply it keeps was played in.
+pub const BUILT_SHARE: u64 = 5;
+/// The most moves a built repertoire holds.
+pub const BUILT_MOVES: usize = 2_000;
 
 fn counts(stats: &Stats) -> Counts {
     Counts {
@@ -322,4 +336,108 @@ fn follow(
         .map(|gap| gap.found)
         .collect();
     Ok((games, reached, gaps))
+}
+
+/// The games through a position of a built repertoire, and those through each move from it.
+#[derive(Default)]
+struct Counted {
+    games: u64,
+    next: HashMap<u16, Counted>,
+}
+
+/// A repertoire of `color` from the games in `db` where one of `names` (in any case) had it,
+/// from the standard start: at most `BUILT_PLIES` deep, each move played in `BUILT_GAMES` games
+/// at least. At their turn their most played move; at the other side's, its replies played in
+/// `BUILT_SHARE` percent of the games there, at most `BUILT_REPLIES`, the most played first (the
+/// main line). Answers the games and the tree, at most `BUILT_MOVES` moves.
+pub fn build(
+    db: &Connection,
+    color: Color,
+    names: &[String],
+    stop: &AtomicBool,
+) -> Result<(u64, kchess_domain::tree::TreeNode)> {
+    let names: HashSet<String> = names
+        .iter()
+        .map(|name| name.trim().to_lowercase())
+        .collect();
+    let start = rules::default_position(shakmaty::variant::Variant::Chess);
+    let start_key = gamedb::position_key(&start);
+    let mut statement = db
+        .prepare(
+            "SELECT w.name, b.name, g.fen, g.moves FROM games g
+             JOIN players w ON w.id = g.white JOIN players b ON b.id = g.black
+             WHERE g.import_id <= ?1",
+        )
+        .sql()?;
+    let mut rows = statement.query([search::visible(db)?]).sql()?;
+    let mut games = 0;
+    let mut root = Counted::default();
+    while let Some(row) = rows.next().sql()? {
+        if stop.load(Ordering::Relaxed) {
+            return Err(CoreError::new("Making the repertoire stopped."));
+        }
+        let player: String = row.get(if color == Color::White { 0 } else { 1 }).sql()?;
+        if !names.contains(&player.trim().to_lowercase()) {
+            continue;
+        }
+        let fen: Option<String> = row.get(2).sql()?;
+        let code: Vec<u8> = row.get(3).sql()?;
+        // Only games from the standard start: a repertoire starts there.
+        let Some((_, moves)) = gamedb::start_of(fen.as_deref())
+            .filter(|from| gamedb::position_key(from) == start_key)
+            .and_then(|from| Some(((), gamedb::decode_line(&from, &code)?)))
+        else {
+            continue;
+        };
+        games += 1;
+        let mut at = &mut root;
+        at.games += 1;
+        for m in moves.iter().take(BUILT_PLIES) {
+            at = at.next.entry(gamedb::pack_move(m)).or_default();
+            at.games += 1;
+        }
+    }
+    let mut tree = kchess_domain::tree::TreeNode::new(None);
+    let mut moves = 0;
+    grow(&mut tree, "", &start, &root, color, &mut moves);
+    Ok((games, tree))
+}
+
+/// Adds the moves `counted` keeps from `pos` (at `path` of `tree`) and the lines after them.
+fn grow(
+    tree: &mut kchess_domain::tree::TreeNode,
+    path: &str,
+    pos: &shakmaty::variant::VariantPosition,
+    counted: &Counted,
+    color: Color,
+    moves: &mut usize,
+) {
+    let mut next: Vec<(u16, &Counted)> = counted
+        .next
+        .iter()
+        .filter(|(_, after)| after.games >= BUILT_GAMES)
+        .map(|(mv, after)| (*mv, after))
+        .collect();
+    next.sort_by_key(|(mv, after)| (std::cmp::Reverse(after.games), *mv));
+    if shakmaty::Position::turn(pos) == color {
+        next.truncate(1);
+    } else {
+        next.retain(|(_, after)| after.games * 100 >= counted.games * BUILT_SHARE);
+        next.truncate(BUILT_REPLIES);
+    }
+    for (mv, after) in next {
+        if *moves >= BUILT_MOVES {
+            return;
+        }
+        let Some(m) = gamedb::unpack_move(pos, mv) else {
+            continue;
+        };
+        let Some(child) = tree.add_move(path, &rules::make_uci(&m)) else {
+            continue;
+        };
+        *moves += 1;
+        let mut played = pos.clone();
+        shakmaty::Position::play_unchecked(&mut played, m);
+        grow(tree, &child, &played, after, color, moves);
+    }
 }
