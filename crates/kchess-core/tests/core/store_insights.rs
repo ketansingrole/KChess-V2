@@ -464,3 +464,88 @@ fn time_use_averages_seconds_per_move_and_clocks_over_the_games() {
         );
     }
 }
+
+/// Endgames by their first position at the player's move the tablebases decide: a won KR vs K
+/// converted once and let go once (its position listed), a drawn K vs KR held once and lost
+/// once. Games that start from a set-up position replay from their PGN's `FEN`; without the
+/// tables nothing is decided, and a variant has no endgames.
+#[test]
+fn endgames_count_the_won_and_drawn_positions_by_their_pieces() {
+    use shakmaty::Chess;
+    use shakmaty_syzygy::Tablebase;
+
+    const WON: &str = "8/8/8/8/8/8/1k6/R3K3 w - - 0 1";
+    const DRAWN: &str = "8/8/8/8/8/8/kR6/4K3 b - - 0 1";
+    let store = fresh();
+    let set_up = |id: &str, fen: &str, color: &str, winner: Value, moves: &str, day: f64| {
+        game(
+            id,
+            &[
+                ("createdAt", json!(NOW - day * DAY)),
+                ("color", json!(color)),
+                ("winner", winner),
+                ("status", json!("draw")),
+                ("moves", json!(moves)),
+                (
+                    "pgn",
+                    json!(format!(
+                        "[Event \"Casual\"]\n[SetUp \"1\"]\n[FEN \"{fen}\"]\n\n{moves} *\n"
+                    )),
+                ),
+            ],
+        )
+    };
+    save_games(
+        &store,
+        vec![
+            set_up("Converted", WON, "white", json!("white"), "Ra8 Kc2", 1.0),
+            set_up("WinLetGo", WON, "white", Value::Null, "Ra2+ Kxa2", 2.0),
+            set_up("Held", DRAWN, "black", Value::Null, "Kxb2", 3.0),
+            set_up("DrawLetGo", DRAWN, "black", json!("white"), "Ka3 Rb8", 4.0),
+            game("Opening", &[("moves", json!("e4 e5"))]),
+        ],
+    );
+    let mut tables = Tablebase::<Chess>::new();
+    tables
+        .add_directory(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tablebase/fixtures"),
+        )
+        .expect("the fixture tables");
+    let endgames = |query: Value, tables: Option<&Tablebase<Chess>>| {
+        let query = insights_query(&query);
+        store
+            .db
+            .read(|c| insights::endgames(c.db, &query, NOW, tables))
+            .expect("endgames")
+    };
+    let report = endgames(json!({ "account": "Alice" }), Some(&tables)).expect("standard");
+    assert_eq!(
+        json!(report),
+        json!({
+            "tables": true,
+            "games": 5,
+            "won": [{
+                "material": "KR vs K",
+                "record": { "total": 2, "win": 1, "loss": 0, "draw": 1 },
+                "letGo": [WON],
+            }],
+            "drawn": [{
+                "material": "K vs KR",
+                "record": { "total": 2, "win": 0, "loss": 1, "draw": 1 },
+                "letGo": [DRAWN],
+            }],
+        })
+    );
+    let none = endgames(json!({ "account": "Alice" }), None).expect("standard");
+    assert_eq!(
+        json!(none),
+        json!({ "tables": false, "games": 0, "won": [], "drawn": [] })
+    );
+    assert_eq!(
+        endgames(
+            json!({ "account": "Alice", "variant": "atomic" }),
+            Some(&tables)
+        ),
+        None
+    );
+}

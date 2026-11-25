@@ -293,6 +293,17 @@ impl PracticePage {
         }
     }
 
+    /// Practice → Endgames → Your endgames, on `positions` (FEN) of them.
+    pub(crate) fn your_endgames(&mut self, positions: Vec<String>, cx: &mut Context<Self>) {
+        Tab::Endgames.store(cx);
+        let endgames = self
+            .endgames
+            .get_or_insert_with(|| cx.new(endgames::Endgames::new))
+            .clone();
+        endgames.update(cx, |endgames, cx| endgames.show_yours(positions, cx));
+        cx.notify();
+    }
+
     /// Show `tab`, as its pill does.
     pub fn show_tab(&mut self, tab: Tab, _: &mut Window, cx: &mut Context<Self>) {
         tab.store(cx);
@@ -568,6 +579,13 @@ impl PageView for PracticePage {
 pub fn open_tab(tab: Tab, window: &mut Window, cx: &mut App) {
     kchess_nav::shell::show::<PracticePage>(window, cx, move |practice, window, cx| {
         practice.show_tab(tab, window, cx)
+    });
+}
+
+/// Your endgames on `positions` (FEN) of them, on Practice.
+pub fn your_endgames(positions: Vec<String>, window: &mut Window, cx: &mut App) {
+    kchess_nav::shell::show::<PracticePage>(window, cx, move |practice, _, cx| {
+        practice.your_endgames(positions, cx)
     });
 }
 

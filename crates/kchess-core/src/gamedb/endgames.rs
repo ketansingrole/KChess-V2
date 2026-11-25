@@ -10,7 +10,7 @@ use rusqlite::Connection;
 use shakmaty::fen::Fen;
 use shakmaty::san::SanPlus;
 use shakmaty::variant::VariantPosition;
-use shakmaty::{Chess, Color, EnPassantMode, Position as _, Role};
+use shakmaty::{Chess, Color, EnPassantMode, Move, Position as _, Role};
 use shakmaty_syzygy::Tablebase;
 
 use super::search;
@@ -40,6 +40,110 @@ pub fn material(pos: &Chess, color: Color) -> String {
         text
     };
     format!("{} vs {}", side(color), side(!color))
+}
+
+/// What one of your games came to in the tablebases.
+#[derive(Default)]
+pub struct Scanned {
+    /// The first position at your move the tables decide: its outcome for you (2 won, 0 drawn,
+    /// -2 lost) and its pieces.
+    pub reached: Option<(i8, String)>,
+    /// The first of your moves that let a win or a draw go.
+    pub slip: Option<Slip>,
+}
+
+/// A move of yours that let a win or a draw go.
+pub struct Slip {
+    /// The position before it.
+    pub pos: Chess,
+    pub played: Move,
+    /// "win" or "draw", and what it became: "draw" or "loss".
+    pub goal: &'static str,
+    pub became: &'static str,
+}
+
+impl Slip {
+    /// The position as written in Your endgames, and in Insights' endgames that lead there.
+    pub fn fen(&self) -> String {
+        Fen::from_position(&self.pos, EnPassantMode::Legal).to_string()
+    }
+
+    /// The slip as Your endgames lists it, of `game` against `opponent` on `date`.
+    fn endgame(
+        self,
+        game: String,
+        you: Color,
+        opponent: String,
+        date: Option<String>,
+    ) -> YourEndgame {
+        YourEndgame {
+            game,
+            fen: self.fen(),
+            side: if you == Color::White {
+                "white"
+            } else {
+                "black"
+            }
+            .into(),
+            goal: self.goal.into(),
+            san: SanPlus::from_move_and_play_unchecked(&mut self.pos.clone(), self.played)
+                .to_string(),
+            became: self.became.into(),
+            material: material(&self.pos, you),
+            number: self.pos.fullmoves().get(),
+            opponent,
+            date,
+        }
+    }
+}
+
+/// `moves` from `pos`, played by `you` and the opponent, judged at each of your moves from five
+/// pieces or fewer: the first position the tables decide, and the first move that let a win or
+/// a draw go (what follows it comes of it).
+pub fn scan(
+    mut pos: Chess,
+    moves: &[Move],
+    you: Color,
+    tables: &Tablebase<Chess>,
+) -> Result<Scanned> {
+    let judge = |pos: &Chess| {
+        outcome(tables, pos)
+            .map_err(|cause| CoreError::new(format!("A tablebase probe failed: {cause}")))
+    };
+    let mut scanned = Scanned::default();
+    for m in moves {
+        if pos.turn() == you && pos.board().occupied().count() <= crate::tablebase::PIECES as usize
+        {
+            let before = judge(&pos)?;
+            if scanned.reached.is_none()
+                && let Some(decided @ (2 | 0 | -2)) = before
+            {
+                scanned.reached = Some((decided, material(&pos, you)));
+            }
+            if matches!(before, Some(2 | 0)) {
+                let mut after = pos.clone();
+                after.play_unchecked(*m);
+                // After your move it is the opponent's turn: their outcome, turned round.
+                let slipped = match (before, judge(&after)?.map(|theirs| -theirs)) {
+                    (Some(2), Some(-2)) => Some(("win", "loss")),
+                    (Some(2), Some(now)) if now <= 0 => Some(("win", "draw")),
+                    (Some(0), Some(-2)) => Some(("draw", "loss")),
+                    _ => None,
+                };
+                if let Some((goal, became)) = slipped {
+                    scanned.slip = Some(Slip {
+                        pos,
+                        played: *m,
+                        goal,
+                        became,
+                    });
+                    return Ok(scanned);
+                }
+            }
+        }
+        pos.play_unchecked(*m);
+    }
+    Ok(scanned)
 }
 
 /// The games of Your games (`db`) where one of `names` (in any case) played, the newest first,
@@ -84,50 +188,12 @@ pub fn your_endgames(
         else {
             continue;
         };
-        let VariantPosition::Chess(mut pos) = start else {
+        let VariantPosition::Chess(pos) = start else {
             continue;
         };
-        for m in moves {
-            if pos.turn() == you
-                && pos.board().occupied().count() <= crate::tablebase::PIECES as usize
-            {
-                let mut after = pos.clone();
-                after.play_unchecked(m);
-                let judge = |pos: &Chess| {
-                    outcome(tables, pos).map_err(|cause| {
-                        CoreError::new(format!("A tablebase probe failed: {cause}"))
-                    })
-                };
-                // After your move it is the opponent's turn: their outcome, turned round.
-                let slipped = match (judge(&pos)?, judge(&after)?.map(|theirs| -theirs)) {
-                    (Some(2), Some(-2)) => Some(("win", "loss")),
-                    (Some(2), Some(now)) if now <= 0 => Some(("win", "draw")),
-                    (Some(0), Some(-2)) => Some(("draw", "loss")),
-                    _ => None,
-                };
-                if let Some((goal, became)) = slipped {
-                    let id: i64 = row.get(0).sql()?;
-                    found.push(YourEndgame {
-                        game: id.to_string(),
-                        fen: Fen::from_position(&pos, EnPassantMode::Legal).to_string(),
-                        side: if you == Color::White {
-                            "white"
-                        } else {
-                            "black"
-                        }
-                        .into(),
-                        goal: goal.into(),
-                        san: SanPlus::from_move_and_play_unchecked(&mut pos.clone(), m).to_string(),
-                        became: became.into(),
-                        material: material(&pos, you),
-                        number: pos.fullmoves().get(),
-                        opponent,
-                        date: row.get(5).sql()?,
-                    });
-                    break;
-                }
-            }
-            pos.play_unchecked(m);
+        let id: i64 = row.get(0).sql()?;
+        if let Some(slip) = scan(pos, &moves, you, tables)?.slip {
+            found.push(slip.endgame(id.to_string(), you, opponent, row.get(5).sql()?));
         }
         if found.len() >= MOST {
             break;

@@ -85,6 +85,9 @@ pub struct Session {
     pub inbox: Vec<Value>,
     /// The account's game download waits until this is cleared: a sync still running.
     pub hold_games: bool,
+    /// The games the account's download sends (after the showcase's), as Lichess's export
+    /// writes them (`set_up`); none for most tests.
+    pub synced: Vec<Value>,
     /// `account/playing` waits until this is cleared: the check for a game in progress still
     /// running.
     pub hold_playing: bool,
@@ -374,10 +377,12 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
             Showcase::Games(name) => {
                 // The download's own login holds it: tests share the server, and several sign in
                 // as the showcase player at once, each with its own `hold_games`.
+                let mut games = showcase_games(&name);
                 if let Some(session) = &session {
                     hold_games(session);
+                    games.extend(session.lock().synced.clone());
                 }
-                ndjson_lines(out, &showcase_games(&name))
+                ndjson_lines(out, &games)
             }
         };
     }
@@ -606,7 +611,9 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
             return reply(out, &showcase_history());
         }
         if path.to_lowercase() == format!("/api/games/user/{name}") {
-            return ndjson_lines(out, &showcase_games(&username));
+            let mut games = showcase_games(&username);
+            games.extend(session.lock().synced.clone());
+            return ndjson_lines(out, &games);
         }
     }
     // The account trains in `TRAINED_THEME` too: a batch of one puzzle, numbered on each draw, and
@@ -808,7 +815,8 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
         }
         ("GET", p) if p.starts_with("/api/games/user/") => {
             hold_games(&session);
-            ndjson(out)
+            let synced = session.lock().synced.clone();
+            ndjson_lines(out, &synced)
         }
         ("POST", "/api/games/export/_ids") => ndjson(out),
         _ => not_found(out),
@@ -1436,6 +1444,61 @@ fn showcase_history() -> Value {
 }
 
 /// The account's latest games, newest first: mostly Blitz, a few Rapid, all openings sound.
+/// A finished game of `account`'s against Bob from the set-up position `fen`, as Lichess's export
+/// writes it: with White when `white`, its moves `sans` and its `winner` (none a draw).
+pub fn set_up(
+    id: &str,
+    account: &str,
+    white: bool,
+    fen: &str,
+    sans: &str,
+    winner: Option<&str>,
+) -> Value {
+    let result = match winner {
+        Some("white") => "1-0",
+        Some(_) => "0-1",
+        None => "1/2-1/2",
+    };
+    let you = json!({ "user": { "name": account, "id": account.to_lowercase() }, "rating": 1500 });
+    let bob = json!({ "user": { "name": "Bob", "id": "bob" }, "rating": 1500 });
+    let (players, names) = if white {
+        (json!({ "white": you, "black": bob }), (account, "Bob"))
+    } else {
+        (json!({ "white": bob, "black": you }), ("Bob", account))
+    };
+    // Numbered as PGN numbers them, from move 1 with the side to move in `fen`.
+    let black_first = fen.contains(" b ");
+    let movetext: Vec<String> = sans
+        .split_whitespace()
+        .enumerate()
+        .map(|(ply, san)| {
+            let ply = ply + usize::from(black_first);
+            match (ply % 2, ply) {
+                (0, _) => format!("{}. {san}", ply / 2 + 1),
+                (_, 1) if black_first => format!("1... {san}"),
+                _ => san.to_string(),
+            }
+        })
+        .collect();
+    let mut game = json!({
+        "id": id, "rated": false, "variant": "fromPosition", "speed": "blitz", "perf": "blitz",
+        "createdAt": 1_761_091_200_000_i64, "lastMoveAt": 1_761_091_260_000_i64,
+        "status": if winner.is_some() { "mate" } else { "draw" },
+        "players": players, "initialFen": fen, "moves": sans,
+        "pgn": format!(
+            "[White \"{}\"]\n[Black \"{}\"]\n[Result \"{result}\"]\n[SetUp \"1\"]\n\
+             [FEN \"{fen}\"]\n\n{} {result}\n",
+            names.0,
+            names.1,
+            movetext.join(" ")
+        ),
+    });
+    if let Some(winner) = winner {
+        game["winner"] = json!(winner);
+    }
+    game
+}
+
 fn showcase_games(username: &str) -> Vec<Value> {
     const OPPONENTS: [&str; 12] = [
         "yrod_doma",

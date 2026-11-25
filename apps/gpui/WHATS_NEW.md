@@ -29,7 +29,7 @@ KChess is now a chess database too. Keep millions of games on your computer, fro
 - More filters on the Database page finds games by length and time control, by an ending they reach, like rook against bishop (R vs B), by a pawn structure, like an isolated queen pawn, or by pieces kept on squares, like a knight on d5 against a pawn on e6 (Nd5 vs e6).
 - You can copy games into another database, save them as a PGN file or delete them, one at a time or every game a search finds, and save a game from the analysis board into any database.
 - Tidy up removes games that came in twice and merges the spellings of one player's name, like "Carlsen, M" and "Carlsen, Magnus".
-- Practice → Endgames → Your endgames finds the endgames in your games where a move threw away a win or a draw, checked with the endgame tablebases, and lets you play each one again until you get it right.
+- Practice → Endgames → Your endgames finds where a move in your games threw away a won or drawn endgame, checked with the endgame tablebases, and lets you replay it until you get it right. Insights shows how often you win won endgames and hold drawn ones, like KR vs K.
 - The endgame tablebases download in Settings → Storage, so the analysis board shows how any position with up to five pieces ends, with no connection.
 
 ### Changed
