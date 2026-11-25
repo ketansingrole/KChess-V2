@@ -1,5 +1,6 @@
-//! What a deep search of a game database looks for in a game's moves: a material balance or a pawn
-//! structure it reaches and keeps, and the speed its time control was played at. Each is
+//! What a deep search of a game database looks for in a game's moves: a material balance, a pawn
+//! structure or pieces on given squares that it reaches and keeps, and the speed its time
+//! control was played at. Each is
 //! checked by replaying the game; a balance or a structure counts once it lasts `HOLD` plies (a
 //! capture made and taken back does not reach one), or holds when the game ends.
 
@@ -165,6 +166,90 @@ impl Structure {
     }
 }
 
+/// Pieces on squares: one side's against the other's ("Nd5 e4 vs e6"), with either colour on
+/// either side. The squares are named from the first side's view, so "Nd5 vs e6" is also a black
+/// knight on d4 against a white pawn on e3.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Placement {
+    sides: [Vec<(Role, Square)>; 2],
+}
+
+/// The most pieces a placement names.
+const MOST_PLACED: usize = 32;
+
+impl Placement {
+    /// "Nd5 e4 vs e6", "nd5 v e6", "Bg5": each side's pieces as SAN names them (a pawn by its
+    /// square alone, or with P), the sides parted by "vs" or "v". None for anything else, for no
+    /// pieces, for two on one square, or for a pawn on the first or last rank.
+    pub fn parse(text: &str) -> Option<Placement> {
+        let mut sides: [Vec<(Role, Square)>; 2] = [Vec::new(), Vec::new()];
+        let mut side = 0;
+        for token in text
+            .split(|c: char| c.is_whitespace() || c == ',')
+            .filter(|token| !token.is_empty())
+        {
+            if token.eq_ignore_ascii_case("vs") || token.eq_ignore_ascii_case("v") {
+                if side == 1 {
+                    return None;
+                }
+                side = 1;
+                continue;
+            }
+            let (role, square) = match token.len() {
+                2 => (Role::Pawn, token),
+                3 => {
+                    let role = match token.chars().next()?.to_ascii_uppercase() {
+                        'K' => Role::King,
+                        'Q' => Role::Queen,
+                        'R' => Role::Rook,
+                        'B' => Role::Bishop,
+                        'N' => Role::Knight,
+                        'P' => Role::Pawn,
+                        _ => return None,
+                    };
+                    (role, token.get(1..)?)
+                }
+                _ => return None,
+            };
+            let square: Square = square.to_ascii_lowercase().parse().ok()?;
+            if role == Role::Pawn && matches!(square.rank(), Rank::First | Rank::Eighth) {
+                return None;
+            }
+            sides[side].push((role, square));
+        }
+        let all: Vec<Square> = sides.iter().flatten().map(|(_, square)| *square).collect();
+        let mut distinct = all.clone();
+        distinct.sort();
+        distinct.dedup();
+        if all.is_empty() || all.len() > MOST_PLACED || distinct.len() != all.len() {
+            return None;
+        }
+        Some(Placement { sides })
+    }
+
+    /// Whether `board` has it with `color` as the first side.
+    fn of(&self, board: &Board, color: Color) -> bool {
+        self.sides
+            .iter()
+            .zip([color, !color])
+            .all(|(pieces, side)| {
+                pieces.iter().all(|&(role, square)| {
+                    let square = if color.is_white() {
+                        square
+                    } else {
+                        square.flip_vertical()
+                    };
+                    board.piece_at(square) == Some(role.of(side))
+                })
+            })
+    }
+
+    /// Whether `board` has it, either colour on either side.
+    pub fn on(&self, board: &Board) -> bool {
+        self.of(board, Color::White) || self.of(board, Color::Black)
+    }
+}
+
 /// Whether the game from `start` with the encoded moves `code` reaches a position `test` keeps
 /// true for `HOLD` plies, or until the game ends. `changes` says which moves can change the
 /// answer, so `test` is asked again only after them. None when the code is damaged.
@@ -251,6 +336,44 @@ mod tests {
             .into_position(CastlingMode::Standard)
             .unwrap();
         pos.board().clone()
+    }
+
+    #[test]
+    fn pieces_are_written_as_san_names_them() {
+        let outpost = Placement::parse("Nd5 vs e6").unwrap();
+        assert_eq!(Placement::parse(" nd5  V  E6 "), Some(outpost.clone()));
+        assert_eq!(Placement::parse("Nd5 vs Pe6"), Some(outpost.clone()));
+        assert!(
+            Placement::parse("Bb5 b4").is_some(),
+            "a bishop and a pawn on the b-file"
+        );
+        assert!(
+            Placement::parse("vs e6").is_some(),
+            "the second side's alone"
+        );
+        assert_eq!(Placement::parse("Nd5, e4"), Placement::parse("Nd5 e4"));
+        for refused in [
+            "",
+            "vs",
+            "Nd9",
+            "Xd5",
+            "Nd5 vs vs e6",
+            "e8",
+            "Nd5 vs Bd5",
+            "d5d6",
+        ] {
+            assert_eq!(Placement::parse(refused), None, "{refused:?}");
+        }
+
+        // A white knight on d5 against a black pawn on e6, or the same with the colours swapped:
+        // a black knight on d4 against a white pawn on e3.
+        let white = board("4k3/8/4p3/3N4/8/8/8/4K3 w - - 0 1");
+        let black = board("4k3/8/8/8/3n4/4P3/8/4K3 w - - 0 1");
+        assert!(outpost.on(&white));
+        assert!(outpost.on(&black));
+        // Each side's own pieces: a black knight on d5 is not the outpost.
+        assert!(!outpost.on(&board("4k3/8/4p3/3n4/8/8/8/4K3 w - - 0 1")));
+        assert!(!outpost.on(&board("4k3/8/8/3N4/8/8/8/4K3 w - - 0 1")));
     }
 
     #[test]

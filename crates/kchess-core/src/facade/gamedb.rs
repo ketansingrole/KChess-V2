@@ -21,7 +21,7 @@ use crate::gamedb::player;
 fn selection(games: Option<GameDbGameIds>, search: Option<GameDbQuery>) -> Result<Selection> {
     match (games, search) {
         (Some(games), None) => Ok(Selection::Games(games.0)),
-        (None, Some(search)) => Ok(Selection::Search(search)),
+        (None, Some(search)) => Ok(Selection::Search(Box::new(search))),
         _ => Err(CoreError::new("Choose the games, or a search.")),
     }
 }

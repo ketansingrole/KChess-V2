@@ -2008,7 +2008,7 @@ const SHAPED: &str = r#"[White "Carlsbad"]
 "#;
 
 #[tokio::test]
-async fn a_deep_search_keeps_the_games_of_a_length_speed_material_and_structure() {
+async fn a_deep_search_keeps_the_games_of_a_length_speed_material_structure_and_pieces() {
     let (profile, files) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let (games, _) = service(profile.path());
     let id = imported(&games, source(files.path(), "s.pgn", SHAPED.as_bytes()))
@@ -2028,7 +2028,7 @@ async fn a_deep_search_keeps_the_games_of_a_length_speed_material_and_structure(
         found
     };
     let base = || query(&id);
-    let cases: [(GameDbQuery, &[&str]); 13] = [
+    let cases: [(GameDbQuery, &[&str]); 18] = [
         // One game to replay goes through the caller's own connection.
         (
             GameDbQuery {
@@ -2127,6 +2127,44 @@ async fn a_deep_search_keeps_the_games_of_a_length_speed_material_and_structure(
             },
             &[],
         ),
+        (
+            GameDbQuery {
+                pieces: Some("Na4".into()),
+                ..base()
+            },
+            &["Isolated"],
+        ),
+        // Black's bishop on g4 is White's on g5 with the colours swapped, kept to the end.
+        (
+            GameDbQuery {
+                pieces: Some("Bg5".into()),
+                ..base()
+            },
+            &["Carlsbad", "Isolated"],
+        ),
+        (
+            GameDbQuery {
+                pieces: Some("nc3 v Nc6".into()),
+                ..base()
+            },
+            &["Isolated"],
+        ),
+        // A rook on a7 against the king on d8 lasts a move: it is passed, not reached.
+        (
+            GameDbQuery {
+                pieces: Some("Ra7 vs Kd8".into()),
+                ..base()
+            },
+            &[],
+        ),
+        (
+            GameDbQuery {
+                pieces: Some("Bg5".into()),
+                speed: Some(ExplorerSpeed::Classical),
+                ..base()
+            },
+            &["Carlsbad"],
+        ),
     ];
     for (query, expected) in cases {
         assert_eq!(found(query.clone()).await, expected, "{query:?}");
@@ -2146,6 +2184,13 @@ async fn a_deep_search_keeps_the_games_of_a_length_speed_material_and_structure(
     let refused = games
         .games(GameDbQuery {
             material: Some("X vs Y".into()),
+            ..base()
+        })
+        .await;
+    assert!(refused.is_err());
+    let refused = games
+        .games(GameDbQuery {
+            pieces: Some("Nz9".into()),
             ..base()
         })
         .await;

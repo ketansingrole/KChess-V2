@@ -1112,10 +1112,11 @@ fn choose(app: &mut Harness, label: &str, down: usize) {
     app.press("enter");
 }
 
-/// More filters finds games by their length, their time control, a material balance they reach
-/// and a pawn structure they keep, each with the others, and Clear filters clears them too.
+/// More filters finds games by their length, their time control, a material balance they reach,
+/// a pawn structure and pieces on squares they keep, each with the others, and Clear filters
+/// clears them too.
 #[gpui_kit::test]
-fn more_filters_find_games_by_length_speed_material_and_structure(
+fn more_filters_find_games_by_length_speed_material_structure_and_pieces(
     cx: &mut gpui_kit::TestAppContext,
 ) {
     const CARLSBAD: &str = "Carlsbad against A, 1/2-1/2";
@@ -1151,4 +1152,21 @@ fn more_filters_find_games_by_length_speed_material_and_structure(
     // Down from Any structure past the isolated queen pawn and hanging pawns.
     choose(&mut app, "Pawn structure", 3);
     wait_for_listed(&mut app, "the Carlsbad game", &[CARLSBAD]);
+
+    app.click("database-clear");
+    wait_for_listed(
+        &mut app,
+        "every game once more",
+        &[CARLSBAD, ISOLATED, ENDING],
+    );
+    app.click_label("Pieces");
+    // Half typed, the pieces filter nothing yet.
+    app.type_text("N");
+    wait_for_listed(
+        &mut app,
+        "every game while typing",
+        &[CARLSBAD, ISOLATED, ENDING],
+    );
+    app.type_text("a4");
+    wait_for_listed(&mut app, "the game with a knight kept on a4", &[ISOLATED]);
 }
