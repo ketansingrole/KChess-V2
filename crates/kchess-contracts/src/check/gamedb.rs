@@ -55,6 +55,26 @@ impl Validate for DatabaseName {
     }
 }
 
+/// A player's name as a game's header gives it: 1 to 200 characters, trimmed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct PlayerName(pub String);
+
+impl Validate for PlayerName {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const NAME: &str = "A player's name is 1 to 200 characters.";
+        let name: String = decode(value, |_| Some(NAME))?;
+        let name = name.trim();
+        ensure(
+            !name.is_empty() && name.chars().count() <= 200 && !name.chars().any(char::is_control),
+            Some(NAME),
+            "",
+            String::new,
+        )?;
+        Ok(PlayerName(name.to_string()))
+    }
+}
+
 /// A game of a database, by the id a search listed.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[serde(transparent)]

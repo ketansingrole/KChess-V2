@@ -499,6 +499,8 @@ impl AnalysisPage {
             self.orientation = orientation;
         }
         self.review.origin = opening.origin;
+        // Its own game, which a database it came from holds, is no novelty against it.
+        self.find_novelty(cx);
         self.go_to_ply(opening.ply, cx);
         if opening.review {
             self.request_review(cx);

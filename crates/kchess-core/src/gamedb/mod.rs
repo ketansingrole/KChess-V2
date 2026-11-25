@@ -13,6 +13,7 @@ pub mod explore;
 pub mod import;
 pub mod lichess;
 pub mod master;
+pub mod novelty;
 pub mod own;
 pub mod player;
 pub mod schema;
@@ -36,8 +37,8 @@ use kchess_contracts::CoreEvent;
 use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    DatabaseInfo, DatabaseSource, GameDbImported, GameDbPage, GameDbPhase as Phase, GameDbProgress,
-    GameDbQuery, GameDbSaved, GameDbStatus, LookupOptions, PositionLookup,
+    DatabaseInfo, DatabaseSource, GameDbImported, GameDbNovelty, GameDbPage, GameDbPhase as Phase,
+    GameDbProgress, GameDbQuery, GameDbSaved, GameDbStatus, LookupOptions, PositionLookup,
 };
 use kchess_domain::gamedb;
 
@@ -981,6 +982,39 @@ impl GameDbService {
             stale: false,
             message: None,
         })
+    }
+
+    /// The line's first move no game of the databases played (Your games aside, which follows
+    /// the games you play).
+    pub async fn novelty(&self, line: novelty::Line) -> Result<GameDbNovelty> {
+        let files: Vec<(String, PathBuf)> = self
+            .inner
+            .ids()
+            .into_iter()
+            .filter(|id| id != own::OWN_ID)
+            .map(|id| {
+                let file = self.inner.file(&id);
+                (id, file)
+            })
+            .collect();
+        // Dropped by its caller (the board moved on), the walk stops at its next lookup.
+        let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
+        let stopped = Arc::clone(&stop.0);
+        let result = tokio::task::spawn_blocking(move || {
+            let mut databases = Vec::with_capacity(files.len());
+            for (id, file) in files {
+                // One being written for the first time has nothing to read yet.
+                if let Ok(db) = schema::open_read(&file) {
+                    databases.push((id, db));
+                }
+            }
+            novelty::find(&databases, &line, &stopped)
+        })
+        .await
+        .map_err(|_| CoreError::new("The databases could not be read. Try again."))
+        .and_then(|found| found);
+        drop(stop);
+        self.inner.logged("novelty", result)
     }
 
     /// Stops the import and the rebuild of "Your games"; `close` waits for them to end.

@@ -142,6 +142,29 @@ pub struct GameDbProgress {
     pub message: Option<String>,
 }
 
+/// Where a line leaves the games of the game databases: its first move no game played from
+/// its position.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbNovelty {
+    /// The new move's index in the line; none when every move looked at was played before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ply: Option<u32>,
+    /// The games that went on from the position before it.
+    pub games: u64,
+    /// The moves they played there, most played first: at most three.
+    pub played: Vec<NoveltyMove>,
+}
+
+/// A move games played where a line's novelty was played instead.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NoveltyMove {
+    pub san: String,
+    pub uci: String,
+    pub games: u64,
+}
+
 /// A game saved into a database: the database as it is now, and the game's id in it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]

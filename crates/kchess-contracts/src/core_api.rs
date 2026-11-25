@@ -707,6 +707,19 @@ core_api! {
             games: Option<GameDbGameIds>,
             search: Option<GameDbQuery>
         ) -> u64;
+        /// The first move of the line `moves` from `fen` that no game of the game databases
+        /// (Your games aside) played from its position, with the games that reached that position
+        /// and what they played. The line's own game does not count: game `game` of `database`
+        /// (where it was opened from), nor a game of `white` against `black` with its moves.
+        #[assist(Lookups)]
+        GameDbNovelty = "gameDbNovelty" fn game_db_novelty(
+            fen: Fen,
+            moves: Moves;
+            white: Option<PlayerName>,
+            black: Option<PlayerName>,
+            database: Option<DatabaseId>,
+            game: Option<GameDbGameId>
+        ) -> crate::types::GameDbNovelty;
         #[writes(GameDb)]
         GameDbMasterInstall = "gameDbMasterInstall" fn game_db_master_install(;
             months: Option<MasterMonths>

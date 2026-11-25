@@ -7,6 +7,7 @@ mod engine;
 mod import;
 mod load;
 mod notes;
+mod novelty;
 mod page;
 mod practice;
 mod review;
@@ -119,6 +120,7 @@ use crate::game::tree::{
     moves_of, path_of, pv_san,
 };
 use crate::game::view::Way;
+use crate::game_db::GameDbHandle;
 use crate::online::OnlineHandle;
 use crate::pages::study_bar::{STUDY_BAR, StudyBar};
 use crate::part::Part;
@@ -335,6 +337,8 @@ pub struct AnalysisPage {
     cloud_error: Option<String>,
     cloud_request: u64,
     cloud_task: Option<Task<()>>,
+    /// The main line's novelty in the game databases.
+    novelty: novelty::Novelty,
     saver: SessionSaver<AnalysisPage>,
     wheel: crate::game::view::Wheel,
     focus: FocusHandle,
@@ -517,7 +521,12 @@ impl AnalysisPage {
                 if assisted != this.assisted {
                     this.assisted = assisted;
                     this.follow_review(cx);
+                    this.find_novelty(cx);
                 }
+            }),
+            // A database imported, changed or deleted: the novelty is looked up again.
+            cx.observe(&cx.global::<GameDbHandle>().0.clone(), |this, _, cx| {
+                this.find_novelty(cx)
             }),
             // Reviews streaming in, and the review queue: labels follow, and the engine makes way
             // while this game is reviewed.
@@ -598,6 +607,7 @@ impl AnalysisPage {
             cloud_error: None,
             cloud_request: 0,
             cloud_task: None,
+            novelty: Default::default(),
             saver: SessionSaver::start(SessionKind::Analysis, &[], window, cx),
             wheel: Default::default(),
             focus: cx.focus_handle(),
@@ -1005,6 +1015,7 @@ impl AnalysisPage {
             .origin
             .get_or_insert_with(Default::default)
             .database = Some(game);
+        self.find_novelty(cx);
         cx.notify();
     }
 
@@ -1059,6 +1070,7 @@ impl AnalysisPage {
         self.redraw(cx);
         self.analyse(cx);
         self.ask_cloud(cx);
+        self.find_novelty(cx);
     }
 
     /// Save the session, and the open study's chapter, shortly after the last change.

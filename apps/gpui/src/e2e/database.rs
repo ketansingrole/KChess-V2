@@ -874,3 +874,41 @@ fn the_board_saves_its_game_to_a_database(cx: &mut gpui_kit::TestAppContext) {
             .is_some()
     });
 }
+
+/// A game opened from a database marks its novelty: Eve's 3...Nf6 left the other games, one of
+/// which reached the position and played 3...a6; another reached 2...Nc6 by other moves. The game
+/// itself, which the database holds, does not count against it.
+#[gpui_kit::test]
+fn the_board_marks_where_its_game_left_the_databases(cx: &mut gpui_kit::TestAppContext) {
+    const RUY: &str = "[White \"Ana\"]\n[Black \"Ben\"]\n[Result \"1-0\"]\n\n\
+        1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0\n\n\
+        [White \"Carl\"]\n[Black \"Dora\"]\n[Result \"0-1\"]\n\n\
+        1. Nf3 Nc6 2. e4 e5 3. d4 exd4 0-1\n\n\
+        [White \"Eve\"]\n[Black \"Finn\"]\n[Result \"1/2-1/2\"]\n\n\
+        1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 1/2-1/2\n";
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    let files = tempfile::tempdir().expect("a folder for the file");
+    let path = files.path().join("ruy.pgn");
+    std::fs::write(&path, RUY).expect("the file");
+    app.click("gamedb-import");
+    app.wait_for_open_dialog();
+    app.cx
+        .simulate_path_prompt_response(move |_| Some(vec![path]));
+    app.click_label("Eve against Finn, 1/2-1/2");
+    app.wait_for_page(crate::pages::Page::Analysis);
+    let novelty = "e2e4 e7e5 g1f3 b8c6 f1b5 g8f6";
+    let mark = app.find(format!("novelty-{novelty}"));
+    assert_eq!(
+        mark.label(),
+        Some("Novelty: new to your databases. 1 game reached this position and played a6 (1)")
+    );
+    assert_eq!(
+        app.find(format!("tree-{novelty}")).label(),
+        Some("Nf6, novelty")
+    );
+    // Nothing before it is new: 1. e4 and 3. Bb5 were played, 2...Nc6 by transposition too.
+    for known in ["e2e4", "e2e4 e7e5 g1f3 b8c6", "e2e4 e7e5 g1f3 b8c6 f1b5"] {
+        assert!(!app.shows(format!("novelty-{known}")), "{known}");
+    }
+}

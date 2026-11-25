@@ -695,6 +695,15 @@ fn found(
     Ok(moves)
 }
 
+/// The moves played from `pos` in every game of the database, at any depth.
+pub fn moves_from(
+    db: &Connection,
+    pos: &VariantPosition,
+    stop: &AtomicBool,
+) -> Result<Vec<TreeMove>> {
+    found(db, None, pos, stop)
+}
+
 /// The games `query` matches that reached its position (`query.position`) at any depth, with a
 /// move played from it: those the explorer counts there, each once, in id order.
 fn reached(db: &Connection, query: &GameDbQuery, stop: &AtomicBool) -> Result<Vec<Reached>> {

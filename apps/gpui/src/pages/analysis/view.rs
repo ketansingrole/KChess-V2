@@ -68,6 +68,7 @@ impl AnalysisPage {
             page: cx.entity().downgrade(),
             palette: *palette,
             marks: self.review_marks(cx),
+            novelty: self.novelty_mark(),
             mainline: {
                 let moves = self.mainline();
                 (1..=moves.len())

@@ -111,6 +111,8 @@ pub(super) struct TreeView<'a> {
     pub(super) palette: Palette,
     /// The review's label on each main-line move, by path.
     pub(super) marks: HashMap<String, review::ReviewMark>,
+    /// The novelty's move, by path, and what its N says.
+    pub(super) novelty: Option<(String, SharedString)>,
     /// Paths on the main line.
     pub(super) mainline: std::collections::HashSet<String>,
     /// Bring the move shown into view after it changes (`block: 'nearest'`).
@@ -144,12 +146,20 @@ impl TreeView<'_> {
             fen: node.fen.clone(),
         };
         let (menu_page, menu_path) = (page.clone(), path.to_string());
+        let novelty = self
+            .novelty
+            .as_ref()
+            .filter(|(at, _)| at == path)
+            .map(|(_, said)| said.clone());
         h_flex()
             .id(SharedString::from(format!("tree-{path}")))
             .test_support()
             .role(Role::Button)
             .keyboard_focus(palette.primary)
-            .aria_label(node.san.clone())
+            .aria_label(match novelty {
+                Some(_) => SharedString::from(format!("{}, novelty", node.san)),
+                None => node.san.clone().into(),
+            })
             .aria_selected(active)
             .px(px(4.))
             .py(px(2.))
@@ -241,6 +251,20 @@ impl TreeView<'_> {
                         }),
                 )
             })
+            // As ChessBase marks a novelty: N, the first move the databases have not seen.
+            .children(novelty.map(|said| {
+                div()
+                    .id(SharedString::from(format!("novelty-{path}")))
+                    .test_support()
+                    .aria_label(said.clone())
+                    .ml(px(2.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(palette.info)
+                    .tooltip(move |window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(said.clone()).build(window, cx)
+                    })
+                    .child("N")
+            }))
             .context_menu(move |menu, window, cx| {
                 move_menu(&menu_page, &menu_path, &menu_state, menu, window, cx)
             })

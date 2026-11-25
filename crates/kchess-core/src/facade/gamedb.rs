@@ -1,18 +1,19 @@
 //! The local game databases.
 
 use kchess_contracts::check::{
-    DatabaseId, DatabaseName, GameDbGameId, GameDbGameIds, LichessMonth, MasterMonths, PgnFilePath,
-    PgnSavePath, PgnText,
+    DatabaseId, DatabaseName, Fen, GameDbGameId, GameDbGameIds, LichessMonth, MasterMonths, Moves,
+    PgnFilePath, PgnSavePath, PgnText, PlayerName,
 };
 use kchess_contracts::core_api::GameDbApi;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    DatabaseSource, GameDbImported, GameDbPage, GameDbQuery, GameDbSaved, GameDbStatus, GameSite,
-    LichessArchive, LichessGames, PlayerGames,
+    DatabaseSource, GameDbImported, GameDbNovelty, GameDbPage, GameDbQuery, GameDbSaved,
+    GameDbStatus, GameSite, LichessArchive, LichessGames, PlayerGames,
 };
 
 use crate::core::Core;
 use crate::gamedb::edit::{self, Selection};
+use crate::gamedb::novelty;
 use crate::gamedb::player;
 
 /// The games an edit acts on: those listed, or those a search finds, never both or neither.
@@ -133,6 +134,27 @@ impl GameDbApi for Core {
     ) -> Result<u64> {
         let selection = selection(games, search)?;
         self.gamedb.export(&database.0, selection, path.0).await
+    }
+
+    async fn game_db_novelty(
+        &self,
+        fen: Fen,
+        moves: Moves,
+        white: Option<PlayerName>,
+        black: Option<PlayerName>,
+        database: Option<DatabaseId>,
+        game: Option<GameDbGameId>,
+    ) -> Result<GameDbNovelty> {
+        let line = novelty::Line {
+            fen: fen.0,
+            moves: moves.0,
+            white: white.map(|name| name.0),
+            black: black.map(|name| name.0),
+            from: database
+                .zip(game)
+                .map(|(database, game)| (database.0, game.0)),
+        };
+        self.gamedb.novelty(line).await
     }
 
     async fn game_db_master_install(&self, months: Option<MasterMonths>) -> Result<GameDbImported> {
