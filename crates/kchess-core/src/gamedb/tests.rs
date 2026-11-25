@@ -2028,7 +2028,16 @@ async fn a_deep_search_keeps_the_games_of_a_length_speed_material_structure_and_
         found
     };
     let base = || query(&id);
-    let cases: [(GameDbQuery, &[&str]); 17] = [
+    let cases: [(GameDbQuery, &[&str]); 18] = [
+        // One game to replay goes through the caller's own connection.
+        (
+            GameDbQuery {
+                player: Some("Isolated".into()),
+                structure: Some(GameDbStructure::IsolatedQueenPawn),
+                ..base()
+            },
+            &["Isolated"],
+        ),
         (
             GameDbQuery {
                 min_moves: Some(10),

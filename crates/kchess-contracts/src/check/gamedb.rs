@@ -690,4 +690,80 @@ mod tests {
             );
         }
     }
+
+    /// Each database input sent as the wrong kind of value is refused with its own message, as
+    /// one out of range is.
+    #[test]
+    fn each_database_input_refuses_a_value_of_the_wrong_kind() {
+        let value = || sent(json!(3));
+        assert_eq!(
+            check::<DatabaseName>(value()).unwrap_err(),
+            "A database name is 1 to 80 characters."
+        );
+        assert_eq!(
+            check::<PlayerName>(value()).unwrap_err(),
+            "A player's name is 1 to 200 characters."
+        );
+        assert_eq!(
+            check::<PlayerNames>(value()).unwrap_err(),
+            "Choose 1 to 100 names, each 1 to 200 characters."
+        );
+        assert_eq!(
+            check::<GameDbGameId>(sent(json!("12"))).unwrap_err(),
+            "Invalid game."
+        );
+        assert_eq!(
+            check::<GameDbGameIds>(value()).unwrap_err(),
+            "Choose 1 to 10,000 games."
+        );
+        assert_eq!(
+            check::<PgnSavePath>(value()).unwrap_err(),
+            "Save the games as a .pgn file."
+        );
+        assert_eq!(
+            check::<PgnFilePath>(value()).unwrap_err(),
+            "Choose a .pgn, .pgn.zst, .pgn.bz2, .zip or .7z file."
+        );
+        assert_eq!(check::<LichessMonth>(value()).unwrap_err(), MONTH);
+        let rated = check::<GameDbQuery>(sent(json!({
+            "database": "mine", "minElo": 2500, "offset": 0, "limit": 5
+        })))
+        .unwrap();
+        assert_eq!(rated.min_elo, Some(2500));
+    }
+
+    /// A form's download is checked as the core will check it, before it is sent.
+    #[test]
+    fn a_form_s_download_is_checked_as_the_core_checks_it() {
+        let lichess = LichessGames {
+            month: Some("2024-05".into()),
+            min_rating: 2400,
+        };
+        assert_eq!(lichess_games(&lichess).unwrap(), lichess);
+        assert_eq!(
+            lichess_games(&LichessGames {
+                min_rating: 2450,
+                ..lichess.clone()
+            })
+            .unwrap_err(),
+            "Invalid rating."
+        );
+        let player = PlayerGames {
+            site: GameSite::Lichess,
+            username: "Some_Player".into(),
+            months: Some(12),
+            speeds: None,
+            rated: false,
+        };
+        assert_eq!(player_games(&player).unwrap(), player);
+        assert_eq!(
+            player_games(&PlayerGames {
+                site: GameSite::Chesscom,
+                username: "x".into(),
+                ..player.clone()
+            })
+            .unwrap_err(),
+            "Enter a valid Chess.com username."
+        );
+    }
 }
