@@ -437,6 +437,15 @@ impl GameDbService {
         own::settle(&self.inner).await
     }
 
+    /// The bytes free on the disk the databases are on, when the system says.
+    pub async fn free_bytes(&self) -> Option<u64> {
+        let dir = self.inner.dir.clone();
+        tokio::task::spawn_blocking(move || crate::disk::free_bytes(&dir))
+            .await
+            .ok()
+            .flatten()
+    }
+
     pub async fn status(&self) -> Result<GameDbStatus> {
         let busy = self.inner.running().is_some();
         self.inner.sweep();
@@ -452,16 +461,7 @@ impl GameDbService {
             }
         }
         databases.sort_by_key(|database| database.name.to_lowercase());
-        let dir = self.inner.dir.clone();
-        let free_bytes = tokio::task::spawn_blocking(move || crate::disk::free_bytes(&dir))
-            .await
-            .ok()
-            .flatten();
-        Ok(GameDbStatus {
-            databases,
-            busy,
-            free_bytes,
-        })
+        Ok(GameDbStatus { databases, busy })
     }
 
     /// The one run (an import or the master games download) that may write, claimed for the

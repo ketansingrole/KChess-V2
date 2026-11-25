@@ -18,6 +18,10 @@ impl GameDbApi for Core {
         self.gamedb.status().await
     }
 
+    async fn game_db_free_space(&self) -> Result<Option<u64>> {
+        Ok(self.gamedb.free_bytes().await)
+    }
+
     async fn game_db_import(
         &self,
         path: PgnFilePath,

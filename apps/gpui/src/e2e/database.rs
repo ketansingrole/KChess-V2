@@ -143,6 +143,9 @@ fn a_database_is_imported_searched_opened_and_deleted(cx: &mut gpui_kit::TestApp
 #[gpui_kit::test]
 fn the_databases_are_listed_with_their_size_to_manage(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
+    // Offered before there is any database, so it is found before the first download.
+    app.open("Game database");
+    app.find("database-manage");
     import_games(&mut app);
     let bytes = app.cx.update(|cx| {
         cx.global::<kchess_board::game_db::GameDbHandle>()
@@ -438,8 +441,9 @@ fn the_player_download_offers_names_to_pick(cx: &mut gpui_kit::TestAppContext) {
             && window.try_find(("player-match", 0usize)).is_none()
     });
 
+    // Enter downloads, as the button does.
     app.fill_in_dialog("Username", SCOUTED);
-    app.click("player-download");
+    app.press("enter");
     app.wait_for_app("their database", |cx| {
         cx.global::<kchess_board::game_db::GameDbHandle>()
             .0
@@ -506,19 +510,9 @@ fn a_download_asks_first_when_the_disk_is_almost_full(cx: &mut gpui_kit::TestApp
     use gpui_kit::test::TestQueryExt as _;
     let mut app = Harness::start(cx);
     app.open("Game database");
-    // The core reads the disk's free space; this one then reads as 1 GB.
-    app.wait_for_app("the free space read", |cx| {
-        cx.global::<kchess_board::game_db::GameDbHandle>()
-            .0
-            .read(cx)
-            .status
-            .free_bytes
-            .is_some()
-    });
-    app.cx.update(|cx| {
-        let db = cx.global::<kchess_board::game_db::GameDbHandle>().0.clone();
-        db.update(cx, |db, _| db.status.free_bytes = Some(1024 * 1024 * 1024));
-    });
+    // The disk then reads as having 1 GB free.
+    app.cx
+        .update(|cx| cx.set_global(kchess_board::game_db::PinnedFreeSpace(1024 * 1024 * 1024)));
     app.click("database-tcec");
     app.wait_for("the warning", |window, _| {
         window.try_find_by_label("Download anyway").is_some()

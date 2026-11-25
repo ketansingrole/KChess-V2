@@ -327,8 +327,15 @@ fn room_left(free: u64, size: Option<u64>) -> String {
     }
 }
 
-/// Run `start` when the disk has room for `size` bytes more (`short_of_room`); otherwise only
-/// once the person says to `go` ahead anyway ("Download anyway").
+/// The free space a test pins, whatever the disk running it says.
+#[cfg(any(test, feature = "test-support"))]
+pub struct PinnedFreeSpace(pub u64);
+
+#[cfg(any(test, feature = "test-support"))]
+impl Global for PinnedFreeSpace {}
+
+/// Run `start` when the disk has room for `size` bytes more (`short_of_room`), its free space
+/// read now; otherwise only once the person says to `go` ahead anyway ("Download anyway").
 pub fn with_room(
     size: Option<u64>,
     go: &'static str,
@@ -336,12 +343,34 @@ pub fn with_room(
     cx: &mut App,
     start: impl Fn(&mut Window, &mut App) + 'static,
 ) {
-    let free = cx.global::<GameDbHandle>().0.read(cx).status.free_bytes;
-    let Some(free) = short_of_room(free, size) else {
-        start(window, cx);
-        return;
-    };
-    let description = room_left(free, size);
+    let asked = cx.global::<AppCore>().request(calls::GameDbFreeSpace {});
+    window
+        .spawn(cx, async move |cx| {
+            // A disk that cannot be read is not called full: the download goes ahead.
+            let free = asked.await.warn_on_err().flatten();
+            cx.update(|window, cx| {
+                #[cfg(any(test, feature = "test-support"))]
+                let free = cx
+                    .try_global::<PinnedFreeSpace>()
+                    .map_or(free, |pinned| Some(pinned.0));
+                match short_of_room(free, size) {
+                    None => start(window, cx),
+                    Some(free) => ask_for_room(room_left(free, size), go, window, cx, start),
+                }
+            })
+            .ok();
+        })
+        .detach();
+}
+
+/// Ask before a download or import the disk may have no room for, saying `description`.
+fn ask_for_room(
+    description: String,
+    go: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+    start: impl Fn(&mut Window, &mut App) + 'static,
+) {
     let start = std::rc::Rc::new(start);
     widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
         let start = start.clone();

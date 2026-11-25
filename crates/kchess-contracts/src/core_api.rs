@@ -624,6 +624,9 @@ core_api! {
     /// withholds, as the opening explorer is.
     trait GameDbApi {
         GameDbStatus = "gameDbStatus" fn game_db_status() -> crate::types::GameDbStatus;
+        /// The bytes free on the disk the databases are on, read now; none when the system does
+        /// not say. A frontend asks before a download, to warn when it would fill the disk.
+        GameDbFreeSpace = "gameDbFreeSpace" fn game_db_free_space() -> Option<u64>;
         /// Reads the PGN file at `path` into the database `into`, or into a new one named `name`
         /// (the file's name when absent). Progress arrives as `gamedb:progress`; a failed or
         /// cancelled import leaves every database as it was.

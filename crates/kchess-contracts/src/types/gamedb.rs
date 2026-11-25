@@ -119,9 +119,6 @@ pub struct GameDbStatus {
     pub databases: Vec<DatabaseInfo>,
     /// True while an import runs; its progress arrives as events.
     pub busy: bool,
-    /// The bytes still free on the disk the databases are on, when the system says.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub free_bytes: Option<u64>,
 }
 
 /// An import in progress (or finished), streamed to every window.

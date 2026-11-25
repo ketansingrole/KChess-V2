@@ -62,10 +62,20 @@ fn speed_label(site: GameSite, speed: ExplorerSpeed) -> &'static str {
 pub fn open(earlier: Option<PlayerGames>, window: &mut Window, cx: &mut App) {
     let dialog = cx.new(|cx| PlayerDialog::new(earlier, window, cx));
     widgets::open_dialog(window, cx, move |dialog_box, _, _| {
+        let submit = dialog.clone();
         dialog_box
             .title("Download a player's games")
             .w(px(460.))
             .child(dialog.clone())
+            // Return is the dialog's OK: it downloads as the button does, which closes it.
+            .on_ok(move |_, window, cx| {
+                submit.update(cx, |dialog, cx| {
+                    if dialog.can_download(cx) {
+                        dialog.download(window, cx)
+                    }
+                });
+                false
+            })
     });
 }
 
@@ -256,6 +266,12 @@ impl PlayerDialog {
         }
     }
 
+    /// A name is typed and no other download or import runs (one at a time).
+    fn can_download(&self, cx: &App) -> bool {
+        !self.username.read(cx).value().trim().is_empty()
+            && !cx.global::<GameDbHandle>().0.read(cx).busy()
+    }
+
     /// Starts the download, once the request is one the core takes, and closes the dialog: its
     /// progress shows on the page.
     fn download(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -299,8 +315,7 @@ impl PlayerDialog {
 impl Render for PlayerDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let empty = self.username.read(cx).value().trim().is_empty();
-        let busy = cx.global::<GameDbHandle>().0.read(cx).busy();
+        let can_download = self.can_download(cx);
         let chosen = SITES
             .iter()
             .position(|site| *site == self.site)
@@ -395,8 +410,7 @@ impl Render for PlayerDialog {
                         .primary()
                         .icon(kchess_ui::icon("download"))
                         .label("Download")
-                        // One download runs at a time.
-                        .disabled(empty || busy)
+                        .disabled(!can_download)
                         .on_click(cx.listener(|this, _, window, cx| this.download(window, cx)))
                         .into_any_element(),
                 ],

@@ -396,7 +396,6 @@ impl SettingsPage {
                                 .outline()
                                 .icon(icon("hard-drive"))
                                 .label("Manage")
-                                .disabled(count == 0)
                                 .on_click(|_, window, cx| {
                                     crate::pages::database::manage_databases(window, cx)
                                 }),

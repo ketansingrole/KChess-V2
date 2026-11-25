@@ -801,15 +801,6 @@ impl Render for DatabasePage {
                                 })
                         }),
                 )
-                .child(
-                    Button::new("database-manage")
-                        .ghost()
-                        .small()
-                        .icon(icon("hard-drive"))
-                        .label("Manage")
-                        .tooltip("Every database, its size and the space they take")
-                        .on_click(|_, window, cx| manage::open(window, cx)),
-                )
                 .when(!busy, |row| {
                     row.child(
                         Button::new("database-delete")
@@ -869,7 +860,18 @@ impl Render for DatabasePage {
                         .on_click(|_, window, cx| install_tcec(window, cx)),
                 )
             })
-            .child(game_db::import_card(cx, &palette));
+            .child(game_db::import_card(cx, &palette))
+            // Always there, so what the databases take is found before the first download.
+            .child(div().flex_1())
+            .child(
+                Button::new("database-manage")
+                    .ghost()
+                    .small()
+                    .icon(icon("hard-drive"))
+                    .label("Manage")
+                    .tooltip("Every database, its size and the space they take")
+                    .on_click(|_, window, cx| manage::open(window, cx)),
+            );
         let header = v_flex().gap(px(12.)).child(downloads).children(chosen);
         let body = if databases == 0 {
             widgets::card(&palette)
@@ -1069,15 +1071,7 @@ impl PageView for DatabasePage {
             actions.push(Action::Masters);
             actions.push(Action::Tcec);
         }
-        if !cx
-            .global::<GameDbHandle>()
-            .0
-            .read(cx)
-            .databases()
-            .is_empty()
-        {
-            actions.push(Action::Manage);
-        }
+        actions.push(Action::Manage);
         if self.filtered(cx) {
             actions.push(Action::ClearFilters);
         }
