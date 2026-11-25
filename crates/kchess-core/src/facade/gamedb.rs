@@ -4,10 +4,11 @@ use kchess_contracts::check::{DatabaseId, DatabaseName, GameDbGameId, MasterMont
 use kchess_contracts::core_api::GameDbApi;
 use kchess_contracts::error::Result;
 use kchess_contracts::types::{
-    DatabaseSource, GameDbImported, GameDbPage, GameDbQuery, GameDbStatus,
+    DatabaseSource, GameDbImported, GameDbPage, GameDbQuery, GameDbStatus, GameSite, PlayerGames,
 };
 
 use crate::core::Core;
+use crate::gamedb::player;
 
 impl GameDbApi for Core {
     async fn game_db_status(&self) -> Result<GameDbStatus> {
@@ -65,5 +66,47 @@ impl GameDbApi for Core {
                 &*self.usage,
             )
             .await
+    }
+
+    async fn game_db_player_install(&self, request: PlayerGames) -> Result<GameDbImported> {
+        let now = crate::time::now_ms();
+        let username = request.username.clone();
+        match request.site {
+            GameSite::Lichess => {
+                let query = player::lichess_query(&request, now);
+                let lichess = self.services.lichess();
+                self.gamedb
+                    .player_install(request, |mut sink| async move {
+                        let cancel = sink.cancel();
+                        lichess
+                            .export_pgn(&username, &query, &cancel, &mut |text| sink.pgn(text))
+                            .await?;
+                        Ok(sink)
+                    })
+                    .await
+            }
+            GameSite::Chesscom => {
+                let from = player::chesscom_from(&request, now);
+                let wanted = request.clone();
+                self.gamedb
+                    .player_install(request, |mut sink| async move {
+                        let cancel = sink.cancel();
+                        let mut on_game = |game: &serde_json::Value| {
+                            if !player::chesscom_keeps(&wanted, game) {
+                                return Ok(());
+                            }
+                            match game.get("pgn").and_then(serde_json::Value::as_str) {
+                                Some(pgn) => sink.game(pgn),
+                                None => Ok(()),
+                            }
+                        };
+                        self.chesscom
+                            .player_games(&username, from.as_deref(), &cancel, &mut on_game)
+                            .await?;
+                        Ok(sink)
+                    })
+                    .await
+            }
+        }
     }
 }

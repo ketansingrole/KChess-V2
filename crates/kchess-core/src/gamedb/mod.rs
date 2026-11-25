@@ -2,8 +2,8 @@
 //!
 //! Each database is one SQLite file: removing a database removes its file, and an import that
 //! fails or is cancelled leaves every database as it was (`import`). Searches read each file
-//! through its own read-only lane, so they go on while an import writes. One import (or the
-//! master games download, `master`) runs at a time; its progress reaches every window as
+//! through its own read-only lane, so they go on while an import writes. One import (or a
+//! download: the master games, `master`, or a player's games, `player`) runs at a time; its progress reaches every window as
 //! `gamedb:progress`. One database, "Your games", is kept in step with the player's own games
 //! (`own`), rebuilt when no import or download runs.
 
@@ -12,6 +12,7 @@ pub mod explore;
 pub mod import;
 pub mod master;
 pub mod own;
+pub mod player;
 pub mod schema;
 pub mod search;
 pub mod tree;

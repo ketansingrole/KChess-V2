@@ -93,6 +93,7 @@ commands! {
         "[list]" => "List the game databases on this computer as JSON",
         "import <file> [--into id] [--name name]" => "Import a .pgn or .pgn.zst file into a new database, or into one",
         "masters [--months n]" => "Download the master games (Lichess's broadcasts), or only their newest months",
+        "player lichess|chesscom <name> [--months n] [--speed s,…] [--rated]" => "Download a player's games into their own database, to prepare against them",
         "games <id> [--player p] [--side white|black] [--opponent p] [--event e] [--from year] [--to year] [--min-elo n] [--result white|draw|black] [--eco code] [--position fen] [--sort newest|oldest|rating] [--offset n] [--limit n]" => "Search a database's games",
         "game <id> <game>" => "Print a game's PGN",
         "rename <id> <name>" => "Rename a database",

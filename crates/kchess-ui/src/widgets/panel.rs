@@ -34,6 +34,15 @@ pub fn hint(text: impl Into<SharedString>, palette: &Palette) -> Div {
         .child(text.into())
 }
 
+/// One choice of a row of filters (a speed, a rating) that is on or off: filled while on.
+pub fn toggle_button(id: impl Into<ElementId>, label: impl Into<SharedString>, on: bool) -> Button {
+    Button::new(id)
+        .small()
+        .label(label.into())
+        .when(on, |button| button.primary())
+        .when(!on, |button| button.ghost())
+}
+
 /// A button that reads as text: small, but still a 24 px target (WCAG 2.5.8),
 /// which its text alone is not.
 pub fn text_button(id: impl Into<ElementId>) -> Button {

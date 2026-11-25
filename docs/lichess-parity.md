@@ -78,8 +78,12 @@ can add them as a friend, challenge them or watch their current game.
   _Games with this position_ lists the games that reached its position, at any depth. A PGN
   file dropped on the page is imported. _Master games_ downloads Lichess's broadcast archive
   (over-the-board games since 2020, CC BY-SA 4.0, shown under its games) month by month, checking
-  each month's digest; _Update master games_ brings in the months published since.
-  `kchess-cli db` lists, imports, downloads the master games (`masters [--months n]`), searches
+  each month's digest; _Update master games_ brings in the months published since. _Player's
+  games_ downloads any Lichess or Chess.com player's standard games (every game or the newest
+  months, some speeds, rated only) into a database of their own to prepare against them, opened
+  with their name as the filter; _Update games_ downloads them again as asked before, replacing
+  the old ones. `kchess-cli db` lists, imports, downloads the master games
+  (`masters [--months n]`) or a player's games (`player lichess|chesscom <name>`), searches
   (`--position <fen>` among the rest), prints, renames and deletes them.
 - **Lichess cloud evaluation**: Lichess's stored deep evaluation of the position, shown beside
   the local engine, or in its place when Stockfish is off. It is off by default because every

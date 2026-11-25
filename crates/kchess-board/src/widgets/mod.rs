@@ -22,6 +22,17 @@ pub use moves::*;
 pub use players::*;
 pub use setting_rows::*;
 
+/// A speed's name on its filter button (`toggle_button`): correspondence is shortened to fit
+/// the row.
+pub fn speed_label(speed: kchess_contracts::types::ExplorerSpeed) -> &'static str {
+    use kchess_domain::perf::Speed;
+    match Speed::from_key(speed.as_str()) {
+        Some(Speed::Correspondence) => "Corr",
+        Some(speed) => speed.label(),
+        None => speed.as_str(),
+    }
+}
+
 /// Connect Lichess, wherever a page needs an account: it signs in in the browser, and spins,
 /// unavailable, while a sign-in runs.
 pub fn connect_lichess(id: impl Into<ElementId>, cx: &App) -> Button {

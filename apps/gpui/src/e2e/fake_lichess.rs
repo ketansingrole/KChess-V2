@@ -288,6 +288,23 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
             .collect();
         return reply(out, &json!(users));
     }
+    // A player's games as PGN, as the Database page downloads them to prepare against them; a
+    // player Lichess does not know is not found.
+    if request.method == "GET"
+        && request.header("accept") == Some("application/x-chess-pgn")
+        && let Some(name) = request.path().strip_prefix("/api/games/user/")
+    {
+        return if name.eq_ignore_ascii_case(SCOUTED) {
+            kchess_testkit::respond(
+                out,
+                200,
+                "application/x-chess-pgn",
+                SCOUTED_GAMES.as_bytes(),
+            )
+        } else {
+            not_found(out)
+        };
+    }
     // A followed player's games are public too: they have none.
     if request.method == "GET"
         && request.path().starts_with("/api/games/user/")
@@ -845,6 +862,14 @@ pub const MASTER_GAMES: &str = "[Event \"Grand Open\"]\n[Date \"2026.10.04\"]\n\
      [WhiteElo \"2760\"]\n[BlackElo \"2790\"]\n\n1. e4 e5 2. Nf3 Nc6 1-0\n\n\
      [Event \"Grand Open\"]\n[Date \"2026.10.05\"]\n[White \"Caruana, Fabiano\"]\n\
      [Black \"Firouzja, Alireza\"]\n[Result \"1/2-1/2\"]\n\n1. d4 d5 1/2-1/2\n";
+
+/// The player whose games the Database page downloads, and their games.
+pub const SCOUTED: &str = "Scouted_Player";
+pub const SCOUTED_GAMES: &str = "[Event \"Rated blitz game\"]\n[Date \"2026.11.02\"]\n\
+     [White \"Scouted_Player\"]\n[Black \"Rival\"]\n[Result \"1-0\"]\n\
+     [WhiteElo \"2210\"]\n[BlackElo \"2190\"]\n\n1. e4 c5 2. Nf3 1-0\n\n\n\
+     [Event \"Rated blitz game\"]\n[Date \"2026.11.03\"]\n[White \"Rival\"]\n\
+     [Black \"Scouted_Player\"]\n[Result \"0-1\"]\n\n1. d4 Nf6 0-1\n\n\n";
 
 /// A file of the master games archive: its list of months, their digests, or a month's games
 /// packed as the archive packs them.

@@ -148,6 +148,58 @@ fn a_pgn_file_dropped_on_the_page_is_imported(cx: &mut gpui_kit::TestAppContext)
     app.find("database-delete");
 }
 
+/// A player's games, downloaded from Lichess to prepare against them, make a database of their
+/// own. It opens on their games, with their name as the player filter, and offers to update
+/// them; an unknown player is refused by name, leaving no database.
+#[gpui_kit::test]
+fn a_players_games_are_downloaded_to_prepare_against_them(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::SCOUTED;
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    app.click("database-player");
+    app.fill_in_dialog("Username", "Nobody_Here");
+    app.click("player-download");
+    app.wait_for_app("the refusal", |cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .error()
+            .is_some_and(|error| error.contains("No Lichess player is called Nobody_Here"))
+    });
+
+    app.click("database-player");
+    app.fill_in_dialog("Username", SCOUTED);
+    app.click("player-download");
+    wait_for_listed(
+        &mut app,
+        "their games, newest first",
+        &[
+            "Rival against Scouted_Player, 0-1",
+            "Scouted_Player against Rival, 1-0",
+        ],
+    );
+    app.wait_for_app("their database, made from the request", |cx| {
+        let db = cx
+            .global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx);
+        db.databases().len() == 1
+            && db.databases()[0].source == kchess_contracts::types::DatabaseSource::Player
+            && db.databases()[0].name == "Scouted_Player · Lichess"
+            && db.databases()[0]
+                .player
+                .as_ref()
+                .is_some_and(|player| player.rated && player.months == Some(12))
+    });
+    app.wait_for("their name as the filter", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .try_find_by_label("Player")
+            .is_some_and(|input| input.value() == Some(SCOUTED))
+    });
+    app.find("database-update-player");
+}
+
 /// The master games button downloads Lichess's broadcast archive (here the stand-in's one month)
 /// into a database of their own, whose games are listed with the archive's attribution; the
 /// button then offers to bring in newer months.

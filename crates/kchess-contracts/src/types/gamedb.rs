@@ -7,7 +7,32 @@ union!(#[doc = "Where a database's games came from."] DatabaseSource {
     Imported = "imported",
     Own = "own",
     Master = "master",
+    Player = "player",
 });
+
+union!(#[doc = "Where a player's games are downloaded from."] GameSite {
+    Lichess = "lichess",
+    Chesscom = "chesscom",
+});
+
+/// One player's games to download into a database of their own (`gameDbPlayerInstall`). The
+/// database keeps it, so an update brings the same games again.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerGames {
+    pub site: GameSite,
+    pub username: String,
+    /// Only the games of the newest this many months, the current month among them; every
+    /// game when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub months: Option<u32>,
+    /// Only games of these speeds; every speed when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speeds: Option<Vec<ExplorerSpeed>>,
+    /// Only rated games.
+    #[serde(default)]
+    pub rated: bool,
+}
 
 union!(#[doc = "Progress stage of a game database import; `downloading` while a month of the \
     master games arrives, before it is read."] GameDbPhase {
@@ -45,6 +70,10 @@ pub struct DatabaseInfo {
     /// Whose games they are and on what terms, when the source asks for it to be shown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attribution: Option<String>,
+    /// The download a player's database was made from (`source` `player`), which an update
+    /// repeats.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub player: Option<PlayerGames>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]

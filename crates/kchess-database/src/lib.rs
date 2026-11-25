@@ -1,7 +1,8 @@
 //! The Database page: the games of a game database on this computer, searched by player, side,
 //! event, years, rating, result and position, a page at a time, newest, oldest or best rated
 //! first; each opened on the analysis board. PGN files are imported here (picked or dropped),
-//! and a database deleted.
+//! a player's games downloaded from Lichess or Chess.com to prepare against them (`player`), and
+//! a database deleted.
 
 // A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
@@ -12,6 +13,8 @@ use kchess_hack as _;
 use kchess_app::{core, loading, prefs};
 use kchess_board::{game_db, widgets};
 use kchess_ui::theme;
+
+mod player;
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
@@ -35,7 +38,7 @@ use kchess_ui::icon;
 use serde::{Deserialize, Serialize};
 
 use crate::core::AppCore;
-use crate::game_db::GameDbHandle;
+use crate::game_db::{GameDbEvent, GameDbHandle};
 use crate::loading::Loading;
 use crate::theme::{Palette, radii};
 use crate::widgets::{Choice, KeyboardFocus as _, Pill, Pressable as _};
@@ -254,6 +257,15 @@ impl DatabasePage {
         subscriptions.push(cx.observe_in(&databases, window, |this, _, window, cx| {
             this.sync_databases(window, cx)
         }));
+        subscriptions.push(cx.subscribe_in(
+            &databases,
+            window,
+            |this, _, event: &GameDbEvent, window, cx| match event {
+                GameDbEvent::PlayerInstalled { database, username } => {
+                    this.show_player(database.clone(), username.clone(), window, cx)
+                }
+            },
+        ));
         let mut page = DatabasePage {
             focus: cx.focus_handle(),
             database: kept.database,
@@ -443,6 +455,27 @@ impl DatabasePage {
         self.min_elo = None;
         self.result = None;
         self.position = None;
+        self.reload(cx);
+    }
+
+    /// A player's database once their games are in: their games, the player's name as the
+    /// filter, so that a side splits them into their games with White and with Black.
+    fn show_player(
+        &mut self,
+        database: String,
+        username: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_filters(window, cx);
+        let kept = database.clone();
+        store(cx, |prefs| prefs.database = Some(kept));
+        self.database_select.update(cx, |state, cx| {
+            state.set_selected_value(&SharedString::from(database.clone()), window, cx)
+        });
+        self.database = Some(database);
+        self.player_input
+            .update(cx, |input, cx| input.set_value(username, window, cx));
         self.reload(cx);
     }
 
@@ -722,6 +755,21 @@ impl Render for DatabasePage {
                 }))
             })
             .child(div().flex_1())
+            .children(
+                self.shown_database(cx)
+                    .and_then(|info| info.player.clone())
+                    .filter(|_| !busy)
+                    .map(|earlier| {
+                        Button::new("database-update-player")
+                            .ghost()
+                            .small()
+                            .icon(icon("refresh-cw"))
+                            .label("Update games")
+                            .on_click(move |_, window, cx| {
+                                player::open(Some(earlier.clone()), window, cx)
+                            })
+                    }),
+            )
             .when(databases > 0 && !busy, |row| {
                 row.child(
                     Button::new("database-delete")
@@ -734,6 +782,14 @@ impl Render for DatabasePage {
             })
             .when(!busy, |row| {
                 row.child(
+                    Button::new("database-player")
+                        .outline()
+                        .small()
+                        .icon(icon("user"))
+                        .label("Player's games…")
+                        .on_click(|_, window, cx| player::open(None, window, cx)),
+                )
+                .child(
                     Button::new("database-masters")
                         .outline()
                         .small()
@@ -866,6 +922,7 @@ impl Render for DatabasePage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Import,
+    Player,
     Masters,
     ClearFilters,
 }
@@ -878,6 +935,12 @@ impl PageAction for Action {
                 "Import PGN",
                 "import",
                 "pgn file games database",
+            ),
+            Action::Player => ActionInfo::new(
+                "database:player",
+                "Download a player's games",
+                "user",
+                "opponent prepare preparation lichess chess.com scout",
             ),
             Action::Masters => ActionInfo::new(
                 "database:masters",
@@ -916,6 +979,7 @@ impl PageView for DatabasePage {
         let mut actions = Vec::new();
         if !cx.global::<GameDbHandle>().0.read(cx).busy() {
             actions.push(Action::Import);
+            actions.push(Action::Player);
             actions.push(Action::Masters);
         }
         if self.filtered(cx) {
@@ -927,6 +991,7 @@ impl PageView for DatabasePage {
     fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
         match action {
             Action::Import => game_db::choose_and_import(window, cx),
+            Action::Player => player::open(None, window, cx),
             Action::Masters => {
                 let db = cx.global::<GameDbHandle>().0.clone();
                 db.update(cx, |db, cx| db.install_masters(cx));

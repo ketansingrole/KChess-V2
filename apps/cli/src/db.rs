@@ -1,10 +1,11 @@
 //! `db`: the game databases on this computer — list them, import a PGN file, download the master
-//! games, search one's games, print a game, rename and delete.
+//! games or a player's games, search one's games, print a game, rename and delete.
 
 use kchess_contracts::calls;
 use kchess_contracts::check::{DatabaseId, DatabaseName, GameDbGameId, MasterMonths, PgnFilePath};
 use kchess_contracts::types::{
-    GameDbImported, GameDbPhase, GameDbProgress, GameDbQuery, GameDbResult, GameDbSide, GameDbSort,
+    ExplorerSpeed, GameDbImported, GameDbPhase, GameDbProgress, GameDbQuery, GameDbResult,
+    GameDbSide, GameDbSort, GameSite, PlayerGames,
 };
 use serde_json::json;
 
@@ -27,6 +28,9 @@ pub enum Db {
     Masters {
         months: Option<u32>,
     },
+    /// Download a player's games into their database, replacing those an earlier download
+    /// brought.
+    Player(PlayerGames),
     Games(GameDbQuery),
     Game {
         database: String,
@@ -96,6 +100,49 @@ pub fn parse(words: &[String]) -> Result<Db, String> {
                 }
             }
             Ok(Db::Masters { months })
+        }
+        "player" => {
+            let mut words = rest.iter();
+            let site = match words.next().map(String::as_str) {
+                Some("lichess") => GameSite::Lichess,
+                Some("chesscom" | "chess.com") => GameSite::Chesscom,
+                Some(other) => {
+                    return Err(format!("db player is lichess or chesscom, not {other}."));
+                }
+                None => return Err("db player needs a site: lichess or chesscom.".into()),
+            };
+            let username = words
+                .next()
+                .cloned()
+                .ok_or("db player needs the player's username.")?;
+            let mut request = PlayerGames {
+                site,
+                username,
+                months: None,
+                speeds: None,
+                rated: false,
+            };
+            while let Some(word) = words.next() {
+                let flag = word.as_str();
+                match flag {
+                    "--months" => request.months = Some(number(&value(&mut words, flag)?, flag)?),
+                    "--speed" => {
+                        let mut speeds = Vec::new();
+                        for name in value(&mut words, flag)?.split(',') {
+                            speeds.push(ExplorerSpeed::from_key(name.trim()).ok_or_else(|| {
+                                format!(
+                                    "--speed takes ultraBullet, bullet, blitz, rapid, classical \
+                                     or correspondence, not {name}."
+                                )
+                            })?);
+                        }
+                        request.speeds = Some(speeds);
+                    }
+                    "--rated" => request.rated = true,
+                    other => return Err(format!("db player does not take {other}.")),
+                }
+            }
+            Ok(Db::Player(request))
         }
         "games" => {
             let mut query = GameDbQuery {
@@ -176,7 +223,8 @@ pub fn parse(words: &[String]) -> Result<Db, String> {
             database: database(rest)?,
         }),
         other => Err(format!(
-            "Unknown db command {other}: list, import, masters, games, game, rename or delete."
+            "Unknown db command {other}: list, import, masters, player, games, game, rename or \
+             delete."
         )),
     }
 }
@@ -249,6 +297,10 @@ pub async fn run(core: &CoreClient, events: &mut ClientEvents, db: Db) -> Result
             let install = core.request(calls::GameDbMasterInstall {
                 months: months.map(MasterMonths),
             });
+            print(json!(follow(core, events, install).await?));
+        }
+        Db::Player(request) => {
+            let install = core.request(calls::GameDbPlayerInstall { request });
             print(json!(follow(core, events, install).await?));
         }
         Db::Games(query) => {
@@ -345,6 +397,29 @@ mod tests {
             Db::Masters { months: Some(12) }
         );
         assert_eq!(
+            parse(&words("player lichess DrNykterstein")).unwrap(),
+            Db::Player(PlayerGames {
+                site: GameSite::Lichess,
+                username: "DrNykterstein".into(),
+                months: None,
+                speeds: None,
+                rated: false,
+            })
+        );
+        assert_eq!(
+            parse(&words(
+                "player chess.com hikaru --months 6 --speed blitz,rapid --rated"
+            ))
+            .unwrap(),
+            Db::Player(PlayerGames {
+                site: GameSite::Chesscom,
+                username: "hikaru".into(),
+                months: Some(6),
+                speeds: Some(vec![ExplorerSpeed::Blitz, ExplorerSpeed::Rapid]),
+                rated: true,
+            })
+        );
+        assert_eq!(
             parse(&words("delete abc")).unwrap(),
             Db::Delete {
                 database: "abc".into()
@@ -364,6 +439,11 @@ mod tests {
             ("rename abc", "needs the new name"),
             ("masters --months lots", "takes a number"),
             ("masters abc", "does not take abc"),
+            ("player", "needs a site"),
+            ("player fics someone", "lichess or chesscom"),
+            ("player lichess", "needs the player's username"),
+            ("player lichess someone --speed fast", "--speed takes"),
+            ("player lichess someone --max 3", "does not take --max"),
             ("frobnicate", "Unknown db command"),
         ] {
             let error = parse(&words(text)).unwrap_err();
