@@ -208,6 +208,14 @@ fn speed_of(key: &str) -> Option<ExplorerSpeed> {
     })
 }
 
+/// A pawn structure's name, as the Pawn structure filter lists it.
+pub fn structure_name(structure: GameDbStructure) -> &'static str {
+    STRUCTURES
+        .iter()
+        .find(|(key, _)| *key == structure.as_str())
+        .map_or(structure.as_str(), |(_, name)| name)
+}
+
 fn structure_of(key: &str) -> Option<GameDbStructure> {
     Some(match key {
         "isolatedQueenPawn" => GameDbStructure::IsolatedQueenPawn,
@@ -686,6 +694,25 @@ impl DatabasePage {
         self.database = Some(database);
         self.player_input
             .update(cx, |input, cx| input.set_value(player, window, cx));
+        self.reload(cx);
+    }
+
+    /// Database `database`'s games of `player` that reach `structure`, every other filter
+    /// cleared, with More filters open to show it.
+    pub fn show_structure(
+        &mut self,
+        database: String,
+        player: String,
+        structure: GameDbStructure,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_database(database, player, window, cx);
+        self.structure_select.update(cx, |state, cx| {
+            state.set_selected_value(&SharedString::new_static(structure.as_str()), window, cx)
+        });
+        self.structure = Some(structure);
+        self.more = true;
         self.reload(cx);
     }
 
@@ -1714,6 +1741,19 @@ fn open_game_by_id(
 pub fn games_at(fen: String, window: &mut Window, cx: &mut App) {
     kchess_nav::shell::show::<DatabasePage>(window, cx, move |page, window, cx| {
         page.show_position(fen, window, cx)
+    });
+}
+
+/// The Database page with database `database`'s games of `player` that reach `structure`.
+pub fn games_with_structure(
+    database: String,
+    player: String,
+    structure: GameDbStructure,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    kchess_nav::shell::show::<DatabasePage>(window, cx, move |page, window, cx| {
+        page.show_structure(database, player, structure, window, cx)
     });
 }
 

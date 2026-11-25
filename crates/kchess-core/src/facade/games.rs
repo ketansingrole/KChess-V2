@@ -42,7 +42,8 @@ impl GamesApi for Core {
             .read_async(move |ctx| {
                 let mut report = insights::insights(ctx.host, ctx.db, &query, now)?;
                 let tables = tablebases.tables();
-                report.endgames = insights::endgames(ctx.db, &query, now, tables.as_deref())?;
+                (report.endgames, report.structures) =
+                    insights::replayed_games(ctx.db, &query, now, tables.as_deref())?;
                 Ok(report)
             })
             .await
