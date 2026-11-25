@@ -1065,6 +1065,26 @@ fn an_event_s_table_reads_its_standings(cx: &mut gpui_kit::TestAppContext) {
     );
 }
 
+/// A game's menu → Guess the move opens it on Practice's Guess the move, as the side that won:
+/// Jones won with Black, so White's first move is played for Black to answer.
+#[gpui_kit::test]
+fn a_database_game_is_guessed_through_on_practice(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_games(&mut app);
+    app.click(("database-game-actions", 2usize));
+    app.click_label("Guess the move");
+    app.wait_for_page(crate::pages::Page::Practice);
+    assert_eq!(
+        app.find(super::tab(
+            "practice-tabs",
+            crate::pages::practice::Tab::Guess
+        ))
+        .selected(),
+        Some(true)
+    );
+    app.wait_for_moves(&["d4"]);
+}
+
 /// More → Opening report on the board: the position's games through the databases, its main
 /// lines, one played onto the board, and its strongest games, one opened.
 #[gpui_kit::test]
