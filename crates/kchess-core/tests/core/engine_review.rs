@@ -1194,3 +1194,51 @@ async fn a_save_admitted_after_its_account_is_discarded_writes_nothing() {
     assert!(rig.store.review(&key_of(START, &SCHOLARS)).is_none());
     rig.reviews.stop_reviews().await;
 }
+
+/// Positions with five pieces or fewer are judged by the endgame tablebases, not the engine: a
+/// won KR vs K is a win with the tables' move, the rook left to be taken makes it a draw, and the
+/// review calls that move the blunder it is.
+#[tokio::test]
+async fn the_tablebases_judge_a_reviews_endgame() {
+    const WON: &str = "8/8/8/8/8/8/1k6/R3K3 w - - 0 1";
+    let rig = rig("review", "tablebase", false, "off", true);
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/tablebase/fixtures");
+    let folder = tempfile::tempdir().expect("a folder");
+    for name in ["KRvK.rtbw", "KRvK.rtbz"] {
+        std::fs::copy(fixtures.join(name), folder.path().join(name)).expect("a table");
+    }
+    rig.reviews
+        .use_tablebases(kchess_core::tablebase::Tablebases::new(
+            rig.recording.clone(),
+            Arc::new(kchess_core::usage::Unmetered),
+            folder.path().to_path_buf(),
+            "http://127.0.0.1:9/unused".to_string(),
+            Vec::new(),
+        ));
+    let slip = ["a1a2", "b2a2"];
+    rig.reviews
+        .request_review(ReviewRequest {
+            fen: WON.to_string(),
+            moves: moves(&slip),
+            game_id: None,
+            account: None,
+            variant: None,
+        })
+        .await
+        .expect("the request");
+    let full = wait_until(WAIT, "the review", || {
+        rig.host.complete_updates().into_iter().next()
+    })
+    .await;
+    let won = full.evals[0].clone().expect("the start's score");
+    assert_eq!((won.cp, won.tablebase), (Some(1000.0), true));
+    let best = won.best.expect("the tables' move");
+    assert!(best.starts_with("a1") && best != "a1a2", "{best}");
+    let drawn = full.evals[1].clone().expect("the score after Ra2+");
+    assert_eq!((drawn.cp, drawn.tablebase), (Some(0.0), true));
+    let analysis =
+        serde_json::to_value(kchess_domain::review::analyse(&full).expect("an analysis"))
+            .expect("json");
+    assert_eq!(analysis["white"]["blunder"], json!(1), "Ra2+ draws the win");
+    rig.reviews.stop_reviews().await;
+}

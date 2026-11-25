@@ -234,17 +234,23 @@ impl TreeView<'_> {
                 chip.children(
                     self.marks
                         .get(path)
-                        .and_then(|mark| mark.classification)
-                        .map(|classification| {
+                        .and_then(|mark| Some((mark.classification?, mark.tablebase.clone())))
+                        .map(|(classification, tablebase)| {
                             let (label, glyph, color) =
                                 review::classification_look(classification.as_str(), palette.dark);
+                            let label = SharedString::from(match tablebase {
+                                Some(said) => format!("{label}: {said}"),
+                                None => label.to_string(),
+                            });
                             div()
                                 .id(SharedString::from(format!("label-{path}")))
+                                .test_support()
+                                .aria_label(label.clone())
                                 .ml(px(1.))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(color)
                                 .tooltip(move |window, cx| {
-                                    gpui_kit::component::tooltip::Tooltip::new(label)
+                                    gpui_kit::component::tooltip::Tooltip::new(label.clone())
                                         .build(window, cx)
                                 })
                                 .child(glyph)

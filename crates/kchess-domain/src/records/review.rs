@@ -27,6 +27,10 @@ pub struct ReviewEval {
     pub pv: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depth: Option<f64>,
+    /// The endgame tablebases' verdict, not the engine's: `cp` is 1000 or -1000 for a win or a
+    /// loss and 0 for a draw, and `best` is the tables' move.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tablebase: bool,
 }
 
 /// Lichess's accuracy figures, as Lichess sent them (`87`, `64.5`).

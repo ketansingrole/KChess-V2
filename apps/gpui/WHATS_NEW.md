@@ -31,7 +31,7 @@ KChess is now a chess database too. Keep millions of games on your computer, fro
 - Tidy up removes games that came in twice and merges the spellings of one player's name, like "Carlsen, M" and "Carlsen, Magnus".
 - Practice → Endgames → Your endgames finds where a move in your games threw away a won or drawn endgame, checked with the endgame tablebases, and lets you replay it until you get it right. Insights shows how often you win won endgames and hold drawn ones, like KR vs K.
 - Insights shows how you score with each pawn structure you had or played against, like an isolated queen pawn or the Carlsbad. Click one to see those games on the Database page.
-- The endgame tablebases download in Settings → Storage, so the analysis board shows how any position with up to five pieces ends, with no connection.
+- The endgame tablebases download in Settings → Storage, so the analysis board shows how any position with up to five pieces ends, with no connection. A game review marks where an endgame you had won or drawn slipped away, and the move that kept it.
 
 ### Changed
 

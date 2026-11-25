@@ -45,6 +45,43 @@ pub type Analysed = (GameAnalysis, Vec<Option<Classification>>);
 /// The evaluation chart: White's chances per position (the start first), and each move's label.
 pub type Chart = (Vec<Option<f64>>, Vec<Option<Judgment>>);
 
+/// What the endgame tablebases say of move `index` of `review`, played by `mover`, when they
+/// judged it: what it gave away and the move that kept it ("throws away the win · Ra8 wins").
+/// None for a move the engine judged, or one that gave nothing away.
+pub(super) fn tablebase_said(review: &StoredReview, index: usize, mover: Color) -> Option<String> {
+    let before = review
+        .evals
+        .get(index)?
+        .as_ref()
+        .filter(|eval| eval.tablebase)?;
+    let after = review.evals.get(index + 1)?.as_ref()?;
+    let ours = |cp: Option<f64>| cp.map(|cp| if mover == Color::White { cp } else { -cp });
+    let (was, now) = (ours(before.cp)?, ours(after.cp)?);
+    let (gave, keeps) = if was >= 1000. && now <= -1000. {
+        ("turns the win into a loss", "wins")
+    } else if was >= 1000. && now < 1000. {
+        ("throws away the win", "wins")
+    } else if was == 0. && now <= -1000. {
+        ("loses the drawn endgame", "holds the draw")
+    } else {
+        return None;
+    };
+    let line: Vec<&str> = review.moves[..index]
+        .iter()
+        .map(String::as_str)
+        .chain(before.best.as_deref())
+        .collect();
+    let variant = review
+        .variant
+        .as_deref()
+        .and_then(kchess_domain::variant::Variant::from_key)
+        .unwrap_or(kchess_domain::variant::Variant::Standard);
+    let best = kchess_domain::tree::pv_san(&review.fen, &line, line.len(), variant)
+        .into_iter()
+        .nth(index)?;
+    Some(format!("{gave} · {} {keeps} (tablebase)", best.san))
+}
+
 /// What the review says about one main-line move (`ReviewMark`).
 #[derive(Clone)]
 pub struct ReviewMark {
@@ -52,6 +89,8 @@ pub struct ReviewMark {
     pub index: usize,
     pub color: Color,
     pub classification: Option<Classification>,
+    /// What the endgame tablebases say of a move they judged a mistake (`tablebase_said`).
+    pub tablebase: Option<String>,
 }
 
 #[derive(Default)]
@@ -74,8 +113,9 @@ pub struct ReviewState {
     pub practice_feedback: Option<String>,
     /// The positions in practice (`MistakeExercise`), as the core keeps them.
     pub mistakes: Vec<Drill>,
-    /// The last review analysed, by review and its last update.
-    analysed: RefCell<Option<(String, i64, Analysed)>>,
+    /// The last review analysed, with what it was worked out from: two updates can share a
+    /// millisecond, so its time alone does not tell them apart.
+    analysed: RefCell<Option<(StoredReview, Analysed)>>,
 }
 
 impl ReviewState {
@@ -190,17 +230,15 @@ impl AnalysisPage {
         if !Self::assistance_allowed(cx) || review.fen != self.root.fen {
             return None;
         }
-        let (key, updated) = (review.key.clone(), review.updated_at);
         let mut memo = self.review.analysed.borrow_mut();
-        if let Some((known, at, analysed)) = memo.as_ref()
-            && *known == key
-            && *at == updated
+        if let Some((known, analysed)) = memo.as_ref()
+            && *known == review
         {
             return Some(analysed.clone());
         }
         let analysis = kchess_domain::review::analyse(&review).ok()?;
         let classes = kchess_domain::review::classifications(&review).unwrap_or_default();
-        *memo = Some((key, updated, (analysis.clone(), classes.clone())));
+        *memo = Some((review, (analysis.clone(), classes.clone())));
         Some((analysis, classes))
     }
 
@@ -222,6 +260,9 @@ impl AnalysisPage {
                     index,
                     color: verdict.color,
                     classification: classes.get(index).copied().flatten(),
+                    tablebase: verdict
+                        .judgment
+                        .and_then(|_| tablebase_said(&review, index, verdict.color)),
                 },
             );
         }
