@@ -991,7 +991,9 @@ fn a_players_game_is_found_and_guessed_as_them(cx: &mut gpui_kit::TestAppContext
     // Another game goes back to their games, and they are kept among the players looked up.
     app.click("guess-another");
     app.find(("guess-player-game", 1usize));
-    let recent = app.cx.update(|cx| crate::player_search::recent(kchess_contracts::types::GameSite::Lichess, cx));
+    let recent = app
+        .cx
+        .update(|cx| crate::player_search::recent(kchess_contracts::types::GameSite::Lichess, cx));
     assert_eq!(recent.first().map(String::as_str), Some("Showcase"));
 }
 

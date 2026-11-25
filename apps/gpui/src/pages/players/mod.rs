@@ -12,8 +12,8 @@ use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{MessageText, PresenceUsers, Username};
 use kchess_contracts::types::{
-    ActivityDay, Crosstable, GameSite, LeaderboardEntry, LichessGame, LichessRelation, PerfResult, PerfStats,
-    PerfType, RelationAction, Reply, UserPresence,
+    ActivityDay, Crosstable, GameSite, LeaderboardEntry, LichessGame, LichessRelation, PerfResult,
+    PerfStats, PerfType, RelationAction, Reply, UserPresence,
 };
 use std::rc::Rc;
 
