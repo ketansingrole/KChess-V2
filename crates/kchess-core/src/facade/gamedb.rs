@@ -220,6 +220,20 @@ impl GameDbApi for Core {
             .await
     }
 
+    async fn game_db_repertoire_build(
+        &self,
+        color: kchess_contracts::check::Side,
+        database: DatabaseId,
+    ) -> Result<kchess_contracts::types::GameDbRepertoireBuilt> {
+        let names = self
+            .database
+            .read_async(|ctx| crate::store::own_games::your_names(ctx.db))
+            .await?;
+        self.gamedb
+            .repertoire_build(color.0, database.0, names)
+            .await
+    }
+
     async fn game_db_novelty(
         &self,
         fen: Fen,

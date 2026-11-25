@@ -1269,18 +1269,10 @@ fn wait_for_chapter(app: &mut Harness, id: &str, pgn: &str) {
     });
 }
 
-/// Practice → Repertoire → Check → Against your games: your games with White, followed through
-/// a White repertoire; the two that left it with 2. Nc3, where it plays 2. Nf3, are listed with
-/// how they went, open on the analysis board, and can join the repertoire.
-#[gpui_kit::test]
-fn a_repertoire_is_checked_against_your_games(cx: &mut gpui_kit::TestAppContext) {
-    let mut app = Harness::start(cx);
+/// Your games, each its id, its moves from the start and its result, played with White as
+/// "You" and saved to Your games, which the Game database page then lists.
+fn save_your_games(app: &mut Harness, games: &[(&str, &[&str], &str)]) {
     let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-    let games: [(&str, &[&str], &str); 3] = [
-        ("a", &["e2e4", "e7e5", "b1c3"], "1-0"),
-        ("b", &["e2e4", "e7e5", "b1c3"], "1/2-1/2"),
-        ("c", &["e2e4", "c7c5", "g1f3"], "1-0"),
-    ];
     for (id, moves, result) in games {
         let game = serde_json::json!({
             "id": id, "source": "computer", "startedAt": 1_761_091_200_000_i64,
@@ -1293,7 +1285,67 @@ fn a_repertoire_is_checked_against_your_games(cx: &mut gpui_kit::TestAppContext)
         });
     }
     app.open("Game database");
-    wait_for_databases(&mut app, "Your games", &[("Your games", 3)]);
+    let count = games.len() as u64;
+    wait_for_databases(app, "Your games", &[("Your games", count)]);
+}
+
+/// Practice → Repertoire with nothing to drill: From games → Your games as White makes a study
+/// of your games with White, your most played move each time and the replies that came twice
+/// (1...e5 and 1...c5, not 1...e6), and drills it.
+#[gpui_kit::test]
+fn a_repertoire_is_made_from_your_games(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    save_your_games(
+        &mut app,
+        &[
+            ("a", &["e2e4", "e7e5", "g1f3"], "1-0"),
+            ("b", &["e2e4", "e7e5", "g1f3"], "0-1"),
+            ("c", &["e2e4", "e7e5", "b1c3"], "1-0"),
+            ("d", &["e2e4", "c7c5", "g1f3"], "1/2-1/2"),
+            ("e", &["e2e4", "c7c5", "g1f3"], "1-0"),
+            ("f", &["e2e4", "e7e6", "d2d4"], "1-0"),
+        ],
+    );
+    app.open("Practice");
+    super::practice::tab(&mut app, crate::pages::practice::Tab::Openings);
+    app.click("repertoire-from-games");
+    app.click_label("Your games as White");
+    app.wait_for("the study, drilled", |_, cx| {
+        let studies = cx.global::<crate::studies::StudyHandle>().0.read(cx);
+        let Some(study) = studies
+            .items()
+            .iter()
+            .find(|study| study.name == "Your games as White")
+        else {
+            return false;
+        };
+        study
+            .chapters
+            .first()
+            .is_some_and(|chapter| chapter.pgn.contains("1. e4 e5 ( 1... c5 2. Nf3 ) 2. Nf3 *"))
+            && crate::prefs::get::<String>(cx, "kchess:repertoire-study", String::new()) == study.id
+    });
+    // Drilled with White.
+    assert_eq!(
+        app.find(("repertoire-color", 0usize)).selected(),
+        Some(true)
+    );
+}
+
+/// Practice → Repertoire → Check → Against your games: your games with White, followed through
+/// a White repertoire; the two that left it with 2. Nc3, where it plays 2. Nf3, are listed with
+/// how they went, open on the analysis board, and can join the repertoire.
+#[gpui_kit::test]
+fn a_repertoire_is_checked_against_your_games(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    save_your_games(
+        &mut app,
+        &[
+            ("a", &["e2e4", "e7e5", "b1c3"], "1-0"),
+            ("b", &["e2e4", "e7e5", "b1c3"], "1/2-1/2"),
+            ("c", &["e2e4", "c7c5", "g1f3"], "1-0"),
+        ],
+    );
 
     let id = train_repertoire(&mut app, "1. e4 e5 (1... c5 2. Nf3) 2. Nf3 *", "white");
     app.click("repertoire-check");

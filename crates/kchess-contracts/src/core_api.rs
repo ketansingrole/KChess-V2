@@ -804,6 +804,14 @@ core_api! {
         #[assist(Lookups)]
         GameDbYourEndgames = "gameDbYourEndgames" fn game_db_your_endgames(
         ) -> crate::types::YourEndgames;
+        /// A repertoire of `color` made from the games in `database` (Your games, or a player's
+        /// from Player's games) where you, or that player, had it: from the standard start,
+        /// the most played move at their turn and the other side's common replies at its turn.
+        #[assist(Lookups)]
+        GameDbRepertoireBuild = "gameDbRepertoireBuild" fn game_db_repertoire_build(
+            color: Side,
+            database: DatabaseId
+        ) -> crate::types::GameDbRepertoireBuilt;
         #[writes(GameDb)]
         GameDbMasterInstall = "gameDbMasterInstall" fn game_db_master_install(;
             months: Option<MasterMonths>

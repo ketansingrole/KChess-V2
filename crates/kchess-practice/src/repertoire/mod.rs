@@ -56,6 +56,11 @@ pub mod your_games;
 use lines::*;
 
 const STUDY: &str = "kchess:repertoire-study";
+/// Whether there are game databases but Your games, whether there is Your games, and each
+/// player's from Player's games: its id and the name a menu gives them.
+type Sources = (bool, bool, Vec<(String, String)>);
+/// Your games' database id, as the core names it.
+const OWN_DATABASE: &str = "own";
 const OPENING_CHOICE: &str = "kchess:repertoire-opening";
 const COLOR: &str = "kchess:repertoire-color";
 const CHAPTER: &str = "kchess:repertoire-chapter";
@@ -131,6 +136,10 @@ pub struct Repertoire {
     correct: u32,
     wrong: u32,
     saving: bool,
+    /// A repertoire is being made from games (`make_from_games`).
+    making: bool,
+    /// The game databases its lines are checked against and made from (`databases`).
+    sources: Sources,
     reply: Option<Task<()>>,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
@@ -212,6 +221,17 @@ impl Repertoire {
                 cx.notify();
             }),
             cx.observe_global::<crate::prefs::ViewPreferences>(|this, cx| this.follow_choices(cx)),
+            // A database added or removed changes what Check and From games offer.
+            cx.observe(
+                &cx.global::<kchess_board::game_db::GameDbHandle>().0.clone(),
+                |this, _, cx| {
+                    let sources = Self::databases(cx);
+                    if sources != this.sources {
+                        this.sources = sources;
+                        cx.notify();
+                    }
+                },
+            ),
             // The board follows blindfold mode.
             cx.subscribe(&settings, |this, _, _: &SettingsChanged, cx| {
                 this.redraw(cx)
@@ -237,6 +257,8 @@ impl Repertoire {
             correct: 0,
             wrong: 0,
             saving: false,
+            making: false,
+            sources: Self::databases(cx),
             reply: None,
             board,
             layout: PlayLayout::under(tab_bar_height::<crate::Tab>),
@@ -357,7 +379,7 @@ impl Repertoire {
     /// The game databases to check the lines against: whether there are any but Your games,
     /// whether there is Your games, and each player's from Player's games (its id and the name its
     /// menu item gives the player: their username, or the database's name when two share one).
-    fn databases(cx: &App) -> (bool, bool, Vec<(String, String)>) {
+    fn databases(cx: &App) -> Sources {
         use kchess_contracts::types::DatabaseSource;
         let handle = cx.global::<kchess_board::game_db::GameDbHandle>().0.clone();
         let databases = handle.read(cx).databases();
@@ -1113,6 +1135,113 @@ impl Repertoire {
         .detach();
     }
 
+    /// A repertoire of `color`, made from the games of `database` (Your games, or `name`'s from
+    /// Player's games) and saved as a study, which is then drilled with that side.
+    pub fn make_from_games(
+        &mut self,
+        database: String,
+        name: Option<String>,
+        color: Color,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let side = if color == Color::White {
+            "White"
+        } else {
+            "Black"
+        };
+        let made = cx
+            .global::<AppCore>()
+            .request(calls::GameDbRepertoireBuild {
+                color: kchess_contracts::check::Side(color),
+                database: kchess_contracts::check::DatabaseId(database),
+            });
+        let library = cx.global::<StudyHandle>().0.clone();
+        self.making = true;
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let whose = name
+                .as_deref()
+                .map_or("your".to_string(), |name| format!("{name}'s"));
+            let built = match made.await {
+                Ok(built) if built.moves > 0 => Ok(built),
+                Ok(built) if built.games == 0 => Err(format!("None of {whose} games as {side}")),
+                Ok(_) => Err(format!("Too few of {whose} games as {side}")),
+                Err(cause) => {
+                    crate::log::write(
+                        Level::Warn,
+                        "repertoire",
+                        &format!("Making a repertoire from games failed: {cause}"),
+                    );
+                    Err("Could not make the repertoire".to_string())
+                }
+            };
+            let saved = match built {
+                Ok(built) => {
+                    let title = match &name {
+                        Some(name) => format!("{name} as {side}"),
+                        None => format!("Your games as {side}"),
+                    };
+                    let save = this.update(cx, |_, cx| {
+                        let library = library.read(cx);
+                        library.command(StudyCommand::Save {
+                            name: library.fresh_name(&title),
+                            pgn: built.pgn,
+                            id: None,
+                            chapter_id: None,
+                        })
+                    });
+                    match save {
+                        Ok(save) => Some(save.await),
+                        Err(_) => return,
+                    }
+                }
+                Err(message) => {
+                    this.update_in(cx, |this, window, cx| {
+                        this.making = false;
+                        window.push_notification(message, cx);
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            this.update_in(cx, |this, window, cx| {
+                this.making = false;
+                match saved {
+                    Some(Ok(result)) => {
+                        library.update(cx, |library, cx| {
+                            library.apply(&result);
+                            cx.notify();
+                        });
+                        if let Some(id) = result.id.clone() {
+                            let side = if color == Color::White {
+                                "white"
+                            } else {
+                                "black"
+                            };
+                            crate::prefs::set(cx, COLOR, side);
+                            train_study(id, window, cx);
+                        }
+                        window.push_notification("Saved to Studies", cx);
+                    }
+                    Some(Err(cause)) => {
+                        crate::log::write(
+                            Level::Warn,
+                            "repertoire",
+                            &format!("Saving the repertoire made from games failed: {cause}"),
+                        );
+                        window.push_notification("Could not save the study", cx);
+                    }
+                    None => {}
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Keep the drilled opening, with the replies found for it, as a study to edit or drill later.
     fn save_opening(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(mut tree), Some(opening)) = (self.drill.clone(), Self::opening(cx)) else {
@@ -1222,7 +1351,75 @@ impl Repertoire {
         });
     }
 
-    fn empty_actions() -> impl IntoElement {
+    /// From games: a menu of Your games and each player's games from Player's games, to make
+    /// a repertoire from; none without them. With `sides`, each is offered with either side
+    /// (where the side played is not shown); without, with the side played.
+    fn games_button(&self, sides: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (_, yours, players) = self.sources.clone();
+        let mut sources: Vec<(String, Option<String>)> = Vec::new();
+        if yours {
+            sources.push((OWN_DATABASE.to_string(), None));
+        }
+        sources.extend(players.into_iter().map(|(id, name)| (id, Some(name))));
+        if sources.is_empty() {
+            return None;
+        }
+        let colors = if sides {
+            vec![Color::White, Color::Black]
+        } else {
+            vec![Self::color(cx)]
+        };
+        let page = cx.entity().downgrade();
+        let button = Button::new("repertoire-from-games");
+        // Among the empty page's buttons, outlined as they are.
+        let button = if sides {
+            button.outline()
+        } else {
+            button.ghost()
+        };
+        Some(
+            button
+                .icon(icon("list-tree"))
+                .label("From games")
+                .loading(self.making)
+                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                    let items = sources.iter().flat_map(|source| {
+                        colors.iter().map(move |color| (source.clone(), *color))
+                    });
+                    items.fold(menu, |menu, ((database, name), color)| {
+                        let whose = name.clone().unwrap_or_else(|| "Your games".to_string());
+                        let label = if sides {
+                            let side = if color == Color::White {
+                                "White"
+                            } else {
+                                "Black"
+                            };
+                            format!("{whose} as {side}")
+                        } else {
+                            whose
+                        };
+                        let icon_name = if name.is_some() {
+                            "user-search"
+                        } else {
+                            "user"
+                        };
+                        let page = page.clone();
+                        menu.item(PopupMenuItem::new(label).icon(icon(icon_name)).on_click(
+                            move |_, window, cx| {
+                                let (database, name) = (database.clone(), name.clone());
+                                page.update(cx, |this, cx| {
+                                    this.make_from_games(database, name, color, window, cx)
+                                })
+                                .ok();
+                            },
+                        ))
+                    })
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn empty_actions(extra: Option<AnyElement>) -> impl IntoElement {
         h_flex()
             .gap(px(8.))
             .flex_wrap()
@@ -1239,9 +1436,15 @@ impl Repertoire {
                     .label("Open studies")
                     .on_click(|_, window, cx| kchess_nav::shell::open(Page::Studies, window, cx)),
             )
+            .children(extra)
     }
 
-    fn empty(title: &'static str, description: Option<&'static str>, palette: &Palette) -> Div {
+    fn empty(
+        title: &'static str,
+        description: Option<&'static str>,
+        extra: Option<AnyElement>,
+        palette: &Palette,
+    ) -> Div {
         widgets::empty_state(
             icon("book-marked"),
             title,
@@ -1249,7 +1452,7 @@ impl Repertoire {
             palette,
         )
         .py(px(32.))
-        .child(Self::empty_actions())
+        .child(Self::empty_actions(extra))
     }
 }
 
@@ -1261,6 +1464,7 @@ impl Render for Repertoire {
         let palette = *cx.global::<Palette>();
         let opening = Self::opening(cx);
         if self.studies.is_empty() && opening.is_none() {
+            let from_games = self.games_button(true, cx);
             return div()
                 .size_full()
                 .px(kchess_nav::play_layout::side_padding(window))
@@ -1268,12 +1472,13 @@ impl Render for Repertoire {
                 .child(widgets::card(&palette).child(Self::empty(
                     "Nothing to drill yet",
                     Some("Drill an opening, or lines you saved as a study"),
+                    from_games,
                     &palette,
                 )))
                 .into_any_element();
         }
         let drills_opening = Self::drills_opening(cx);
-        let (databases, yours, players) = Self::databases(cx);
+        let (databases, yours, players) = self.sources.clone();
         let color = Self::color(cx);
         let your_turn = self.your_turn(cx);
         // The board's column: the board and the move box's row, once a line is on the board.
@@ -1315,6 +1520,7 @@ impl Render for Repertoire {
         } else if !(drills_opening && self.preparing) {
             board_column.child(widgets::card(&palette).child(Self::empty(
                 "Choose a repertoire",
+                None,
                 None,
                 &palette,
             )))
@@ -1535,6 +1741,7 @@ impl Render for Repertoire {
                     )
                     .when(!drills_opening && (databases || yours), |actions| {
                         let page = cx.entity().downgrade();
+                        let players = players.clone();
                         actions.child(
                             Button::new("repertoire-check")
                                 .ghost()
@@ -1594,6 +1801,7 @@ impl Render for Repertoire {
                                 }),
                         )
                     })
+                    .children(self.games_button(false, cx))
                     .when(drills_opening, |actions| {
                         actions.child(
                             Button::new("save-opening")

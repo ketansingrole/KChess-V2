@@ -1215,6 +1215,40 @@ impl GameDbService {
         self.inner.logged("your endgames", result)
     }
 
+    /// A repertoire of `color` made from `database`'s games where its player had it: Your
+    /// games, whose player is any of `names`, or a player's from Player's games.
+    pub async fn repertoire_build(
+        &self,
+        color: shakmaty::Color,
+        database: String,
+        names: Vec<String>,
+    ) -> Result<kchess_contracts::types::GameDbRepertoireBuilt> {
+        let Some(info) = self.inner.info(&database).await? else {
+            return Err(CoreError::new("That database is gone."));
+        };
+        let names = match info.player {
+            Some(player) => vec![player.username],
+            None if database == own::OWN_ID => names,
+            None => return Err(CoreError::new("Choose Your games or a player's games.")),
+        };
+        let file = self.inner.file(&database);
+        // Dropped by its caller, the build stops at its next game.
+        let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
+        let stopped = Arc::clone(&stop.0);
+        let result = tokio::task::spawn_blocking(move || {
+            let db = schema::open_read(&file)?;
+            let (games, tree) = repertoire::build(&db, color, &names, &stopped)?;
+            let moves = tree_moves(&tree);
+            let pgn = tree.to_pgn().map_err(CoreError::new)?;
+            Ok(kchess_contracts::types::GameDbRepertoireBuilt { games, moves, pgn })
+        })
+        .await
+        .map_err(|_| CoreError::new("The games could not be read. Try again."))
+        .and_then(|built| built);
+        drop(stop);
+        self.inner.logged("repertoire from games", result)
+    }
+
     /// Stops the import and the rebuild of "Your games"; `close` waits for them to end.
     pub fn stop(&self) {
         self.cancel();
@@ -1272,3 +1306,14 @@ pub fn write_database(data_dir: &Path, name: &str, pgn: &str) -> Result<String> 
 
 #[cfg(test)]
 mod tests;
+
+/// The moves of `tree`, every line's.
+fn tree_moves(tree: &kchess_domain::tree::TreeNode) -> u64 {
+    let mut count = 0;
+    let mut open = vec![tree];
+    while let Some(node) = open.pop() {
+        count += node.children.len() as u64;
+        open.extend(node.children.iter());
+    }
+    count
+}
