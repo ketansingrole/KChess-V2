@@ -850,6 +850,36 @@ impl DatabasePage {
         }
     }
 
+    /// Guess game `row`'s moves on Practice, as the side that won (White after a draw), as the
+    /// explorer's master games are guessed.
+    fn guess(&mut self, row: &GameDbRow, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(database) = self.database.clone() else {
+            return;
+        };
+        let request = cx.global::<AppCore>().request(calls::GameDbGame {
+            database: DatabaseId(database),
+            game: GameDbGameId(row.id),
+        });
+        let side = if row.result == "0-1" {
+            shakmaty::Color::Black
+        } else {
+            shakmaty::Color::White
+        };
+        cx.spawn_in(window, async move |_, cx| {
+            let pgn = request.await;
+            cx.update(|window, cx| match pgn {
+                Ok(pgn) => kchess_practice::guess_moves(&pgn, Some(side), window, cx),
+                Err(cause) => window.push_notification(
+                    Notification::error(loading::failure("database", &cause))
+                        .title("Could not open the game"),
+                    cx,
+                ),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn about(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(database) = self.database.clone() {
             report::open(cx.entity().downgrade(), database, name, window, cx);
@@ -1074,7 +1104,8 @@ impl DatabasePage {
     }
 }
 
-/// A menu of what may be done with some games: copy them, save them as PGN, or delete them;
+/// A menu of what may be done with some games: for one, its players' and event's reports and
+/// guessing its moves; copy them, save them as PGN, or delete them;
 /// from Your games only copy and save, and only save while an import runs.
 #[derive(Clone)]
 struct GamesMenu {
@@ -1125,6 +1156,21 @@ impl GamesMenu {
                         .on_click(move |_, window, cx| {
                             let event = event.clone();
                             page.update(cx, |page, cx| page.event_table(game, event, window, cx))
+                                .ok();
+                        }),
+                )
+            }
+            None => menu,
+        };
+        // A game with moves can be guessed through.
+        let menu = match self.game.clone().filter(|game| game.plies > 0) {
+            Some(game) => {
+                let page = self.page.clone();
+                menu.item(
+                    PopupMenuItem::new("Guess the move")
+                        .icon(icon("target"))
+                        .on_click(move |_, window, cx| {
+                            page.update(cx, |page, cx| page.guess(&game, window, cx))
                                 .ok();
                         }),
                 )
