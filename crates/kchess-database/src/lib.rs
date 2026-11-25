@@ -18,6 +18,7 @@ mod lichess;
 mod manage;
 mod player;
 pub mod target;
+mod tidy;
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
@@ -291,6 +292,13 @@ impl DatabasePage {
                         "{} copied to {}",
                         widgets::format_counted(*added as f64, "game", "games"),
                         database.name
+                    )),
+                    cx,
+                ),
+                GameDbEvent::DuplicatesRemoved { removed } => window.push_notification(
+                    Notification::success(format!(
+                        "{} removed",
+                        widgets::format_counted(*removed as f64, "duplicate", "duplicates")
                     )),
                     cx,
                 ),
@@ -1045,6 +1053,36 @@ impl Render for DatabasePage {
                                 .label("Add a month")
                                 .on_click(move |_, window, cx| {
                                     lichess::open(Some(rating), window, cx)
+                                })
+                        }),
+                )
+                .children(
+                    self.shown_database(cx)
+                        .filter(|info| !busy && info.source != DatabaseSource::Own)
+                        .cloned()
+                        .map(|info| {
+                            let (copies, names) = (info.clone(), info);
+                            Button::new("database-tidy")
+                                .ghost()
+                                .small()
+                                .icon(icon("eraser"))
+                                .label("Tidy up")
+                                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                                    let (copies, names) = (copies.clone(), names.clone());
+                                    menu.item(
+                                        PopupMenuItem::new("Remove duplicate games…")
+                                            .icon(icon("copy"))
+                                            .on_click(move |_, window, cx| {
+                                                tidy::remove_duplicates(copies.clone(), window, cx)
+                                            }),
+                                    )
+                                    .item(
+                                        PopupMenuItem::new("Merge player names…")
+                                            .icon(icon("users"))
+                                            .on_click(move |_, window, cx| {
+                                                tidy::merge_names(names.clone(), window, cx)
+                                            }),
+                                    )
                                 })
                         }),
                 )

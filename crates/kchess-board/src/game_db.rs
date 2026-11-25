@@ -48,6 +48,8 @@ pub enum GameDbEvent {
     LichessInstalled { database: String },
     /// Games were copied into `database`.
     Copied { database: DatabaseInfo, added: u64 },
+    /// The copies of games in a database were removed, `removed` of them.
+    DuplicatesRemoved { removed: u64 },
 }
 
 /// Saves `pgn` (a game from the board) in the database `into`, or a new one named `name`: a new
@@ -268,6 +270,22 @@ impl GameDb {
             search,
         });
         self.run(GameDbPhase::Indexing, &database, delete, |_, _| {}, cx);
+    }
+
+    /// Removes the games of `database` that copy an earlier one, its indexes built again.
+    pub fn remove_duplicates(&mut self, database: String, cx: &mut Context<Self>) {
+        let remove = cx
+            .global::<AppCore>()
+            .request(calls::GameDbRemoveDuplicates {
+                database: DatabaseId(database.clone()),
+            });
+        self.run(
+            GameDbPhase::Indexing,
+            &database,
+            remove,
+            |removed, cx| cx.emit(GameDbEvent::DuplicatesRemoved { removed }),
+            cx,
+        );
     }
 
     /// Copies the `chosen` games of `from` into the database `into`, or a new one named `name`.

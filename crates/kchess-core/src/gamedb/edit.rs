@@ -34,6 +34,8 @@ pub enum Selection {
     Games(Vec<u64>),
     /// Every game a search of the database finds, whatever its page.
     Search(GameDbQuery),
+    /// Every game that copies an earlier one (`duplicates`).
+    Duplicates,
 }
 
 /// The ids of the games `selection` names that the database holds, in id order.
@@ -55,7 +57,38 @@ pub fn selected(db: &Connection, selection: &Selection, stop: &AtomicBool) -> Re
         }
         Selection::Search(query) if query.position.is_some() => explore::ids_at(db, query, stop),
         Selection::Search(query) => search::ids(db, query),
+        Selection::Duplicates => duplicates(db, stop),
     }
+}
+
+/// The games that copy an earlier game of the database, in id order: the same players, date,
+/// result, start and moves. The first of each stays.
+pub fn duplicates(db: &Connection, stop: &AtomicBool) -> Result<Vec<i64>> {
+    let visible = search::visible(db)?;
+    // Each game is compared with the earlier games of its White on its date, which the White
+    // index (`schema::INDEXES`) finds.
+    let mut games = db
+        .prepare(
+            "SELECT g.id FROM games g
+             WHERE g.import_id <= ?1 AND EXISTS (
+               SELECT 1 FROM games o
+               WHERE o.white = g.white AND o.date_key = g.date_key AND o.id < g.id
+                 AND o.import_id <= ?1 AND o.black = g.black AND o.result IS g.result
+                 AND o.fen IS g.fen AND o.plies = g.plies AND o.moves = g.moves)
+             ORDER BY g.id",
+        )
+        .sql()?;
+    let mut rows = games.query([visible]).sql()?;
+    let mut ids = Vec::new();
+    let mut read = 0u64;
+    while let Some(row) = rows.next().sql()? {
+        ids.push(row.get(0).sql()?);
+        read += 1;
+        if read.is_multiple_of(10_000) && stop.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(CoreError::aborted("Cancelled."));
+        }
+    }
+    Ok(ids)
 }
 
 /// Writes the games `ids` of `db` to `out` as PGN, one after another; answers how many. A game

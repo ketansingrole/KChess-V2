@@ -707,6 +707,28 @@ core_api! {
             games: Option<GameDbGameIds>,
             search: Option<GameDbQuery>
         ) -> u64;
+        /// How many games of `database` are copies of an earlier one: the same players, date,
+        /// result, start and moves.
+        GameDbDuplicates = "gameDbDuplicates" fn game_db_duplicates(database: DatabaseId) -> u64;
+        /// Removes those copies, keeping the first of each game; answers how many went. The
+        /// indexes are built again as `gameDbDeleteGames` builds them.
+        #[writes(GameDb)]
+        GameDbRemoveDuplicates = "gameDbRemoveDuplicates" fn game_db_remove_duplicates(
+            database: DatabaseId
+        ) -> u64;
+        /// The names in `database` that are likely one player's spellings ("Carlsen, M" and
+        /// "Carlsen, Magnus"), the groups with the most games first.
+        GameDbNameGroups = "gameDbNameGroups" fn game_db_name_groups(
+            database: DatabaseId
+        ) -> Vec<GameDbNameGroup>;
+        /// Gives the games of each of `names` in `database` the name `into`, which it must have;
+        /// answers how many games changed.
+        #[writes(GameDb)]
+        GameDbMergeNames = "gameDbMergeNames" fn game_db_merge_names(
+            database: DatabaseId,
+            into: PlayerName,
+            names: PlayerNames
+        ) -> u64;
         /// The first move of the line `moves` from `fen` that no game of the game databases
         /// (Your games aside) played from its position, with the games that reached that position
         /// and what they played. The line's own game does not count: game `game` of `database`

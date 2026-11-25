@@ -52,6 +52,7 @@ mod gamedb_novelty;
 mod gamedb_player;
 mod gamedb_scale;
 mod gamedb_tcec;
+mod gamedb_tidy;
 mod lichess_accounts;
 mod lichess_client;
 mod lichess_endpoints;

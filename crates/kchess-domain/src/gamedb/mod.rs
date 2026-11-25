@@ -16,6 +16,7 @@ use crate::pgn::{self, Game};
 use crate::position;
 use crate::rules;
 
+pub mod names;
 mod notes;
 
 /// The first byte of a game's `extra` when it holds the notes `notes::pack` wrote.
@@ -373,6 +374,25 @@ fn sans_of(start: &VariantPosition, moves: &[Move]) -> Vec<String> {
         .collect()
 }
 
+/// A game kept as its text, with the players the database names now: their names merged since
+/// it was imported (`names`) replace the text's.
+fn with_players(text: String, stored: &Stored) -> String {
+    let Some(mut game) = pgn::parse_pgn(&text).into_iter().next() else {
+        return text;
+    };
+    let names = ["White", "Black"].map(|side| (side, notes::column(stored, side)));
+    if names
+        .iter()
+        .all(|(side, name)| game.header(side) == name.as_deref())
+    {
+        return text;
+    }
+    for (side, name) in names {
+        game.put_header(side, name.unwrap_or_default());
+    }
+    pgn::make_pgn(&game)
+}
+
 /// A game's starting position: the FEN it was stored with, or the standard start.
 pub fn start_of(fen: Option<&str>) -> Option<VariantPosition> {
     match fen {
@@ -386,7 +406,8 @@ pub fn start_of(fen: Option<&str>) -> Option<VariantPosition> {
 pub fn pgn_of(stored: &Stored) -> Option<String> {
     let extra = stored.extra.as_deref();
     if let Some((&EXTRA_TEXT, text)) = extra.and_then(<[u8]>::split_first) {
-        return String::from_utf8(text.to_vec()).ok();
+        let text = String::from_utf8(text.to_vec()).ok()?;
+        return Some(with_players(text, stored));
     }
     let start = start_of(stored.fen.as_deref())?;
     let sans = sans_of(&start, &decode_line(&start, &stored.moves)?);

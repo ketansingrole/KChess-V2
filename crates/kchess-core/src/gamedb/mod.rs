@@ -13,6 +13,7 @@ pub mod explore;
 pub mod import;
 pub mod lichess;
 pub mod master;
+pub mod names;
 pub mod novelty;
 pub mod own;
 pub mod player;
@@ -37,8 +38,9 @@ use kchess_contracts::CoreEvent;
 use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    DatabaseInfo, DatabaseSource, GameDbImported, GameDbNovelty, GameDbPage, GameDbPhase as Phase,
-    GameDbProgress, GameDbQuery, GameDbSaved, GameDbStatus, LookupOptions, PositionLookup,
+    DatabaseInfo, DatabaseSource, GameDbImported, GameDbNameGroup, GameDbNovelty, GameDbPage,
+    GameDbPhase as Phase, GameDbProgress, GameDbQuery, GameDbSaved, GameDbStatus, LookupOptions,
+    PositionLookup,
 };
 use kchess_domain::gamedb;
 
@@ -761,6 +763,44 @@ impl GameDbService {
                 Err(error)
             }
         }
+    }
+
+    /// How many games of database `id` copy an earlier one.
+    pub async fn duplicates(&self, id: &str) -> Result<u64> {
+        let result = self
+            .selected(id, edit::Selection::Duplicates)
+            .await
+            .map(|ids| ids.len() as u64);
+        self.inner.logged("duplicates", result)
+    }
+
+    /// The names of database `id` that are likely one player's.
+    pub async fn name_groups(&self, id: &str) -> Result<Vec<GameDbNameGroup>> {
+        let lane = self.inner.reader(id)?;
+        let result = lane.run(names::groups).await;
+        self.inner.logged("name groups", result)
+    }
+
+    /// Gives the games of each of `names` in database `id` the name `into`.
+    pub async fn merge_names(&self, id: &str, into: String, names: Vec<String>) -> Result<u64> {
+        own::refuse(id, "Your games names the players as their accounts do.")?;
+        let file = self.inner.file(id);
+        if !file.is_file() {
+            return Err(CoreError::new("That database is not on this computer."));
+        }
+        let mut guard = self.claim(id)?;
+        let result = tokio::task::spawn_blocking(move || names::merge(&file, &into, &names))
+            .await
+            .map_err(|_| CoreError::new("The names could not be merged. Try again."))
+            .and_then(|result| result);
+        guard.end = Some(match &result {
+            Ok(_) => progress(Phase::Done, id, import::Count::default(), None),
+            Err(error) => failed(&guard.running, id, error),
+        });
+        if result.is_ok() {
+            self.inner.listed.forget();
+        }
+        self.inner.logged("merge names", result)
     }
 
     /// Copies the games `selection` names from database `from` into `into`, or a new database

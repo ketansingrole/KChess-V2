@@ -142,6 +142,21 @@ pub struct GameDbProgress {
     pub message: Option<String>,
 }
 
+/// A player's name in a database, with the games it is in.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbName {
+    pub name: String,
+    pub games: u64,
+}
+
+/// Names in a database that are likely one player's, the most played first.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbNameGroup {
+    pub names: Vec<GameDbName>,
+}
+
 /// Where a line leaves the games of the game databases: its first move no game played from
 /// its position.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]

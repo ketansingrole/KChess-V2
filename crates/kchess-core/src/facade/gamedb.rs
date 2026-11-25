@@ -2,13 +2,13 @@
 
 use kchess_contracts::check::{
     DatabaseId, DatabaseName, Fen, GameDbGameId, GameDbGameIds, LichessMonth, MasterMonths, Moves,
-    PgnFilePath, PgnSavePath, PgnText, PlayerName,
+    PgnFilePath, PgnSavePath, PgnText, PlayerName, PlayerNames,
 };
 use kchess_contracts::core_api::GameDbApi;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    DatabaseSource, GameDbImported, GameDbNovelty, GameDbPage, GameDbQuery, GameDbSaved,
-    GameDbStatus, GameSite, LichessArchive, LichessGames, PlayerGames,
+    DatabaseSource, GameDbImported, GameDbNameGroup, GameDbNovelty, GameDbPage, GameDbQuery,
+    GameDbSaved, GameDbStatus, GameSite, LichessArchive, LichessGames, PlayerGames,
 };
 
 use crate::core::Core;
@@ -104,6 +104,29 @@ impl GameDbApi for Core {
     ) -> Result<u64> {
         let selection = selection(games, search)?;
         self.gamedb.delete_games(&database.0, selection).await
+    }
+
+    async fn game_db_duplicates(&self, database: DatabaseId) -> Result<u64> {
+        self.gamedb.duplicates(&database.0).await
+    }
+
+    async fn game_db_remove_duplicates(&self, database: DatabaseId) -> Result<u64> {
+        self.gamedb
+            .delete_games(&database.0, edit::Selection::Duplicates)
+            .await
+    }
+
+    async fn game_db_name_groups(&self, database: DatabaseId) -> Result<Vec<GameDbNameGroup>> {
+        self.gamedb.name_groups(&database.0).await
+    }
+
+    async fn game_db_merge_names(
+        &self,
+        database: DatabaseId,
+        into: PlayerName,
+        names: PlayerNames,
+    ) -> Result<u64> {
+        self.gamedb.merge_names(&database.0, into.0, names.0).await
     }
 
     async fn game_db_copy_games(

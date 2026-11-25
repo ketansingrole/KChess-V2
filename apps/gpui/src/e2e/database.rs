@@ -924,3 +924,46 @@ fn the_board_marks_where_its_game_left_the_databases(cx: &mut gpui_kit::TestAppC
     app.click("tree-e2e4 e7e5 g1f3 b8c6 f1b5");
     assert_eq!(badge(&mut app), None);
 }
+
+/// Tidy up removes the games imported twice, after asking, and merges one player's spellings
+/// into the name chosen to keep, which the games then list.
+#[gpui_kit::test]
+fn a_database_is_tidied_of_copies_and_spellings(cx: &mut gpui_kit::TestAppContext) {
+    const TWICE: &str = "[White \"Carlsen, Magnus\"]\n[Black \"Ding, Liren\"]\n\
+        [Date \"2024.01.02\"]\n[Result \"1-0\"]\n\n1. e4 e5 1-0\n\n\
+        [White \"Carlsen, Magnus\"]\n[Black \"Ding, Liren\"]\n\
+        [Date \"2024.01.02\"]\n[Result \"1-0\"]\n\n1. e4 e5 1-0\n\n\
+        [White \"Carlsen, M\"]\n[Black \"Ding, Liren\"]\n\
+        [Date \"2023.01.02\"]\n[Result \"0-1\"]\n\n1. d4 d5 0-1\n";
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    let files = tempfile::tempdir().expect("a folder for the file");
+    let path = files.path().join("tidy.pgn");
+    std::fs::write(&path, TWICE).expect("the file");
+    app.click("gamedb-import");
+    app.wait_for_open_dialog();
+    app.cx
+        .simulate_path_prompt_response(move |_| Some(vec![path]));
+    wait_for_databases(&mut app, "the games in", &[("tidy", 3)]);
+
+    app.click("database-tidy");
+    app.click_label("Remove duplicate games…");
+    app.click_label("Remove");
+    wait_for_databases(&mut app, "the copy removed", &[("tidy", 2)]);
+
+    app.click("database-tidy");
+    app.click_label("Merge player names…");
+    app.find("names-merge-all");
+    app.click_label("Carlsen, M");
+    app.click_label("Merge into Carlsen, M");
+    app.wait_gone(("names-merge", 0usize));
+    app.click("names-done");
+    wait_for_listed(
+        &mut app,
+        "both games under the name kept",
+        &[
+            "Carlsen, M against Ding, Liren, 1-0",
+            "Carlsen, M against Ding, Liren, 0-1",
+        ],
+    );
+}

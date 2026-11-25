@@ -75,6 +75,37 @@ impl Validate for PlayerName {
     }
 }
 
+/// Names of players to merge into another: 1 to 100 of them, each kept once.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct PlayerNames(pub Vec<String>);
+
+impl Validate for PlayerNames {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const NAMES: &str = "Choose 1 to 100 names, each 1 to 200 characters.";
+        let values: Vec<String> = decode(value, |_| Some(NAMES))?;
+        let mut names: Vec<String> = Vec::with_capacity(values.len());
+        for name in values {
+            let name = name.trim().to_string();
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        ensure(
+            (1..=100).contains(&names.len())
+                && names.iter().all(|name| {
+                    !name.is_empty()
+                        && name.chars().count() <= 200
+                        && !name.chars().any(char::is_control)
+                }),
+            Some(NAMES),
+            "",
+            String::new,
+        )?;
+        Ok(PlayerNames(names))
+    }
+}
+
 /// A game of a database, by the id a search listed.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[serde(transparent)]
