@@ -369,6 +369,39 @@ pub struct GameDbRepertoireMove {
     pub verdict: Option<GameDbVerdict>,
 }
 
+/// A repertoire through your own games as its side (`gameDbRepertoireGames`): where they left
+/// it, most often first.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbRepertoireGames {
+    /// Your games with the repertoire's side.
+    pub games: u64,
+    /// Those of them that reached one of its positions.
+    pub reached: u64,
+    pub gaps: Vec<GameDbRepertoireGap>,
+}
+
+/// A move your games played where the repertoire has none: yours, where it plays another, or
+/// your opponent's, which it has no answer to. With the games that played it, how they ended
+/// for you and when the last one was played.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbRepertoireGap {
+    /// The step it was played from, by its place in the steps asked.
+    pub step: u32,
+    pub uci: String,
+    pub san: String,
+    /// Your move, not your opponent's.
+    pub yours: bool,
+    pub games: u64,
+    pub won: u64,
+    pub drawn: u64,
+    pub lost: u64,
+    /// As written, `YYYY.MM.DD` with `??` for what is unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last: Option<String>,
+}
+
 /// A game saved into a database: the database as it is now, and the game's id in it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]

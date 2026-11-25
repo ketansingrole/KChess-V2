@@ -67,6 +67,23 @@ pub enum OwnGames {
     Changed { fingerprint: String, pgn: String },
 }
 
+/// The names you play under in the own games: each synced account's (a Chess.com one by its
+/// Chess.com name too, as its games' text names it) and the computer games' player.
+pub fn your_names(db: &Connection) -> Result<Vec<String>> {
+    let mut names = vec![kchess_domain::games::computer::PLAYER.to_string()];
+    let mut statement = db.prepare("SELECT DISTINCT account FROM games").sql()?;
+    let accounts = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .sql()?
+        .collect::<rusqlite::Result<Vec<String>>>()
+        .sql()?;
+    for account in accounts {
+        names.extend(kchess_domain::chesscom::username_of(&account).map(str::to_string));
+        names.push(account);
+    }
+    Ok(names)
+}
+
 /// The own games, unless their fingerprint is `stored`: the database written from them is
 /// still theirs.
 pub fn own_games(host: &dyn Host, db: &Connection, stored: Option<&str>) -> Result<OwnGames> {
@@ -246,6 +263,29 @@ fn played_pgn(game: &PlayedGame) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn your_names_are_your_accounts_and_the_computer_games_player() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE games (account TEXT NOT NULL);
+             INSERT INTO games VALUES ('Alice'), ('Alice');",
+        )
+        .unwrap();
+        let chesscom = kchess_domain::chesscom::account_of("bob_99");
+        db.execute("INSERT INTO games VALUES (?1)", [&chesscom])
+            .unwrap();
+        let mut names = your_names(&db).unwrap();
+        names.sort();
+        let mut expected = vec![
+            "Alice".to_string(),
+            "You".to_string(),
+            "bob_99".to_string(),
+            chesscom,
+        ];
+        expected.sort();
+        assert_eq!(names, expected);
+    }
 
     #[test]
     fn a_date_is_the_utc_day() {

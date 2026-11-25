@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -51,6 +52,7 @@ use kchess_ui::icon;
 
 pub mod check;
 mod lines;
+pub mod your_games;
 use lines::*;
 
 const STUDY: &str = "kchess:repertoire-study";
@@ -316,14 +318,26 @@ impl Repertoire {
         check::open(steps, window, cx);
     }
 
-    /// Whether a game database other than Your games is there to check the lines against.
-    fn has_databases(cx: &App) -> bool {
+    /// The repertoire followed through your games with its side, in a dialog.
+    pub fn check_against_your_games(&self, window: &mut Window, cx: &mut App) {
+        let steps = check::every_step(&self.roots);
+        your_games::open(steps, Self::color(cx), window, cx);
+    }
+
+    /// Whether there are game databases other than Your games, and Your games, to check the
+    /// lines against.
+    fn databases(cx: &App) -> (bool, bool) {
+        use kchess_contracts::types::DatabaseSource;
         let handle = cx.global::<kchess_board::game_db::GameDbHandle>().0.clone();
-        handle
-            .read(cx)
-            .databases()
-            .iter()
-            .any(|database| database.source != kchess_contracts::types::DatabaseSource::Own)
+        let databases = handle.read(cx).databases();
+        (
+            databases
+                .iter()
+                .any(|database| database.source != DatabaseSource::Own),
+            databases
+                .iter()
+                .any(|database| database.source == DatabaseSource::Own),
+        )
     }
 
     fn study_id(cx: &App) -> String {
@@ -1201,6 +1215,7 @@ impl Render for Repertoire {
                 .into_any_element();
         }
         let drills_opening = Self::drills_opening(cx);
+        let (databases, yours) = Self::databases(cx);
         let color = Self::color(cx);
         let your_turn = self.your_turn(cx);
         // The board's column: the board and the move box's row, once a line is on the board.
@@ -1460,16 +1475,42 @@ impl Render for Repertoire {
                                 cx.listener(|this, _, window, cx| this.clear_misses(window, cx)),
                             ),
                     )
-                    .when(!drills_opening && Self::has_databases(cx), |actions| {
+                    .when(!drills_opening && (databases || yours), |actions| {
+                        let page = cx.entity().downgrade();
                         actions.child(
                             Button::new("repertoire-check")
                                 .ghost()
-                                .icon(icon("database"))
-                                .label("Check against databases")
+                                .icon(icon("circle-check"))
+                                .label("Check")
                                 .disabled(self.roots.is_empty())
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.check_against_databases(window, cx)
-                                })),
+                                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                                    let (mine, theirs) = (page.clone(), page.clone());
+                                    menu.when(yours, |menu| {
+                                        menu.item(
+                                            PopupMenuItem::new("Against your games")
+                                                .icon(icon("user"))
+                                                .on_click(move |_, window, cx| {
+                                                    mine.update(cx, |this, cx| {
+                                                        this.check_against_your_games(window, cx)
+                                                    })
+                                                    .ok();
+                                                }),
+                                        )
+                                    })
+                                    .when(databases, |menu| {
+                                        menu.item(
+                                            PopupMenuItem::new("Against databases")
+                                                .icon(icon("database"))
+                                                .on_click(move |_, window, cx| {
+                                                    theirs
+                                                        .update(cx, |this, cx| {
+                                                            this.check_against_databases(window, cx)
+                                                        })
+                                                        .ok();
+                                                }),
+                                        )
+                                    })
+                                }),
                         )
                     })
                     .when(drills_opening, |actions| {

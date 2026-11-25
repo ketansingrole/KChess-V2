@@ -1654,6 +1654,122 @@ fn repertoire_check() {
     }
 }
 
+/// Practice → Repertoire → Check → Against your games on a White repertoire, in both
+/// appearances: `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui
+/// e2e::screens::repertoire_your_games -- --ignored` writes
+/// `<dir>/repertoire-your-games-<appearance>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn repertoire_your_games() {
+    use kchess_contracts::calls;
+    use kchess_contracts::check::ArchivedGame;
+    use kchess_contracts::types::DatabaseSource;
+    let out = kchess_host::env::var("KCHESS_SCREENSHOTS")
+        .expect("KCHESS_SCREENSHOTS names the output folder");
+    let out = Path::new(&out).to_path_buf();
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    let initial = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    // Your games with White: each line, its results and the day it was last played.
+    let lines: [(&[&str], &[&str]); 6] = [
+        (
+            &["e2e4", "e7e5", "g1f3", "b8c6", "f1c4"],
+            &["1-0", "0-1", "1-0", "1/2-1/2"],
+        ),
+        (
+            &["e2e4", "c7c6", "d2d4", "d7d5"],
+            &["0-1", "0-1", "1/2-1/2"],
+        ),
+        (&["e2e4", "e7e5", "g1f3", "d7d6", "d2d4"], &["1-0", "1-0"]),
+        (&["e2e4", "c7c5", "b1c3", "b8c6"], &["1/2-1/2", "0-1"]),
+        (&["e2e4", "e7e6", "d2d4", "d7d5", "e4e5"], &["1-0"]),
+        (
+            &["e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6"],
+            &["1-0", "1-0", "0-1"],
+        ),
+    ];
+    let repertoire =
+        "1. e4 e5 (1... c5 2. Nf3 d6 3. d4) (1... e6 2. d4 d5 3. Nc3) 2. Nf3 Nc6 3. Bb5 *";
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), 1100., 820.);
+        cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
+        let mut count = 0;
+        for (moves, results) in lines {
+            for result in results {
+                count += 1;
+                let game = serde_json::json!({
+                    "id": format!("game-{count}"), "source": "computer",
+                    "startedAt": 1_761_091_200_000_i64 + count * 86_400_000,
+                    "updatedAt": 1_761_091_260_000_i64 + count * 86_400_000,
+                    "white": "You", "black": "Stockfish", "result": result,
+                    "reason": "Checkmate", "timeControl": "-", "finished": true,
+                    "setup": { "variant": "standard", "fen": initial }, "moves": moves,
+                });
+                let saved = cx.update(|cx| {
+                    cx.global::<crate::core::AppCore>()
+                        .request(calls::SaveArchivedGame {
+                            game: ArchivedGame(game),
+                        })
+                });
+                cx.foreground_executor()
+                    .block_test(saved)
+                    .expect("the game is saved");
+            }
+        }
+        // Your games follows the games once they have stopped changing.
+        let started = std::time::Instant::now();
+        while !cx.update(|cx| {
+            cx.global::<kchess_board::game_db::GameDbHandle>()
+                .0
+                .read(cx)
+                .databases()
+                .iter()
+                .any(|database| database.source == DatabaseSource::Own)
+        }) {
+            assert!(started.elapsed() < Duration::from_secs(30), "Your games");
+            settle(&mut cx, window);
+        }
+        let saved = cx.update(|cx| {
+            cx.global::<crate::studies::StudyHandle>()
+                .0
+                .read(cx)
+                .command(kchess_contracts::types::StudyCommand::Save {
+                    name: "1. e4".into(),
+                    pgn: repertoire.into(),
+                    id: None,
+                    chapter_id: None,
+                })
+        });
+        let id = cx
+            .foreground_executor()
+            .block_test(saved)
+            .expect("the study is saved")
+            .id
+            .expect("its id");
+        cx.update_window(window, |_, window, cx| {
+            crate::prefs::set(cx, "kchess:repertoire-color", "white");
+            kchess_practice::repertoire::train_study(id, window, cx)
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            let trainer = crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+                .and_then(|page| page.read(cx).repertoire())
+                .expect("the repertoire trainer");
+            trainer.update(cx, |trainer, cx| {
+                trainer.check_against_your_games(window, cx)
+            })
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("repertoire-your-games-{name}.png")))
+            .expect("the screenshot saves");
+    }
+}
+
 /// An event's table, a ten-player round robin with its crosstable, in both appearances:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::event_table -- --ignored`
 /// writes `<dir>/event-table-<appearance>.png`.
