@@ -22,6 +22,12 @@ use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::GameDbQuery;
 use kchess_domain::gamedb::{self, Outcome};
 
+/// Where games from the board go: a database on this computer, or a new one of that name.
+pub enum Into {
+    Existing(String),
+    New(String),
+}
+
 /// Which games an edit acts on.
 pub enum Selection {
     /// The games a search listed, by id.

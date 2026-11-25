@@ -690,6 +690,7 @@ impl AnalysisPage {
                 player: game.player,
                 game_id: game.game_id.clone(),
                 account: game.account.clone(),
+                database: None,
             });
         }
         self.review.mistakes = items;

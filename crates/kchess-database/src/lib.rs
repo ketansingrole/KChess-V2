@@ -17,19 +17,22 @@ use kchess_ui::theme;
 mod lichess;
 mod manage;
 mod player;
+pub mod target;
 
 use gpui_kit::base::TestSupportExt as _;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
+use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_board::analysis::{Open, Opening};
-use kchess_board::game::played::GameOrigin;
+use kchess_board::game::played::{DatabaseGame, GameOrigin};
 use kchess_contracts::calls;
-use kchess_contracts::check::{DatabaseId, GameDbGameId};
+use kchess_contracts::check::{DatabaseId, GameDbGameId, PgnSavePath};
 use kchess_contracts::types::{
     DatabaseInfo, DatabaseSource, GameDbQuery, GameDbResult, GameDbRow, GameDbSide, GameDbSort,
 };
@@ -39,7 +42,7 @@ use kchess_ui::icon;
 use serde::{Deserialize, Serialize};
 
 use crate::core::AppCore;
-use crate::game_db::{GameDbEvent, GameDbHandle};
+use crate::game_db::{Chosen, GameDbEvent, GameDbHandle};
 use crate::live_game::Refused;
 use crate::loading::Loading;
 use crate::theme::{Palette, radii};
@@ -107,6 +110,9 @@ pub struct DatabasePage {
     database: Option<String>,
     /// The databases the picker lists (id, name), to fill it only when they change.
     listed: Vec<(String, String)>,
+    /// The games count and last change of the database the games shown were read from: when
+    /// either changes (games added, deleted or replaced), the page is read again.
+    read_from: Option<(u64, i64)>,
     database_select: Entity<SelectState<Vec<Choice>>>,
     player_input: Entity<InputState>,
     side_select: Entity<SelectState<Vec<Choice>>>,
@@ -280,12 +286,21 @@ impl DatabasePage {
                 GameDbEvent::LichessInstalled { database } => {
                     this.show_database(database.clone(), String::new(), window, cx)
                 }
+                GameDbEvent::Copied { database, added } => window.push_notification(
+                    Notification::success(format!(
+                        "{} copied to {}",
+                        widgets::format_counted(*added as f64, "game", "games"),
+                        database.name
+                    )),
+                    cx,
+                ),
             },
         ));
         let mut page = DatabasePage {
             focus: cx.focus_handle(),
             database: kept.database,
             listed: Vec::new(),
+            read_from: None,
             database_select,
             player_input,
             side_select,
@@ -330,6 +345,10 @@ impl DatabasePage {
             .map(|info| (info.id.clone(), info.name.clone()))
             .collect();
         if listed == self.listed {
+            // Its games changed: the same page is read again, the last one if it went.
+            if self.edited(cx) != self.read_from {
+                self.load(cx);
+            }
             return;
         }
         self.listed = listed.clone();
@@ -411,7 +430,14 @@ impl DatabasePage {
         self.load(cx);
     }
 
+    /// The shown database's games count and last change.
+    fn edited(&self, cx: &App) -> Option<(u64, i64)> {
+        self.shown_database(cx)
+            .map(|info| (info.games, info.updated_at))
+    }
+
     fn load(&mut self, cx: &mut Context<Self>) {
+        self.read_from = self.edited(cx);
         self.refused.asking();
         let Some(database) = self.database.clone() else {
             self.loading.stop();
@@ -514,12 +540,16 @@ impl DatabasePage {
             return;
         };
         let request = cx.global::<AppCore>().request(calls::GameDbGame {
-            database: DatabaseId(database),
+            database: DatabaseId(database.clone()),
             game: GameDbGameId(row.id),
         });
         let origin = GameOrigin {
             white: Some(row.white.clone()),
             black: Some(row.black.clone()),
+            database: Some(DatabaseGame {
+                database: database.clone(),
+                game: row.id,
+            }),
             ..GameOrigin::default()
         };
         cx.spawn_in(window, async move |_, cx| {
@@ -546,6 +576,141 @@ impl DatabasePage {
             .ok();
         })
         .detach();
+    }
+
+    /// Every game the filters find, whatever its page.
+    fn found(&self, cx: &App) -> Option<Chosen> {
+        let database = self.database.clone()?;
+        Some(Chosen::Search(GameDbQuery {
+            offset: 0,
+            ..self.query(database, cx)
+        }))
+    }
+
+    /// Asks, then removes the `chosen` games (`count` of them, `game` when it is one) from the
+    /// database shown.
+    fn ask_delete_games(
+        &self,
+        chosen: Chosen,
+        count: u64,
+        game: Option<&GameDbRow>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(info) = self.shown_database(cx).cloned() else {
+            return;
+        };
+        let (title, description) = match game {
+            Some(game) => (
+                "Delete this game?".to_string(),
+                format!(
+                    "{} against {} is removed from {}.",
+                    game.white, game.black, info.name
+                ),
+            ),
+            None => (
+                format!(
+                    "Delete {}?",
+                    widgets::format_counted(count as f64, "game", "games")
+                ),
+                format!(
+                    "Every game this search finds is removed from {}.",
+                    info.name
+                ),
+            ),
+        };
+        widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
+            let (id, chosen) = (info.id.clone(), chosen.clone());
+            dialog
+                .title(title.clone())
+                .description(description.clone())
+                .ok_text("Delete")
+                .ok_variant(ButtonVariant::Danger)
+                .cancel_text("Cancel")
+                .show_cancel(true)
+                .on_ok(move |_, _, cx| {
+                    let db = cx.global::<GameDbHandle>().0.clone();
+                    db.update(cx, |db, cx| db.delete_games(id.clone(), chosen.clone(), cx));
+                    true
+                })
+        });
+    }
+
+    /// Copies the `chosen` games to a database picked in a dialog.
+    fn copy_games(&self, chosen: Chosen, count: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(info) = self.shown_database(cx).cloned() {
+            target::copy(info, chosen, count, window, cx);
+        }
+    }
+
+    /// Asks where, then saves the `chosen` games of the database shown as one PGN file named
+    /// `name` at first.
+    fn export(&self, chosen: Chosen, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(database) = self.database.clone() else {
+            return;
+        };
+        let place = kchess_board::export::choose_new_path(&format!("{name}.pgn"), cx);
+        cx.spawn_in(window, async move |_, cx| {
+            let saved = match place.await {
+                None => return,
+                Some(Err(cause)) => Err(cause),
+                Some(Ok(path)) => {
+                    let (games, search) = chosen.parts();
+                    let export = calls::GameDbExport {
+                        database: DatabaseId(database),
+                        path: PgnSavePath(path.to_string_lossy().into_owned()),
+                        games,
+                        search,
+                    };
+                    // The window closed while the place was asked: nothing was asked of the core.
+                    let Ok(request) = cx.update(|_, cx| cx.global::<AppCore>().request(export))
+                    else {
+                        return;
+                    };
+                    request
+                        .await
+                        .map_err(|cause| loading::failure("database", &cause))
+                }
+            };
+            cx.update(|window, cx| {
+                let notification = match saved {
+                    Ok(saved) => Notification::success(format!(
+                        "{} saved",
+                        widgets::format_counted(saved as f64, "game", "games")
+                    )),
+                    Err(cause) => Notification::error(cause).title("Could not save the games"),
+                };
+                window.push_notification(notification, cx)
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// What may be done with `chosen` (`count` games, `game` when it is one).
+    fn games_menu(
+        &self,
+        chosen: Chosen,
+        count: u64,
+        game: Option<GameDbRow>,
+        cx: &mut Context<Self>,
+    ) -> GamesMenu {
+        let name = match (&game, self.shown_database(cx)) {
+            (Some(game), _) => kchess_board::export::game_file_name(&game.white, &game.black),
+            (None, Some(info)) => kchess_board::export::file_name(&info.name),
+            (None, None) => "games".to_string(),
+        };
+        GamesMenu {
+            chosen,
+            count,
+            game,
+            name,
+            busy: cx.global::<GameDbHandle>().0.read(cx).busy(),
+            editable: self
+                .shown_database(cx)
+                .is_some_and(|info| info.source != DatabaseSource::Own),
+            page: cx.entity().downgrade(),
+        }
     }
 
     /// Asks, then deletes the database shown.
@@ -648,7 +813,8 @@ impl DatabasePage {
                     .child(column(84.).child("DATE"))
                     .child(column(44.).child("ECO"))
                     .child(column(52.).text_right().child("MOVES"))
-            });
+            })
+            .child(div().w(px(24.)).flex_none());
         let player = |name: &str, elo: Option<u32>| {
             h_flex()
                 .flex_1()
@@ -671,6 +837,16 @@ impl DatabasePage {
             .map(|(index, game)| {
                 let chosen = game.clone();
                 let label = format!("{} against {}, {}", game.white, game.black, game.result);
+                let menu = self.games_menu(Chosen::Game(game.id), 1, Some(game.clone()), cx);
+                let actions = Button::new(("database-game-actions", index))
+                    .ghost()
+                    .small()
+                    .icon(icon("ellipsis"))
+                    .accessibility_label(format!("Actions for {label}"))
+                    // Aligned to the button's end, so it stays in the window.
+                    .dropdown_menu_with_anchor(Anchor::TopRight, move |popup, _, _| {
+                        menu.build(popup)
+                    });
                 h_flex()
                     .id(("database-game", index))
                     .test_support()
@@ -720,10 +896,81 @@ impl DatabasePage {
                                 .child(game.plies.div_ceil(2).to_string()),
                         )
                     })
+                    .child(actions)
                     .into_any_element()
             })
             .collect();
         v_flex().child(head).children(rows).into_any_element()
+    }
+}
+
+/// A menu of what may be done with some games: copy them, save them as PGN, or delete them;
+/// from Your games only copy and save, and only save while an import runs.
+#[derive(Clone)]
+struct GamesMenu {
+    chosen: Chosen,
+    count: u64,
+    /// The game, when the menu is one game's.
+    game: Option<GameDbRow>,
+    /// The PGN file's name at first.
+    name: String,
+    busy: bool,
+    editable: bool,
+    page: WeakEntity<DatabasePage>,
+}
+
+impl GamesMenu {
+    fn build(&self, menu: PopupMenu) -> PopupMenu {
+        let (copy, export, delete) = (self.clone(), self.clone(), self.clone());
+        menu.when(!self.busy, |menu| {
+            menu.item(
+                PopupMenuItem::new("Copy to database…")
+                    .icon(icon("copy"))
+                    .on_click(move |_, window, cx| {
+                        copy.page
+                            .update(cx, |page, cx| {
+                                page.copy_games(copy.chosen.clone(), copy.count, window, cx)
+                            })
+                            .ok();
+                    }),
+            )
+        })
+        .item(
+            PopupMenuItem::new("Save as PGN…")
+                .icon(icon("download"))
+                .on_click(move |_, window, cx| {
+                    export
+                        .page
+                        .update(cx, |page, cx| {
+                            page.export(export.chosen.clone(), export.name.clone(), window, cx)
+                        })
+                        .ok();
+                }),
+        )
+        .when(!self.busy && self.editable, |menu| {
+            menu.separator().item(
+                PopupMenuItem::new(if self.game.is_some() {
+                    "Delete game"
+                } else {
+                    "Delete these games…"
+                })
+                .icon(icon("trash-2"))
+                .on_click(move |_, window, cx| {
+                    delete
+                        .page
+                        .update(cx, |page, cx| {
+                            page.ask_delete_games(
+                                delete.chosen.clone(),
+                                delete.count,
+                                delete.game.as_ref(),
+                                window,
+                                cx,
+                            )
+                        })
+                        .ok();
+                }),
+            )
+        })
     }
 }
 
@@ -954,6 +1201,24 @@ impl Render for DatabasePage {
                         .text_color(palette.text_muted)
                         .child(text)
                 });
+            // Every game the search finds, whatever its page: copied, saved or deleted at once.
+            let found = self.found(cx).filter(|_| paged).map(|chosen| {
+                let count = self.total as u64;
+                let menu = self.games_menu(chosen, count, None, cx);
+                h_flex().justify_end().pb(px(4.)).child(
+                    Button::new("database-found")
+                        .ghost()
+                        .small()
+                        .icon(icon("ellipsis"))
+                        .label(format!(
+                            "All {}",
+                            widgets::format_counted(count as f64, "game", "games")
+                        ))
+                        .dropdown_menu_with_anchor(Anchor::TopRight, move |popup, _, _| {
+                            menu.build(popup)
+                        }),
+                )
+            });
             v_flex()
                 .gap(px(12.))
                 .child(self.render_toolbar(cx, &palette))
@@ -961,6 +1226,7 @@ impl Render for DatabasePage {
                 .child(
                     widgets::card(&palette)
                         .p(px(12.))
+                        .children(found)
                         .child(content)
                         .when(paged, |card| card.child(pager)),
                 )

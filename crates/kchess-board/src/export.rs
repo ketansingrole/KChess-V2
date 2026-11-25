@@ -35,6 +35,21 @@ pub fn save_bytes(
     data: Vec<u8>,
     cx: &mut App,
 ) -> impl Future<Output = Option<Result<(), String>>> + 'static + use<> {
+    let chosen = choose_new_path(name, cx);
+    async move {
+        match chosen.await? {
+            Ok(path) => Some(std::fs::write(&path, data).map_err(|cause| cause.to_string())),
+            Err(cause) => Some(Err(cause)),
+        }
+    }
+}
+
+/// Ask where to save a file named `name`, starting in Downloads; the place, with the name's
+/// extension when the one typed has none, or `None` when cancelled.
+pub fn choose_new_path(
+    name: &str,
+    cx: &mut App,
+) -> impl Future<Output = Option<Result<PathBuf, String>>> + 'static + use<> {
     let folder = dirs::download_dir()
         .or_else(dirs::home_dir)
         .unwrap_or_else(|| PathBuf::from("."));
@@ -44,10 +59,7 @@ pub fn save_bytes(
         .map(|extension| extension.to_os_string());
     async move {
         match chosen.await {
-            Ok(Ok(Some(path))) => {
-                let path = with_extension(path, extension.as_deref());
-                Some(std::fs::write(&path, data).map_err(|cause| cause.to_string()))
-            }
+            Ok(Ok(Some(path))) => Some(Ok(with_extension(path, extension.as_deref()))),
             Ok(Ok(None)) | Err(_) => None,
             Ok(Err(cause)) => Some(Err(cause.to_string())),
         }
@@ -73,8 +85,12 @@ fn with_extension(path: PathBuf, extension: Option<&std::ffi::OsStr>) -> PathBuf
 /// A file name from the players and today's date (`ExportGame`'s): safe characters only.
 pub fn game_file_name(white: &str, black: &str) -> String {
     let today = crate::dates::today("%Y-%m-%d");
-    format!("{white} vs {black} {today}")
-        .chars()
+    file_name(&format!("{white} vs {black} {today}"))
+}
+
+/// `text` as a file name: safe characters only, at most 80.
+pub fn file_name(text: &str) -> String {
+    text.chars()
         .filter(|c| c.is_alphanumeric() || " _.()+-".contains(*c))
         .take(80)
         .collect()

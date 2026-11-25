@@ -40,7 +40,7 @@ fn listed(app: &mut Harness) -> Vec<String> {
             .elements()
             .iter()
             .filter_map(|element| element.label())
-            .filter(|label| label.contains(" against "))
+            .filter(|label| label.contains(" against ") && !label.starts_with("Actions for "))
             .map(str::to_string)
             .collect()
     })
@@ -54,7 +54,7 @@ fn wait_for_listed(app: &mut Harness, what: &str, expected: &[&str]) {
             .elements()
             .iter()
             .filter_map(|element| element.label())
-            .filter(|label| label.contains(" against "))
+            .filter(|label| label.contains(" against ") && !label.starts_with("Actions for "))
             .map(str::to_string)
             .collect();
         shown == expected
@@ -678,7 +678,7 @@ fn a_new_search_does_not_draw_the_last_ones_games(cx: &mut gpui_kit::TestAppCont
                 .elements()
                 .iter()
                 .filter_map(|element| element.label())
-                .filter(|label| label.contains(" against "))
+                .filter(|label| label.contains(" against ") && !label.starts_with("Actions for "))
                 .map(str::to_string)
                 .collect()
         })
@@ -688,4 +688,189 @@ fn a_new_search_does_not_draw_the_last_ones_games(cx: &mut gpui_kit::TestAppCont
         "the first frame drew {first:?}"
     );
     wait_for_listed(&mut app, "White's win", &[CARLSEN_GUKESH]);
+}
+
+/// The databases listed now, by name and games.
+fn databases(app: &mut Harness) -> Vec<(String, u64)> {
+    app.cx.update(|cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .iter()
+            .map(|info| (info.name.clone(), info.games))
+            .collect()
+    })
+}
+
+fn wait_for_databases(app: &mut Harness, what: &str, expected: &[(&str, u64)]) {
+    let expected: Vec<(String, u64)> = expected
+        .iter()
+        .map(|(name, games)| (name.to_string(), *games))
+        .collect();
+    let started = std::time::Instant::now();
+    while databases(app) != expected {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "{what}: {:?}",
+            databases(app)
+        );
+        app.settle();
+    }
+}
+
+/// A game's menu copies it into a new database or deletes it, and leaves the game unopened;
+/// the search's menu saves every game it finds as one PGN file, then deletes them all.
+#[gpui_kit::test]
+fn games_are_copied_saved_and_deleted_from_the_page(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_games(&mut app);
+
+    // Smith against Jones, the oldest, into a new database named in the dialog.
+    app.click(("database-game-actions", 2usize));
+    app.click_label("Copy to database…");
+    app.fill_in_dialog("Name", "Club games");
+    app.click("target-confirm");
+    wait_for_databases(
+        &mut app,
+        "the copy listed",
+        &[("Club games", 1), ("tata", 3)],
+    );
+    assert_eq!(
+        app.cx.update(|cx| crate::shell::current_page(cx)),
+        Some(crate::pages::Page::Database),
+        "the menu opened no game"
+    );
+    wait_for_listed(
+        &mut app,
+        "the games shown still tata's",
+        &[GUKESH_CARLSEN, CARLSEN_GUKESH, SMITH_JONES],
+    );
+
+    // Every game Carlsen played, saved as one file.
+    app.click_label("Player");
+    app.type_text("carlsen");
+    wait_for_listed(
+        &mut app,
+        "Carlsen's games",
+        &[GUKESH_CARLSEN, CARLSEN_GUKESH],
+    );
+    assert_eq!(app.find("database-found").label(), Some("All 2 games"));
+    app.click("database-found");
+    app.click_label("Save as PGN…");
+    app.wait_for_save_dialog();
+    let folder = tempfile::tempdir().expect("a folder to save in");
+    let path = folder.path().join("carlsen.pgn");
+    let chosen = path.clone();
+    app.cx.simulate_new_path_selection(move |_| Some(chosen));
+    let started = std::time::Instant::now();
+    while !path.exists() {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "no file saved"
+        );
+        app.settle();
+    }
+    let saved = std::fs::read_to_string(&path).expect("the file");
+    assert_eq!(
+        saved.matches("[Event \"Tata Steel\"]").count(),
+        2,
+        "{saved}"
+    );
+
+    // Then deleted, after asking: only Smith against Jones is left.
+    app.click("database-found");
+    app.click_label("Delete these games…");
+    app.click_label("Delete");
+    wait_for_databases(
+        &mut app,
+        "Carlsen's games deleted",
+        &[("Club games", 1), ("tata", 1)],
+    );
+    app.click("database-clear");
+    wait_for_listed(&mut app, "the game left", &[SMITH_JONES]);
+
+    // And the last one, from its own menu.
+    app.click(("database-game-actions", 0usize));
+    app.click_label("Delete game");
+    app.click_label("Delete");
+    wait_for_databases(
+        &mut app,
+        "every game deleted",
+        &[("Club games", 1), ("tata", 0)],
+    );
+    wait_for_listed(&mut app, "no game", &[]);
+}
+
+/// A game opened from a database and changed on the board is saved back in its place, or as a
+/// new game in another database.
+#[gpui_kit::test]
+fn the_board_saves_its_game_to_a_database(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_games(&mut app);
+    app.click_label(SMITH_JONES);
+    app.wait_for_page(crate::pages::Page::Analysis);
+    // A move of its own at the start: a variation 1. e4 beside 1. d4.
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("e4");
+    app.press("enter");
+    app.find("tree-e2e4");
+
+    app.click("study-actions");
+    app.click_label("Save changes to tata");
+    wait_for_databases(&mut app, "still three games", &[("tata", 3)]);
+    let pgn = |app: &mut Harness, database: &str| -> Vec<String> {
+        let id = app.cx.update(|cx| {
+            cx.global::<kchess_board::game_db::GameDbHandle>()
+                .0
+                .read(cx)
+                .databases()
+                .iter()
+                .find(|info| info.name == database)
+                .map(|info| info.id.clone())
+                .expect("the database")
+        });
+        let page = app.request(kchess_contracts::calls::GameDbGames {
+            query: kchess_contracts::types::GameDbQuery {
+                database: id.clone(),
+                player: Some("smith".into()),
+                limit: 20,
+                ..Default::default()
+            },
+        });
+        page.games
+            .iter()
+            .map(|game| {
+                app.request(kchess_contracts::calls::GameDbGame {
+                    database: kchess_contracts::check::DatabaseId(id.clone()),
+                    game: kchess_contracts::check::GameDbGameId(game.id),
+                })
+            })
+            .collect()
+    };
+    let changed = pgn(&mut app, "tata");
+    assert_eq!(changed.len(), 1, "replaced, not added: {changed:?}");
+    assert!(
+        changed[0].contains("1. d4 ( 1. e4 ) 1... d5"),
+        "{}",
+        changed[0]
+    );
+
+    // Saved again, into a new database; Save changes then means that one.
+    app.click("study-actions");
+    app.click_label("Save to database…");
+    // The game's own database is offered first; the one above it is a new database.
+    app.click_label("Database");
+    app.press("up");
+    app.press("enter");
+    app.fill_in_dialog("Name", "Prepared");
+    app.click("target-confirm");
+    wait_for_databases(&mut app, "a new database", &[("Prepared", 1), ("tata", 3)]);
+    app.click("study-actions");
+    app.wait_for("Save changes to the new one", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .try_find_by_label("Save changes to Prepared")
+            .is_some()
+    });
 }

@@ -662,13 +662,14 @@ core_api! {
         /// keeps to the archive's newest that many months. Progress arrives as `gamedb:progress`
         /// (`downloading`, then each month's import); `gameDbCancel` stops it and keeps the
         /// months already in.
-        /// Adds the games of `pgn` (a game from the board, usually) to `database`; answers the
-        /// database and the last game's id. Refused for "Your games", which follows the games
-        /// you play.
+        /// Adds the games of `pgn` (a game from the board, usually) to the database `into`, or a
+        /// new one named `name`; answers the database and the last game's id. Refused for "Your
+        /// games", which follows the games you play.
         #[writes(GameDb)]
         GameDbAddGames = "gameDbAddGames" fn game_db_add_games(
-            database: DatabaseId,
-            pgn: PgnText
+            pgn: PgnText;
+            into: Option<DatabaseId>,
+            name: Option<DatabaseName>
         ) -> GameDbSaved;
         /// Puts `pgn` in the place of the game `game`: the new game is added first and the old one
         /// removed after, so a failure never loses it.

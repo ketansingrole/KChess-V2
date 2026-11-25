@@ -3,15 +3,19 @@
 
 use std::path::PathBuf;
 
+use futures::FutureExt as _;
+
 use gpui_kit::component::button::Button;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
-use kchess_contracts::check::{DatabaseId, PgnFilePath};
+use kchess_contracts::check::{
+    DatabaseId, DatabaseName, GameDbGameId, GameDbGameIds, PgnFilePath, PgnText,
+};
 use kchess_contracts::types::{
-    DatabaseInfo, GameDbImported, GameDbPhase, GameDbProgress, GameDbStatus, LichessGames,
-    PlayerGames, ProfileArea,
+    DatabaseInfo, GameDbImported, GameDbPhase, GameDbProgress, GameDbQuery, GameDbSaved,
+    GameDbStatus, LichessGames, PlayerGames, ProfileArea,
 };
 
 use crate::core::{AppCore, ClientEvent, CoreEvent};
@@ -42,6 +46,54 @@ pub enum GameDbEvent {
     PlayerInstalled { database: String, username: String },
     /// A month of strong Lichess games is in its floor's database, `database`.
     LichessInstalled { database: String },
+    /// Games were copied into `database`.
+    Copied { database: DatabaseInfo, added: u64 },
+}
+
+/// Saves `pgn` (a game from the board) in the database `into`, or a new one named `name`: a new
+/// game, or in the place of game `replacing` of `into`. Too small to show its progress, it runs
+/// outside the import card; the list follows from the profile's change.
+pub fn save_game(
+    into: Option<String>,
+    name: Option<String>,
+    replacing: Option<u64>,
+    pgn: String,
+    cx: &App,
+) -> futures::future::LocalBoxFuture<'static, Result<GameDbSaved, kchess_contracts::CoreError>> {
+    let core = cx.global::<AppCore>();
+    match (into, replacing) {
+        (Some(database), Some(game)) => core
+            .request(calls::GameDbReplaceGame {
+                database: DatabaseId(database),
+                game: GameDbGameId(game),
+                pgn: PgnText(pgn),
+            })
+            .boxed_local(),
+        (into, _) => core
+            .request(calls::GameDbAddGames {
+                pgn: PgnText(pgn),
+                into: into.map(DatabaseId),
+                name: name.map(DatabaseName),
+            })
+            .boxed_local(),
+    }
+}
+
+/// The games an edit acts on: one game, or every game a search finds, whatever its page.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Chosen {
+    Game(u64),
+    Search(GameDbQuery),
+}
+
+impl Chosen {
+    /// As the core's edits take them: the games listed, or the search.
+    pub fn parts(&self) -> (Option<GameDbGameIds>, Option<GameDbQuery>) {
+        match self {
+            Chosen::Game(id) => (Some(GameDbGameIds(vec![*id])), None),
+            Chosen::Search(query) => (None, Some(query.clone())),
+        }
+    }
 }
 
 /// The databases of strong Lichess games, as the core names them: `lichess-2400`.
@@ -202,6 +254,49 @@ impl GameDb {
                 cx.emit(GameDbEvent::LichessInstalled {
                     database: imported.database.id,
                 });
+            },
+            cx,
+        );
+    }
+
+    /// Removes the `chosen` games from `database`, its opening tree built again from those left.
+    pub fn delete_games(&mut self, database: String, chosen: Chosen, cx: &mut Context<Self>) {
+        let (games, search) = chosen.parts();
+        let delete = cx.global::<AppCore>().request(calls::GameDbDeleteGames {
+            database: DatabaseId(database.clone()),
+            games,
+            search,
+        });
+        self.run(GameDbPhase::Indexing, &database, delete, |_, _| {}, cx);
+    }
+
+    /// Copies the `chosen` games of `from` into the database `into`, or a new one named `name`.
+    pub fn copy_games(
+        &mut self,
+        from: String,
+        chosen: Chosen,
+        into: Option<String>,
+        name: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let (games, search) = chosen.parts();
+        let target = into.clone().unwrap_or_default();
+        let copy = cx.global::<AppCore>().request(calls::GameDbCopyGames {
+            database: DatabaseId(from),
+            games,
+            search,
+            into: into.map(DatabaseId),
+            name: name.map(DatabaseName),
+        });
+        self.run(
+            GameDbPhase::Reading,
+            &target,
+            copy,
+            |copied: GameDbImported, cx| {
+                cx.emit(GameDbEvent::Copied {
+                    database: copied.database,
+                    added: copied.added,
+                })
             },
             cx,
         );

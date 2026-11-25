@@ -630,15 +630,31 @@ impl GameDbService {
     /// Adds the games of `pgn` to database `id`; with `replacing`, then removes that game.
     async fn save_inner(
         &self,
-        id: &str,
+        into: edit::Into,
         pgn: String,
         replacing: Option<u64>,
     ) -> Result<GameDbSaved> {
-        own::refuse(id, "Your games holds only your own games.")?;
+        let (id, target) = match into {
+            edit::Into::Existing(id) => {
+                own::refuse(&id, "Your games holds only your own games.")?;
+                let file = self.inner.file(&id);
+                if !file.is_file() {
+                    return Err(CoreError::new("That database is not on this computer."));
+                }
+                (id, import::Target::Existing { file })
+            }
+            edit::Into::New(name) => {
+                let id = new_id(&name);
+                std::fs::create_dir_all(&self.inner.dir)
+                    .map_err(|e| CoreError::wrap("Could not create the databases folder", e))?;
+                let target = self
+                    .inner
+                    .new_target(&id, name, DatabaseSource::Imported, None);
+                (id, target)
+            }
+        };
+        let id = id.as_str();
         let file = self.inner.file(id);
-        if !file.is_file() {
-            return Err(CoreError::new("That database is not on this computer."));
-        }
         let mut guard = self.claim(id)?;
         let running = Arc::clone(&guard.running);
         let mut reporter = Reporter::new(&self.inner.host, id, &running.cancel);
@@ -653,10 +669,12 @@ impl GameDbService {
                 keep: None,
                 entry: None,
             };
-            let target = import::Target::Existing { file: file.clone() };
             let count = import::read_into(input, &target, &dir, FEW_ROWS, &mut reporter)?;
             if count.games == 0 {
                 return Err(CoreError::new("No game could be read from that PGN."));
+            }
+            if let import::Target::New { file, .. } = &target {
+                crate::store::restrict_database(file, reporter.host.as_ref(), "gamedb");
             }
             let game: i64 = schema::open_read(&file)?
                 .query_row("SELECT MAX(id) FROM games", [], |row| row.get(0))
@@ -689,14 +707,15 @@ impl GameDbService {
     }
 
     /// Adds the games of `pgn` (a game from the board) to database `id`.
-    pub async fn add_games(&self, id: &str, pgn: String) -> Result<GameDbSaved> {
-        let result = self.save_inner(id, pgn, None).await;
+    pub async fn add_games(&self, into: edit::Into, pgn: String) -> Result<GameDbSaved> {
+        let result = self.save_inner(into, pgn, None).await;
         self.inner.logged("add", result)
     }
 
     /// Puts `pgn` in the place of the game `game` of database `id`.
     pub async fn replace_game(&self, id: &str, game: u64, pgn: String) -> Result<GameDbSaved> {
-        let result = self.save_inner(id, pgn, Some(game)).await;
+        let into = edit::Into::Existing(id.to_string());
+        let result = self.save_inner(into, pgn, Some(game)).await;
         self.inner.logged("replace", result)
     }
 

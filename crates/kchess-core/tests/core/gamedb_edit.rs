@@ -115,8 +115,8 @@ async fn a_game_is_added_replaced_and_deleted() {
         .call(
             "gameDbAddGames",
             vec![
-                json!(id),
                 json!(game("Eve", "Ana", "1-0", "Board", "1. c4 e5")),
+                json!(id),
             ],
         )
         .await
@@ -154,14 +154,28 @@ async fn a_game_is_added_replaced_and_deleted() {
     let status = core.call("gameDbStatus", vec![]).await.expect("status");
     assert_eq!(status["databases"][0]["games"], 5);
     // Your games is the core's own.
+    let board = game("A", "B", "1-0", "E", "1. e4");
     let refused = core
-        .call(
-            "gameDbAddGames",
-            vec![json!("own"), json!(game("A", "B", "1-0", "E", "1. e4"))],
-        )
+        .call("gameDbAddGames", vec![json!(board), json!("own")])
         .await
         .expect_err("Your games");
     assert!(refused.message.starts_with("Your games"), "{refused:?}");
+    // Or into a new database, named.
+    let saved = core
+        .call(
+            "gameDbAddGames",
+            vec![json!(board), Value::Null, json!("From the board")],
+        )
+        .await
+        .expect("makes a database");
+    assert_eq!(saved["game"], 1);
+    assert_eq!(saved["database"]["name"], "From the board");
+    assert_eq!(saved["database"]["games"], 1);
+    let refused = core
+        .call("gameDbAddGames", vec![json!(board)])
+        .await
+        .expect_err("neither");
+    assert_eq!(refused.message, "Choose a database, or name a new one.");
     core.close().await;
 }
 

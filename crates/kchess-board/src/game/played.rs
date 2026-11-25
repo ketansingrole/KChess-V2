@@ -17,6 +17,15 @@ pub struct GameOrigin {
     pub game_id: Option<String>,
     /// The account that played it, for that account's analysis of the game.
     pub account: Option<String>,
+    /// The game database it was opened from, and its game there, for saving changes back.
+    pub database: Option<DatabaseGame>,
+}
+
+/// A game of a game database on this computer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DatabaseGame {
+    pub database: String,
+    pub game: u64,
 }
 
 impl GameOrigin {
@@ -96,6 +105,7 @@ impl PlayedGame {
             player: self.player,
             game_id: self.lichess_id.clone(),
             account: self.account.clone(),
+            database: None,
         }
     }
 

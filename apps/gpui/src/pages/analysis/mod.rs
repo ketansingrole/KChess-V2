@@ -111,7 +111,7 @@ use crate::engine_view::EVAL_BAR;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
 use crate::export::Exporter;
 use crate::game::STANDARD_FEN;
-use crate::game::played::PlayedGame;
+use crate::game::played::{DatabaseGame, PlayedGame};
 use crate::game::session::{Resumes, SAVE_DELAY, SessionSaver};
 use crate::game::surface::Steps;
 use crate::game::tree::{
@@ -992,6 +992,20 @@ impl AnalysisPage {
     pub fn players(&self) -> Option<String> {
         let (white, black) = (self.header("White"), self.header("Black"));
         (!white.is_empty() && !black.is_empty()).then(|| format!("{white} – {black}"))
+    }
+
+    /// The game database game the board's game was opened from, or last saved as.
+    pub fn database_game(&self) -> Option<&DatabaseGame> {
+        self.review.origin.as_ref()?.database.as_ref()
+    }
+
+    /// The board's game is now `game` of a game database: Save changes replaces that one.
+    pub fn saved_to_database(&mut self, game: DatabaseGame, cx: &mut Context<Self>) {
+        self.review
+            .origin
+            .get_or_insert_with(Default::default)
+            .database = Some(game);
+        cx.notify();
     }
 
     pub fn navigation(&self) -> u64 {

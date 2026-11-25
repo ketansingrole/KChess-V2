@@ -12,7 +12,7 @@ use kchess_contracts::types::{
 };
 
 use crate::core::Core;
-use crate::gamedb::edit::Selection;
+use crate::gamedb::edit::{self, Selection};
 use crate::gamedb::player;
 
 /// The games an edit acts on: those listed, or those a search finds, never both or neither.
@@ -72,8 +72,18 @@ impl GameDbApi for Core {
         self.gamedb.game(&database.0, game.0).await
     }
 
-    async fn game_db_add_games(&self, database: DatabaseId, pgn: PgnText) -> Result<GameDbSaved> {
-        self.gamedb.add_games(&database.0, pgn.0).await
+    async fn game_db_add_games(
+        &self,
+        pgn: PgnText,
+        into: Option<DatabaseId>,
+        name: Option<DatabaseName>,
+    ) -> Result<GameDbSaved> {
+        let into = match (into, name) {
+            (Some(into), None) => edit::Into::Existing(into.0),
+            (None, Some(name)) => edit::Into::New(name.0),
+            _ => return Err(CoreError::new("Choose a database, or name a new one.")),
+        };
+        self.gamedb.add_games(into, pgn.0).await
     }
 
     async fn game_db_replace_game(
