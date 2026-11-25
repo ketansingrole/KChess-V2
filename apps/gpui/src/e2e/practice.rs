@@ -321,6 +321,108 @@ fn endgame_drills_open_and_return_to_the_courses(cx: &mut gpui_kit::TestAppConte
     assert!(!app.shows("chess-board"));
 }
 
+/// Practice → Endgames → Your endgames: with the tablebases on disk, the KR vs K your game drew
+/// by leaving the rook to be taken is a drill from the position before that move, with White,
+/// to win; the game that kept the rook safe is not one.
+#[gpui_kit::test]
+fn your_endgames_replay_what_your_games_let_slip(cx: &mut gpui_kit::TestAppContext) {
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/kchess-core/src/tablebase/fixtures");
+    let mut app = Harness::start_with(cx, |profile| {
+        let folder = profile.join("tablebases");
+        std::fs::create_dir_all(&folder).expect("the folder");
+        for name in ["KQvK.rtbw", "KQvK.rtbz", "KRvK.rtbw", "KRvK.rtbz"] {
+            std::fs::copy(fixtures.join(name), folder.join(name)).expect("a table");
+        }
+    });
+    let fen = "8/8/8/8/8/8/1k6/R3K3 w - - 0 1";
+    for (id, moves) in [("slip", &["a1a2", "b2a2"][..]), ("safe", &["a1a8"][..])] {
+        let game = serde_json::json!({
+            "id": id, "source": "computer", "startedAt": 1_761_091_200_000_i64,
+            "updatedAt": 1_761_091_260_000_i64, "white": "You", "black": "Stockfish",
+            "result": "1/2-1/2", "reason": "Insufficient material", "timeControl": "-",
+            "finished": true, "setup": { "variant": "standard", "fen": fen }, "moves": moves,
+        });
+        app.request(kchess_contracts::calls::SaveArchivedGame {
+            game: kchess_contracts::check::ArchivedGame(game),
+        });
+    }
+    app.wait_for_app("Your games", |cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .iter()
+            .any(|database| database.source == kchess_contracts::types::DatabaseSource::Own)
+    });
+    app.open("Practice");
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
+    reveal(&mut app, "endgame-courses", "card-yours");
+    assert_eq!(app.find("card-yours").label(), Some("Your endgames"));
+    app.click("card-yours");
+    app.find("drill-hint");
+    let drill = app.with_window(|_, cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).endgame_drills(cx))
+            .expect("the drills")
+            .read(cx)
+            .drill()
+            .clone()
+    });
+    assert_eq!(
+        (
+            drill.title.as_str(),
+            drill.fen.as_str(),
+            drill.player.as_str(),
+            drill.goal.as_str()
+        ),
+        ("KR vs K", fen, "white", "win")
+    );
+    assert_eq!(
+        drill.idea,
+        "Against Stockfish you played 1. Ra2+ here, which only draws."
+    );
+    // Only the game that let it slip.
+    assert_eq!(
+        app.find(format!("training-{}", drill.id)).label(),
+        Some("KR vs K")
+    );
+    app.click("drills-back");
+    app.find("endgame-courses");
+}
+
+/// Your endgames without the tablebases: the card says they are needed, and its page opens
+/// Settings → Storage, where they download.
+#[gpui_kit::test]
+fn your_endgames_lead_to_the_tablebases(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let game = serde_json::json!({
+        "id": "a", "source": "computer", "startedAt": 1_761_091_200_000_i64,
+        "updatedAt": 1_761_091_260_000_i64, "white": "You", "black": "Stockfish",
+        "result": "1-0", "reason": "Checkmate", "timeControl": "-", "finished": true,
+        "setup": { "variant": "standard", "fen": crate::game::STANDARD_FEN },
+        "moves": ["e2e4"],
+    });
+    app.request(kchess_contracts::calls::SaveArchivedGame {
+        game: kchess_contracts::check::ArchivedGame(game),
+    });
+    app.wait_for_app("Your games", |cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .iter()
+            .any(|database| database.source == kchess_contracts::types::DatabaseSource::Own)
+    });
+    app.open("Practice");
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
+    reveal(&mut app, "endgame-courses", "card-yours");
+    app.click("card-yours");
+    app.click("your-endgames-tablebases");
+    app.wait_for_page(Page::Settings);
+    app.find("storage-tablebases");
+}
+
 /// A drill's move box dropped a move it could not play without a word; it says so now.
 #[gpui_kit::test]
 fn an_endgame_drill_refuses_a_typed_move_with_a_word(cx: &mut gpui_kit::TestAppContext) {
