@@ -18,6 +18,7 @@ use crate::rules;
 
 pub mod names;
 mod notes;
+pub mod patterns;
 
 /// The first byte of a game's `extra` when it holds the notes `notes::pack` wrote.
 const EXTRA_NOTES: u8 = 1;
@@ -401,6 +402,24 @@ pub fn start_of(fen: Option<&str>) -> Option<VariantPosition> {
     }
 }
 
+/// The value of a stored game's header `name` that its columns do not hold (`TimeControl`, say),
+/// from its notes or its text; None when it has none.
+pub fn header_of(extra: Option<&[u8]>, name: &str) -> Option<String> {
+    match extra?.split_first()? {
+        (&EXTRA_NOTES, _) => notes::header(extra?, name),
+        (&EXTRA_TEXT, text) => {
+            let text = std::str::from_utf8(text).ok()?;
+            let start = format!("[{name} \"");
+            text.lines()
+                .map(str::trim)
+                .take_while(|line| line.is_empty() || line.starts_with('['))
+                .find_map(|line| line.strip_prefix(start.as_str())?.strip_suffix("\"]"))
+                .map(str::to_string)
+        }
+        _ => None,
+    }
+}
+
 /// A stored game's PGN: written from its columns and moves, with its notes when it has any, or
 /// its text as imported when it has variations. None when its moves or notes are damaged.
 pub fn pgn_of(stored: &Stored) -> Option<String> {
@@ -528,6 +547,26 @@ mod tests {
         assert_eq!(stored.outcome, Outcome::White);
         assert_eq!(stored.plies, 7);
         assert_eq!(pgn_of(&stored).unwrap(), pgn::make_pgn(&game(text)));
+    }
+
+    #[test]
+    fn a_header_the_columns_do_not_hold_is_read_from_notes_or_text() {
+        let packed = store(&game(BROADCAST)).unwrap();
+        assert_eq!(packed.extra.as_deref().unwrap().first(), Some(&EXTRA_NOTES));
+        assert_eq!(
+            header_of(packed.extra.as_deref(), "TimeControl").as_deref(),
+            Some("90+30")
+        );
+        assert_eq!(header_of(packed.extra.as_deref(), "Annotator"), None);
+        let text = "[White \"A\"]\n[Black \"B\"]\n[Result \"*\"]\n[TimeControl \"180+2\"]\n\n\
+            1. e4 (1. d4) e5 *\n";
+        let kept = store(&game(text)).unwrap();
+        assert_eq!(kept.extra.as_deref().unwrap().first(), Some(&EXTRA_TEXT));
+        assert_eq!(
+            header_of(kept.extra.as_deref(), "TimeControl").as_deref(),
+            Some("180+2")
+        );
+        assert_eq!(header_of(None, "TimeControl"), None);
     }
 
     #[test]

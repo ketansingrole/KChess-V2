@@ -6,13 +6,14 @@ use kchess_domain::misc::value::J;
 
 use super::*;
 use crate::types::{
-    ExplorerSpeed, GameDbQuery, GameDbResult, GameDbSide, GameDbSort, GameSite, LichessGames,
-    PlayerGames,
+    ExplorerSpeed, GameDbQuery, GameDbResult, GameDbSide, GameDbSort, GameDbStructure, GameSite,
+    LichessGames, PlayerGames,
 };
 
 const DATABASE: &str = "Invalid database.";
 const QUERY: &str = "Invalid game search.";
 const POSITION: &str = "Invalid position.";
+const MATERIAL: &str = "Write the material as each side's pieces, like R vs B.";
 
 /// A database's id, as `gameDbStatus` lists it: 1 to 40 lowercase letters, digits and dashes.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -375,6 +376,11 @@ struct SentQuery {
     result: Option<GameDbResult>,
     eco: Option<String>,
     position: Option<String>,
+    min_moves: Option<u64>,
+    max_moves: Option<u64>,
+    speed: Option<ExplorerSpeed>,
+    material: Option<String>,
+    structure: Option<GameDbStructure>,
     sort: Option<GameDbSort>,
     offset: u64,
     limit: u64,
@@ -397,6 +403,8 @@ impl Validate for GameDbQuery {
             ["yearFrom" | "yearTo"] => Some("Invalid year."),
             ["minElo"] => Some("Invalid rating."),
             ["position"] => Some(POSITION),
+            ["minMoves" | "maxMoves"] => Some("Invalid number of moves."),
+            ["material"] => Some(MATERIAL),
             _ => Some(QUERY),
         })?;
         ensure(
@@ -422,6 +430,18 @@ impl Validate for GameDbQuery {
         if let Some(position) = &sent.position {
             analysis_position(position, None).map_err(|_| Refusal::from(POSITION))?;
         }
+        for moves in sent.min_moves.iter().chain(&sent.max_moves) {
+            within(*moves, 0, 600, Some("Invalid number of moves."), "")?;
+        }
+        let material = search_text(sent.material)?;
+        if let Some(material) = &material {
+            ensure(
+                kchess_domain::gamedb::patterns::Material::parse(material).is_some(),
+                Some(MATERIAL),
+                "",
+                String::new,
+            )?;
+        }
         within(sent.offset, 0, 10_000_000, Some(QUERY), "")?;
         within(sent.limit, 1, 200, Some(QUERY), "")?;
         let year = |year: Option<i64>| year.and_then(|year| i32::try_from(year).ok());
@@ -437,6 +457,11 @@ impl Validate for GameDbQuery {
             result: sent.result,
             eco,
             position: sent.position,
+            min_moves: sent.min_moves.and_then(|moves| u32::try_from(moves).ok()),
+            max_moves: sent.max_moves.and_then(|moves| u32::try_from(moves).ok()),
+            speed: sent.speed,
+            material,
+            structure: sent.structure,
             sort: sent.sort,
             offset: u32::try_from(sent.offset).unwrap_or(u32::MAX),
             limit: u32::try_from(sent.limit).unwrap_or(1),
@@ -606,6 +631,27 @@ mod tests {
         );
         assert_eq!(
             refused(json!({"database": "mine", "x": 1, "offset": 0, "limit": 5})),
+            QUERY
+        );
+        let deep = check::<GameDbQuery>(sent(json!({
+            "database": "mine", "minMoves": 40, "maxMoves": 80, "speed": "blitz",
+            "material": " R vs B ", "structure": "carlsbad", "offset": 0, "limit": 5
+        })))
+        .unwrap();
+        assert_eq!((deep.min_moves, deep.max_moves), (Some(40), Some(80)));
+        assert_eq!(deep.speed, Some(ExplorerSpeed::Blitz));
+        assert_eq!(deep.material.as_deref(), Some("R vs B"));
+        assert_eq!(deep.structure, Some(GameDbStructure::Carlsbad));
+        assert_eq!(
+            refused(json!({"database": "mine", "material": "rook", "offset": 0, "limit": 5})),
+            MATERIAL
+        );
+        assert_eq!(
+            refused(json!({"database": "mine", "minMoves": 601, "offset": 0, "limit": 5})),
+            "Invalid number of moves."
+        );
+        assert_eq!(
+            refused(json!({"database": "mine", "structure": "x", "offset": 0, "limit": 5})),
             QUERY
         );
         let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";

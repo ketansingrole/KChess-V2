@@ -303,6 +303,14 @@ union!(#[doc = "The order a search lists games in."] GameDbSort {
     Rating = "rating",
 });
 
+union!(#[doc = "A pawn structure a deep search looks for, of either colour."] GameDbStructure {
+    IsolatedQueenPawn = "isolatedQueenPawn",
+    HangingPawns = "hangingPawns",
+    Carlsbad = "carlsbad",
+    MaroczyBind = "maroczyBind",
+    Stonewall = "stonewall",
+});
+
 /// A search of one database: every filter given must match.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
@@ -335,6 +343,21 @@ pub struct GameDbQuery {
     /// Only the games that reached this position (a FEN), with a move played from it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<String>,
+    /// The games of at least, and at most, this many moves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_moves: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_moves: Option<u32>,
+    /// The games played at this speed, as their time control says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<ExplorerSpeed>,
+    /// The games that reach this material balance and keep it ("R vs B", "KRP vs KR"), either
+    /// colour on either side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    /// The games that reach this pawn structure and keep it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structure: Option<GameDbStructure>,
     /// Newest first when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<GameDbSort>,

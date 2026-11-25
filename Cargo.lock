@@ -4466,6 +4466,7 @@ dependencies = [
  "kchess-app",
  "kchess-board",
  "kchess-contracts",
+ "kchess-domain",
  "kchess-hack",
  "kchess-nav",
  "kchess-ui",

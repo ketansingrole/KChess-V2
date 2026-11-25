@@ -55,7 +55,9 @@ pub fn selected(db: &Connection, selection: &Selection, stop: &AtomicBool) -> Re
             }
             Ok(held)
         }
-        Selection::Search(query) if query.position.is_some() => explore::ids_at(db, query, stop),
+        Selection::Search(query) if query.position.is_some() || super::scan::deep(query) => {
+            explore::ids_at(db, query, stop)
+        }
         Selection::Search(query) => search::ids(db, query),
         Selection::Duplicates => duplicates(db, stop),
     }

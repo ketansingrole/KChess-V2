@@ -124,8 +124,19 @@ pub(super) fn result(query: &GameDbQuery) -> Option<&'static str> {
     })
 }
 
+/// The clauses keeping the games of `query`'s length: a game of n moves has 2n - 1 or 2n plies.
+pub(super) fn length(query: &GameDbQuery, args: &mut Vec<SqlValue>) -> Vec<String> {
+    [(query.min_moves, ">="), (query.max_moves, "<=")]
+        .into_iter()
+        .filter_map(|(moves, test)| {
+            args.push(SqlValue::Integer(i64::from(moves?)));
+            Some(format!("(g.plies + 1) / 2 {test} ?{}", args.len()))
+        })
+        .collect()
+}
+
 /// The `WHERE` clause of a search, and its arguments.
-fn filters(query: &GameDbQuery, visible: i64, worded: bool) -> (String, Vec<SqlValue>) {
+pub(super) fn filters(query: &GameDbQuery, visible: i64, worded: bool) -> (String, Vec<SqlValue>) {
     let mut args = vec![SqlValue::Integer(visible)];
     let mut clauses = vec!["g.import_id <= ?1".to_string()];
     clauses.extend(named(query, worded, &mut args, "g."));
@@ -143,6 +154,7 @@ fn filters(query: &GameDbQuery, visible: i64, worded: bool) -> (String, Vec<SqlV
         clauses.push(format!("g.low_elo >= ?{n}"));
     }
     clauses.extend(result(query).map(str::to_string));
+    clauses.extend(length(query, &mut args));
     if let Some(eco) = &query.eco {
         args.push(SqlValue::Text(format!("{eco}%")));
         clauses.push(format!("g.eco LIKE ?{}", args.len()));

@@ -28,7 +28,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
-use gpui_kit::component::{Sizable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{Selectable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_board::analysis::{Open, Opening};
@@ -36,8 +36,10 @@ use kchess_board::game::played::{DatabaseGame, GameOrigin};
 use kchess_contracts::calls;
 use kchess_contracts::check::{DatabaseId, GameDbGameId, PgnSavePath};
 use kchess_contracts::types::{
-    DatabaseInfo, DatabaseSource, GameDbQuery, GameDbResult, GameDbRow, GameDbSide, GameDbSort,
+    DatabaseInfo, DatabaseSource, ExplorerSpeed, GameDbQuery, GameDbResult, GameDbRow, GameDbSide,
+    GameDbSort, GameDbStructure,
 };
+use kchess_domain::gamedb::patterns::Material;
 use kchess_nav::page::{ActionInfo, Page, PageAction, PageView};
 use kchess_nav::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use kchess_ui::icon;
@@ -72,6 +74,25 @@ const SORTS: [(&str, &str); 3] = [
     ("rating", "Best rated first"),
 ];
 const RESULTS: [&str; 4] = ["All", "White won", "Draws", "Black won"];
+const SPEEDS: [(&str, &str); 7] = [
+    ("any", "Any speed"),
+    ("ultraBullet", "UltraBullet"),
+    ("bullet", "Bullet"),
+    ("blitz", "Blitz"),
+    ("rapid", "Rapid"),
+    ("classical", "Classical"),
+    ("correspondence", "Correspondence"),
+];
+const STRUCTURES: [(&str, &str); 6] = [
+    ("any", "Any structure"),
+    ("isolatedQueenPawn", "Isolated queen pawn"),
+    ("hangingPawns", "Hanging pawns"),
+    ("carlsbad", "Carlsbad"),
+    ("maroczyBind", "Maróczy bind"),
+    ("stonewall", "Stonewall"),
+];
+/// The most moves a moves field takes.
+const MOST_MOVES: u32 = 600;
 /// The master games: Lichess's broadcast archive, some 770 MB to download in all (2026-11).
 const MASTERS_LABEL: &str = "Master games · 770 MB";
 const MASTERS_BYTES: u64 = 770 * 1024 * 1024;
@@ -122,6 +143,15 @@ pub struct DatabasePage {
     from_input: Entity<InputState>,
     to_input: Entity<InputState>,
     rating_select: Entity<SelectState<Vec<Choice>>>,
+    /// The filters that replay each game, shown under the others.
+    more: bool,
+    min_moves_input: Entity<InputState>,
+    max_moves_input: Entity<InputState>,
+    speed_select: Entity<SelectState<Vec<Choice>>>,
+    material_input: Entity<InputState>,
+    structure_select: Entity<SelectState<Vec<Choice>>>,
+    speed: Option<ExplorerSpeed>,
+    structure: Option<GameDbStructure>,
     sort_select: Entity<SelectState<Vec<Choice>>>,
     size_select: Entity<SelectState<Vec<Choice>>>,
     side: GameDbSide,
@@ -164,6 +194,43 @@ fn sort_key(sort: GameDbSort) -> &'static str {
     }
 }
 
+fn speed_of(key: &str) -> Option<ExplorerSpeed> {
+    Some(match key {
+        "ultraBullet" => ExplorerSpeed::UltraBullet,
+        "bullet" => ExplorerSpeed::Bullet,
+        "blitz" => ExplorerSpeed::Blitz,
+        "rapid" => ExplorerSpeed::Rapid,
+        "classical" => ExplorerSpeed::Classical,
+        "correspondence" => ExplorerSpeed::Correspondence,
+        _ => return None,
+    })
+}
+
+fn structure_of(key: &str) -> Option<GameDbStructure> {
+    Some(match key {
+        "isolatedQueenPawn" => GameDbStructure::IsolatedQueenPawn,
+        "hangingPawns" => GameDbStructure::HangingPawns,
+        "carlsbad" => GameDbStructure::Carlsbad,
+        "maroczyBind" => GameDbStructure::MaroczyBind,
+        "stonewall" => GameDbStructure::Stonewall,
+        _ => return None,
+    })
+}
+
+/// A number of moves typed in a moves field; anything else is none.
+fn moves(text: &str) -> Option<u32> {
+    text.trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|moves| *moves <= MOST_MOVES)
+}
+
+/// Material typed in its field, once it reads as each side's pieces ("R vs B"): until then, as a
+/// year half typed, it filters nothing.
+fn material(text: &str) -> Option<String> {
+    Material::parse(text).map(|_| text.trim().to_string())
+}
+
 /// A year typed in a year field; anything else is no year.
 fn year(text: &str) -> Option<i32> {
     let text = text.trim();
@@ -189,9 +256,14 @@ impl DatabasePage {
             .map(|size| Choice::new(size.to_string(), format!("{size} per page")))
             .collect();
         let size_select = cx.new(|cx| SelectState::new(sizes, None, window, cx));
+        let speed_select = cx.new(|cx| SelectState::new(choices(&SPEEDS), None, window, cx));
+        let structure_select =
+            cx.new(|cx| SelectState::new(choices(&STRUCTURES), None, window, cx));
         for (select, value) in [
             (&side_select, "either".to_string()),
             (&rating_select, "0".to_string()),
+            (&speed_select, "any".to_string()),
+            (&structure_select, "any".to_string()),
             (&sort_select, sort_key(sort).to_string()),
             (&size_select, page_size.to_string()),
         ] {
@@ -206,6 +278,9 @@ impl DatabasePage {
         let event_input = field("Event", window, cx);
         let from_input = field("From year", window, cx);
         let to_input = field("To year", window, cx);
+        let min_moves_input = field("Min moves", window, cx);
+        let max_moves_input = field("Max moves", window, cx);
+        let material_input = field("Material, e.g. R vs B", window, cx);
         let mut subscriptions = vec![
             cx.subscribe(
                 &database_select,
@@ -238,6 +313,24 @@ impl DatabasePage {
                 },
             ),
             cx.subscribe(
+                &speed_select,
+                |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
+                    if let SelectEvent::Confirm(Some(value)) = event {
+                        this.speed = speed_of(value);
+                        this.reload(cx);
+                    }
+                },
+            ),
+            cx.subscribe(
+                &structure_select,
+                |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
+                    if let SelectEvent::Confirm(Some(value)) = event {
+                        this.structure = structure_of(value);
+                        this.reload(cx);
+                    }
+                },
+            ),
+            cx.subscribe(
                 &sort_select,
                 |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
                     if let SelectEvent::Confirm(Some(value)) = event {
@@ -261,7 +354,15 @@ impl DatabasePage {
                 },
             ),
         ];
-        for input in [&player_input, &event_input, &from_input, &to_input] {
+        for input in [
+            &player_input,
+            &event_input,
+            &from_input,
+            &to_input,
+            &min_moves_input,
+            &max_moves_input,
+            &material_input,
+        ] {
             subscriptions.push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
                 // Typing keeps the last answer's games until the next one comes, where a choice
                 // clears them (`reload`): cleared, they flashed the loading line at each key.
@@ -317,6 +418,14 @@ impl DatabasePage {
             from_input,
             to_input,
             rating_select,
+            more: false,
+            min_moves_input,
+            max_moves_input,
+            speed_select,
+            material_input,
+            structure_select,
+            speed: None,
+            structure: None,
             sort_select,
             size_select,
             side: GameDbSide::Either,
@@ -409,6 +518,11 @@ impl DatabasePage {
             min_elo: self.min_elo,
             result: self.result,
             position: self.position.clone(),
+            min_moves: Self::text(&self.min_moves_input, cx).and_then(|text| moves(&text)),
+            max_moves: Self::text(&self.max_moves_input, cx).and_then(|text| moves(&text)),
+            speed: self.speed,
+            material: Self::text(&self.material_input, cx).and_then(|text| material(&text)),
+            structure: self.structure,
             sort: Some(self.sort),
             offset: u32::try_from(self.page * self.page_size).unwrap_or(u32::MAX),
             limit: u32::try_from(self.page_size).unwrap_or(20),
@@ -428,6 +542,20 @@ impl DatabasePage {
             || self.min_elo.is_some()
             || self.result.is_some()
             || self.position.is_some()
+            || self.more_filtered(cx)
+    }
+
+    /// Whether a filter under More filters is set.
+    fn more_filtered(&self, cx: &App) -> bool {
+        [
+            &self.min_moves_input,
+            &self.max_moves_input,
+            &self.material_input,
+        ]
+        .iter()
+        .any(|input| Self::text(input, cx).is_some())
+            || self.speed.is_some()
+            || self.structure.is_some()
     }
 
     /// The first page of what the filters now match. The last search's games go at once: kept
@@ -500,16 +628,26 @@ impl DatabasePage {
             &self.event_input,
             &self.from_input,
             &self.to_input,
+            &self.min_moves_input,
+            &self.max_moves_input,
+            &self.material_input,
         ] {
             input.update(cx, |input, cx| input.set_value("", window, cx));
         }
-        for (select, value) in [(&self.side_select, "either"), (&self.rating_select, "0")] {
+        for (select, value) in [
+            (&self.side_select, "either"),
+            (&self.rating_select, "0"),
+            (&self.speed_select, "any"),
+            (&self.structure_select, "any"),
+        ] {
             select.update(cx, |state, cx| {
                 state.set_selected_value(&SharedString::new_static(value), window, cx)
             });
         }
         self.side = GameDbSide::Either;
         self.min_elo = None;
+        self.speed = None;
+        self.structure = None;
         self.result = None;
         self.position = None;
         self.reload(cx);
@@ -553,10 +691,10 @@ impl DatabasePage {
     /// Every game the filters find, whatever its page.
     fn found(&self, cx: &App) -> Option<Chosen> {
         let database = self.database.clone()?;
-        Some(Chosen::Search(GameDbQuery {
+        Some(Chosen::Search(Box::new(GameDbQuery {
             offset: 0,
             ..self.query(database, cx)
-        }))
+        })))
     }
 
     /// Asks, then removes the `chosen` games (`count` of them, `game` when it is one) from the
@@ -739,7 +877,8 @@ impl DatabasePage {
                 .w(px(width))
                 .child(Select::new(state).small().accessibility_label(label))
         };
-        h_flex()
+        let more = self.more || self.more_filtered(cx);
+        let toolbar = h_flex()
             .flex_wrap()
             .gap(px(8.))
             .child(
@@ -760,6 +899,18 @@ impl DatabasePage {
             .child(select(&self.rating_select, 140., "Rating"))
             .child(results)
             .child(select(&self.sort_select, 160., "Order"))
+            .child(
+                Button::new("database-more")
+                    .ghost()
+                    .small()
+                    .icon(icon("sliders-horizontal"))
+                    .label("More filters")
+                    .selected(more)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.more = !this.more;
+                        cx.notify();
+                    })),
+            )
             .when(self.filtered(cx), |row| {
                 row.child(
                     Button::new("database-clear")
@@ -771,7 +922,20 @@ impl DatabasePage {
                             cx.listener(|this, _, window, cx| this.clear_filters(window, cx)),
                         ),
                 )
-            })
+            });
+        v_flex().gap(px(8.)).child(toolbar).when(more, |column| {
+            column.child(
+                h_flex()
+                    .id("database-more-filters")
+                    .flex_wrap()
+                    .gap(px(8.))
+                    .child(field(&self.min_moves_input, 96., "Min moves"))
+                    .child(field(&self.max_moves_input, 96., "Max moves"))
+                    .child(select(&self.speed_select, 150., "Time control"))
+                    .child(field(&self.material_input, 180., "Material"))
+                    .child(select(&self.structure_select, 170., "Pawn structure")),
+            )
+        })
     }
 
     fn render_rows(&self, narrow: bool, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {

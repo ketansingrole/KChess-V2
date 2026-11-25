@@ -14,6 +14,7 @@ test-support = ["kchess-board/test-support"]
 kchess-app.workspace = true
 kchess-board.workspace = true
 kchess-contracts.workspace = true
+kchess-domain.workspace = true
 kchess-nav.workspace = true
 kchess-ui.workspace = true
 # Pinned with the app's (apps/gpui/Cargo.toml).

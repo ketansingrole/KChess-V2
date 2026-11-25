@@ -19,6 +19,7 @@ pub mod opening;
 pub mod own;
 pub mod player;
 pub mod report;
+pub mod scan;
 pub mod schema;
 pub mod search;
 pub mod tcec;
@@ -986,7 +987,7 @@ impl GameDbService {
         let stopped = Arc::clone(&stop.0);
         let listed = Arc::clone(&self.inner.listed);
         let result = match self.inner.reader(&query.database) {
-            Ok(lane) if query.position.is_some() => {
+            Ok(lane) if query.position.is_some() || scan::deep(&query) => {
                 lane.run(move |db| explore::games_at(db, &query, &listed, &stopped))
                     .await
             }

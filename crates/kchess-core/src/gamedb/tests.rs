@@ -1,7 +1,8 @@
 use super::*;
 use crate::test_host::TestHost;
 use kchess_contracts::types::{
-    GameDbResult, GameDbSide, GameDbSort, PositionLookupKind, SavedLookup,
+    ExplorerSpeed, GameDbResult, GameDbSide, GameDbSort, GameDbStructure, PositionLookupKind,
+    SavedLookup,
 };
 use kchess_domain::pgn::{make_pgn, parse_pgn};
 use kchess_domain::rules;
@@ -1972,4 +1973,172 @@ fn a_game_with_huge_headers_is_left_out() {
     );
     let small = "[White \"A\"]\n\n1. d4 0-1\n\n";
     assert_eq!(filtered(&format!("{huge}{small}"), &["A"], 4096), small);
+}
+
+const SHAPED: &str = r#"[White "Carlsbad"]
+[Black "A"]
+[Result "1/2-1/2"]
+[TimeControl "5400+30"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 5. e3 O-O 6. Nf3 Nbd7 7. cxd5 exd5 8. Bd3 c6
+9. Qc2 Re8 10. O-O Nf8 1/2-1/2
+
+[White "Isolated"]
+[Black "B"]
+[Result "1-0"]
+[TimeControl "180+2"]
+
+1. d4 d5 2. c4 e6 3. Nc3 c5 4. cxd5 exd5 5. Nf3 Nc6 6. g3 Nf6 7. Bg2 Be7 8. O-O O-O
+9. dxc5 Bxc5 10. Na4 Be7 11. Be3 Re8 12. Rc1 Bg4 1-0
+
+[White "Ending"]
+[Black "C"]
+[Result "1/2-1/2"]
+[TimeControl "60"]
+[SetUp "1"]
+[FEN "4k3/8/3b4/8/8/8/8/R3K3 w - - 0 1"]
+
+1. Ra8+ Ke7 2. Ra7+ Kd8 3. Ra8+ Ke7 1/2-1/2
+
+[White "Short"]
+[Black "D"]
+[Result "*"]
+
+1. e4 e5 *
+"#;
+
+#[tokio::test]
+async fn a_deep_search_keeps_the_games_of_a_length_speed_material_and_structure() {
+    let (profile, files) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (games, _) = service(profile.path());
+    let id = imported(&games, source(files.path(), "s.pgn", SHAPED.as_bytes()))
+        .await
+        .database
+        .id;
+    let found = async |query: GameDbQuery| -> Vec<String> {
+        let mut found: Vec<String> = games
+            .games(query)
+            .await
+            .unwrap()
+            .games
+            .into_iter()
+            .map(|g| g.white)
+            .collect();
+        found.sort();
+        found
+    };
+    let base = || query(&id);
+    let cases: [(GameDbQuery, &[&str]); 12] = [
+        (
+            GameDbQuery {
+                min_moves: Some(10),
+                ..base()
+            },
+            &["Carlsbad", "Isolated"],
+        ),
+        (
+            GameDbQuery {
+                max_moves: Some(3),
+                ..base()
+            },
+            &["Ending", "Short"],
+        ),
+        (
+            GameDbQuery {
+                speed: Some(ExplorerSpeed::Classical),
+                ..base()
+            },
+            &["Carlsbad"],
+        ),
+        (
+            GameDbQuery {
+                speed: Some(ExplorerSpeed::Blitz),
+                ..base()
+            },
+            &["Isolated"],
+        ),
+        (
+            GameDbQuery {
+                speed: Some(ExplorerSpeed::Bullet),
+                ..base()
+            },
+            &["Ending"],
+        ),
+        (
+            GameDbQuery {
+                material: Some("R vs B".into()),
+                ..base()
+            },
+            &["Ending"],
+        ),
+        // Either colour on either side, written any way.
+        (
+            GameDbQuery {
+                material: Some("kb-kr".into()),
+                ..base()
+            },
+            &["Ending"],
+        ),
+        (
+            GameDbQuery {
+                structure: Some(GameDbStructure::Carlsbad),
+                ..base()
+            },
+            &["Carlsbad"],
+        ),
+        (
+            GameDbQuery {
+                structure: Some(GameDbStructure::IsolatedQueenPawn),
+                ..base()
+            },
+            &["Isolated"],
+        ),
+        (
+            GameDbQuery {
+                structure: Some(GameDbStructure::Carlsbad),
+                speed: Some(ExplorerSpeed::Blitz),
+                ..base()
+            },
+            &[],
+        ),
+        (
+            GameDbQuery {
+                structure: Some(GameDbStructure::IsolatedQueenPawn),
+                position: Some(
+                    "rnbqkbnr/ppp2ppp/4p3/3p4/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - 0 3".into(),
+                ),
+                ..base()
+            },
+            &["Isolated"],
+        ),
+        (
+            GameDbQuery {
+                structure: Some(GameDbStructure::Stonewall),
+                ..base()
+            },
+            &[],
+        ),
+    ];
+    for (query, expected) in cases {
+        assert_eq!(found(query.clone()).await, expected, "{query:?}");
+    }
+    // A deep search pages like any other.
+    let page = games
+        .games(GameDbQuery {
+            speed: Some(ExplorerSpeed::Blitz),
+            min_moves: Some(1),
+            offset: 0,
+            limit: 1,
+            ..base()
+        })
+        .await
+        .unwrap();
+    assert_eq!((page.total, page.games.len()), (1, 1));
+    let refused = games
+        .games(GameDbQuery {
+            material: Some("X vs Y".into()),
+            ..base()
+        })
+        .await;
+    assert!(refused.is_err());
 }

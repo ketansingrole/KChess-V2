@@ -85,7 +85,8 @@ pub fn save_game(
 #[derive(Clone, Debug, PartialEq)]
 pub enum Chosen {
     Game(u64),
-    Search(GameDbQuery),
+    /// Boxed: a search holds every filter, many times a game's id.
+    Search(Box<GameDbQuery>),
 }
 
 impl Chosen {
@@ -93,7 +94,7 @@ impl Chosen {
     pub fn parts(&self) -> (Option<GameDbGameIds>, Option<GameDbQuery>) {
         match self {
             Chosen::Game(id) => (Some(GameDbGameIds(vec![*id])), None),
-            Chosen::Search(query) => (None, Some(query.clone())),
+            Chosen::Search(query) => (None, Some(GameDbQuery::clone(query))),
         }
     }
 }

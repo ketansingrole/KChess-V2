@@ -1073,3 +1073,82 @@ fn the_board_reports_on_its_opening(cx: &mut gpui_kit::TestAppContext) {
     app.click_label("Replace");
     app.find("tree-e2e4 e7e5 g1f3 b8c6 f1b5 g8f6");
 }
+
+const SHAPED: &str = r#"[Date "2024.03.01"]
+[White "Carlsbad"]
+[Black "A"]
+[Result "1/2-1/2"]
+[TimeControl "5400+30"]
+
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 5. e3 O-O 6. Nf3 Nbd7 7. cxd5 exd5 8. Bd3 c6
+9. Qc2 Re8 10. O-O Nf8 1/2-1/2
+
+[Date "2024.02.01"]
+[White "Isolated"]
+[Black "B"]
+[Result "1-0"]
+[TimeControl "180+2"]
+
+1. d4 d5 2. c4 e6 3. Nc3 c5 4. cxd5 exd5 5. Nf3 Nc6 6. g3 Nf6 7. Bg2 Be7 8. O-O O-O
+9. dxc5 Bxc5 10. Na4 Be7 11. Be3 Re8 12. Rc1 Bg4 1-0
+
+[Date "2024.01.01"]
+[White "Ending"]
+[Black "C"]
+[Result "1/2-1/2"]
+[TimeControl "60"]
+[SetUp "1"]
+[FEN "4k3/8/3b4/8/8/8/8/R3K3 w - - 0 1"]
+
+1. Ra8+ Ke7 2. Ra7+ Kd8 3. Ra8+ Ke7 1/2-1/2
+"#;
+
+/// Picks the choice `down` below the one chosen in the list named `label`, by keyboard.
+fn choose(app: &mut Harness, label: &str, down: usize) {
+    app.click_label(label);
+    for _ in 0..down {
+        app.press("down");
+    }
+    app.press("enter");
+}
+
+/// More filters finds games by their length, their time control, a material balance they reach
+/// and a pawn structure they keep, each with the others, and Clear filters clears them too.
+#[gpui_kit::test]
+fn more_filters_find_games_by_length_speed_material_and_structure(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    const CARLSBAD: &str = "Carlsbad against A, 1/2-1/2";
+    const ISOLATED: &str = "Isolated against B, 1-0";
+    const ENDING: &str = "Ending against C, 1/2-1/2";
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    let files = tempfile::tempdir().expect("a folder for the file");
+    let path = files.path().join("shaped.pgn");
+    std::fs::write(&path, SHAPED).expect("the file");
+    app.click("gamedb-import");
+    app.wait_for_open_dialog();
+    app.cx
+        .simulate_path_prompt_response(move |_| Some(vec![path]));
+    wait_for_listed(&mut app, "every game", &[CARLSBAD, ISOLATED, ENDING]);
+    assert!(!app.shows("database-more-filters"));
+
+    app.click("database-more");
+    app.click_label("Min moves");
+    app.type_text("10");
+    wait_for_listed(&mut app, "the long games", &[CARLSBAD, ISOLATED]);
+    // Down from Any speed past UltraBullet and Bullet.
+    choose(&mut app, "Time control", 3);
+    wait_for_listed(&mut app, "the long blitz game", &[ISOLATED]);
+
+    app.click("database-clear");
+    wait_for_listed(&mut app, "every game again", &[CARLSBAD, ISOLATED, ENDING]);
+    app.click_label("Material");
+    app.type_text("R vs B");
+    wait_for_listed(&mut app, "the rook against bishop ending", &[ENDING]);
+
+    app.click("database-clear");
+    // Down from Any structure past the isolated queen pawn and hanging pawns.
+    choose(&mut app, "Pawn structure", 3);
+    wait_for_listed(&mut app, "the Carlsbad game", &[CARLSBAD]);
+}
