@@ -241,6 +241,7 @@ impl Core {
             ),
             crate::tablebase::parse_files(crate::tablebase::FILES)?,
         );
+        reviews.use_tablebases(tablebases.clone());
         let services = Services::new(
             Arc::clone(&host),
             Arc::clone(&database),

@@ -541,6 +541,30 @@ pub(crate) fn outcome(
     }))
 }
 
+/// `fen` as the tables judge it for a game review: its outcome for the side to move (2 a win, 0
+/// a draw, -2 a loss) and the best move there (UCI), as a lookup ranks them. None when they do not
+/// cover it, and for a win or loss the fifty-move rule may spoil, which the engine judges instead.
+pub(crate) fn verdict(
+    tables: &Tablebase<Chess>,
+    fen: &str,
+) -> std::result::Result<Option<(i8, Option<String>)>, SyzygyError> {
+    let Some(pos) = fen
+        .parse::<Fen>()
+        .ok()
+        .and_then(|fen| fen.into_position::<Chess>(CastlingMode::Standard).ok())
+    else {
+        return Ok(None);
+    };
+    let Some(outcome) = outcome(tables, &pos)?.filter(|outcome| outcome.abs() != 1) else {
+        return Ok(None);
+    };
+    let lookup = probe(tables, &pos, fen, 0)?;
+    Ok(Some((
+        outcome,
+        lookup.moves.into_iter().next().map(|best| best.uci),
+    )))
+}
+
 /// Where a move's outcome, for the side to move after it, ranks: the opponent's loss first.
 fn rank(wdl: AmbiguousWdl) -> u8 {
     match wdl {

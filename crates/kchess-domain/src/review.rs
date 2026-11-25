@@ -146,6 +146,8 @@ fn js_sign(x: f64) -> f64 {
 struct Score {
     cp: Option<f64>,
     mate: Option<f64>,
+    /// The tablebases' verdict: a win or a loss as sure as a mate, its distance unknown.
+    tablebase: bool,
 }
 
 const MAX_CP: f64 = 1000.0;
@@ -194,8 +196,13 @@ fn judge(before: Score, after: Score, mover_white: bool) -> Option<Judgment> {
     let delivered = after.mate == Some(0.0);
     let cp_before = before.cp.map_or(0.0, |cp| pov(mover_white, clamp_cp(cp)));
     let cp_after = after.cp.map_or(0.0, |cp| pov(mover_white, clamp_cp(cp)));
+    // A tablebase win or loss is as sure as a mate: a mate that becomes one is not lost, and one
+    // that comes after it was already there.
+    let sure_win = |score: Score, cp: f64| score.tablebase && cp >= MAX_CP;
+    let sure_loss = |score: Score, cp: f64| score.tablebase && cp <= -MAX_CP;
     if !delivered {
-        if mate_before.is_none() && mate_after.is_some_and(mated) {
+        if mate_before.is_none() && mate_after.is_some_and(mated) && !sure_loss(before, cp_before)
+        {
             return Some(if cp_before < -999.0 {
                 Judgment::Inaccuracy
             } else if cp_before < -700.0 {
@@ -204,7 +211,10 @@ fn judge(before: Score, after: Score, mover_white: bool) -> Option<Judgment> {
                 Judgment::Blunder
             });
         }
-        if mate_before.is_some_and(|m| m > 0.0) && mate_after.is_none_or(mated) {
+        if mate_before.is_some_and(|m| m > 0.0)
+            && mate_after.is_none_or(mated)
+            && !sure_win(after, cp_after)
+        {
             return Some(if cp_after > 999.0 {
                 Judgment::Inaccuracy
             } else if cp_after > 700.0 {
@@ -296,6 +306,7 @@ impl<'a> Review<'a> {
                     score: Score {
                         cp: eval.cp,
                         mate: eval.mate,
+                        tablebase: eval.tablebase,
                     },
                     best: eval.best.as_deref(),
                     pv: eval.pv.iter().flatten().map(String::as_str).collect(),
@@ -397,6 +408,7 @@ fn analyse_moves(review: &Review) -> Result<Analysis, String> {
             Some("checkmate") => Some(Score {
                 cp: None,
                 mate: Some(0.0),
+                tablebase: false,
             }),
             Some("won") => Some(Score {
                 cp: None,
@@ -405,10 +417,12 @@ fn analyse_moves(review: &Review) -> Result<Analysis, String> {
                 } else {
                     -1.0
                 }),
+                tablebase: false,
             }),
             Some(_) => Some(Score {
                 cp: Some(0.0),
                 mate: None,
+                tablebase: false,
             }),
             None => None,
         }
@@ -1313,6 +1327,7 @@ mod tests {
             score: Score {
                 cp: Some(0.0),
                 mate: None,
+                tablebase: false,
             },
             best: None,
             pv: pv.to_vec(),
@@ -1355,6 +1370,7 @@ mod tests {
         Score {
             cp: Some(value),
             mate: None,
+            tablebase: false,
         }
     }
 
@@ -1362,6 +1378,7 @@ mod tests {
         Score {
             cp: None,
             mate: Some(value),
+            tablebase: false,
         }
     }
 
@@ -1401,6 +1418,38 @@ mod tests {
             let flip = |s: Score| Score {
                 cp: s.cp.map(|v| -v),
                 mate: s.mate.map(|v| -v),
+                tablebase: s.tablebase,
+            };
+            assert_eq!(judge(flip(before), flip(after), false), judgment);
+        }
+    }
+
+    /// The tablebases' verdicts: a won endgame let go is a blunder however it is reached, and a
+    /// mate the engine saw that becomes a tablebase win is no inaccuracy (nor a tablebase loss
+    /// that becomes the engine's mate).
+    #[test]
+    fn tablebase_verdicts_are_as_sure_as_mates() {
+        use Judgment::Blunder;
+        let tablebase = |cp: f64| Score {
+            cp: Some(cp),
+            mate: None,
+            tablebase: true,
+        };
+        for (before, after, judgment) in [
+            (tablebase(1000.0), tablebase(0.0), Some(Blunder)),
+            (tablebase(0.0), tablebase(-1000.0), Some(Blunder)),
+            (tablebase(1000.0), tablebase(1000.0), None),
+            (tablebase(0.0), tablebase(0.0), None),
+            (mate(12.0), tablebase(1000.0), None),
+            (mate(12.0), tablebase(0.0), Some(Blunder)),
+            (tablebase(-1000.0), mate(-9.0), None),
+            (cp(400.0), tablebase(0.0), Some(Blunder)),
+        ] {
+            assert_eq!(judge(before, after, true), judgment, "{before:?} {after:?}");
+            let flip = |s: Score| Score {
+                cp: s.cp.map(|v| -v),
+                mate: s.mate.map(|v| -v),
+                tablebase: s.tablebase,
             };
             assert_eq!(judge(flip(before), flip(after), false), judgment);
         }
