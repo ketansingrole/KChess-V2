@@ -1145,6 +1145,36 @@ impl GameDbService {
         self.inner.logged("repertoire check of your games", result)
     }
 
+    /// A repertoire of `color`'s through the games of player's database `database`, where its
+    /// player had the other side.
+    pub async fn repertoire_player(
+        &self,
+        steps: Vec<kchess_contracts::types::RepertoireStep>,
+        color: shakmaty::Color,
+        database: String,
+    ) -> Result<kchess_contracts::types::GameDbRepertoireGames> {
+        let Some(info) = self.inner.info(&database).await? else {
+            return Err(CoreError::new("That database is gone."));
+        };
+        let Some(player) = info.player else {
+            return Err(CoreError::new("Choose a player's games."));
+        };
+        let file = self.inner.file(&database);
+        // Dropped by its caller (the dialog closed), the check stops at its next game.
+        let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
+        let stopped = Arc::clone(&stop.0);
+        let result = tokio::task::spawn_blocking(move || {
+            let db = schema::open_read(&file)?;
+            repertoire::player_games(&db, &steps, color, &player.username, &stopped)
+        })
+        .await
+        .map_err(|_| CoreError::new("The player's games could not be read. Try again."))
+        .and_then(|found| found);
+        drop(stop);
+        self.inner
+            .logged("repertoire check of a player's games", result)
+    }
+
     /// Stops the import and the rebuild of "Your games"; `close` waits for them to end.
     pub fn stop(&self) {
         self.cancel();

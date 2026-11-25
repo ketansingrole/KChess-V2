@@ -387,3 +387,105 @@ async fn a_cancelled_download_keeps_the_players_database_as_it_was() {
     assert!(leftovers(profile.path()).is_empty());
     drop(send);
 }
+
+/// A repertoire checked against a player's games: their games with the side it meets, each
+/// move they chose where it waits for theirs, those it has no answer to first.
+#[tokio::test]
+async fn a_repertoire_is_checked_against_a_players_games() {
+    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    const E4: &str = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+    let profile = tempfile::tempdir().expect("profile");
+    let sites = Sites::default();
+    sites.lichess.lock().unwrap().insert(
+        "rival".into(),
+        [
+            game("Ann", "Rival", "1-0", "1. e4 e5 2. Nf3 Nc6"),
+            game("Bo", "Rival", "0-1", "1. e4 e5 2. Nf3 Nf6"),
+            game("Ann", "Rival", "1/2-1/2", "1. e4 c5 2. Nf3"),
+            game("Cy", "Rival", "0-1", "1. e4 e6 2. d4"),
+            // Their opponent left the repertoire, not they: nothing of theirs to count.
+            game("Cy", "Rival", "1-0", "1. d4 d5"),
+            // With White: not the side the repertoire meets.
+            game("Rival", "Ann", "1-0", "1. e4 e6"),
+        ]
+        .concat(),
+    );
+    let fixture = sites.serve().await;
+    let (core, _) = open(profile.path(), &fixture.base);
+    ready(&core).await;
+    let installed = core
+        .call(
+            "gameDbPlayerInstall",
+            vec![json!({ "site": "lichess", "username": "Rival", "rated": false })],
+        )
+        .await
+        .expect("downloads");
+    let id = installed["database"]["id"]
+        .as_str()
+        .expect("an id")
+        .to_string();
+    // White's 1. e4, after 1...e5 or 1...c5 2. Nf3.
+    let steps = json!([
+        { "fen": START, "moves": ["e2e4"] },
+        { "fen": E4, "moves": ["e7e5", "c7c5"] },
+    ]);
+    let checked = core
+        .call(
+            "gameDbRepertoirePlayer",
+            vec![steps.clone(), json!("white"), json!(id)],
+        )
+        .await
+        .expect("checks");
+    assert_eq!(
+        (&checked["games"], &checked["reached"]),
+        (&json!(5), &json!(5))
+    );
+    let read: Vec<(String, u64, bool, bool)> = checked["gaps"]
+        .as_array()
+        .expect("moves")
+        .iter()
+        .map(|m| {
+            (
+                m["san"].as_str().expect("SAN").to_string(),
+                m["games"].as_u64().expect("games"),
+                m["yours"].as_bool().expect("whose"),
+                m.get("prepared").is_some_and(|p| p == true),
+            )
+        })
+        .collect();
+    assert_eq!(
+        read,
+        [
+            ("e6".into(), 1, false, false),
+            ("e5".into(), 2, false, true),
+            ("c5".into(), 1, false, true),
+        ]
+    );
+    // For White: 1...e5 won once and lost once.
+    let e5 = &checked["gaps"][1];
+    assert_eq!(
+        (&e5["won"], &e5["drawn"], &e5["lost"]),
+        (&json!(1), &json!(0), &json!(1))
+    );
+
+    // A database that is not a player's has no player to follow.
+    let files = tempfile::tempdir().expect("files");
+    let path = files.path().join("club.pgn");
+    std::fs::write(&path, game("Ann", "Bo", "1-0", "1. e4 e5")).expect("writes");
+    let club = core
+        .call(
+            "gameDbImport",
+            vec![json!(path.to_string_lossy()), Value::Null, json!("Club")],
+        )
+        .await
+        .expect("imports");
+    let refused = core
+        .call(
+            "gameDbRepertoirePlayer",
+            vec![steps, json!("white"), club["database"]["id"].clone()],
+        )
+        .await
+        .expect_err("not a player's games");
+    assert_eq!(refused.message, "Choose a player's games.");
+    core.close().await;
+}

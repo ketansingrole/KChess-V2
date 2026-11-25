@@ -789,6 +789,16 @@ core_api! {
             steps: RepertoireSteps,
             color: Side
         ) -> crate::types::GameDbRepertoireGames;
+        /// A repertoire (`color`'s) through the games of a player's database (`source`
+        /// `player`) where that player had the other side: each move they chose where the
+        /// repertoire waits for theirs, those it has no answer to (`prepared` false) first, the
+        /// most played first, with results for `color`.
+        #[assist(Lookups)]
+        GameDbRepertoirePlayer = "gameDbRepertoirePlayer" fn game_db_repertoire_player(
+            steps: RepertoireSteps,
+            color: Side,
+            database: DatabaseId
+        ) -> crate::types::GameDbRepertoireGames;
         #[writes(GameDb)]
         GameDbMasterInstall = "gameDbMasterInstall" fn game_db_master_install(;
             months: Option<MasterMonths>

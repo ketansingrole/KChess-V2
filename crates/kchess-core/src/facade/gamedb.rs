@@ -199,6 +199,17 @@ impl GameDbApi for Core {
         self.gamedb.repertoire_games(steps.0, color.0, names).await
     }
 
+    async fn game_db_repertoire_player(
+        &self,
+        steps: kchess_contracts::check::RepertoireSteps,
+        color: kchess_contracts::check::Side,
+        database: DatabaseId,
+    ) -> Result<kchess_contracts::types::GameDbRepertoireGames> {
+        self.gamedb
+            .repertoire_player(steps.0, color.0, database.0)
+            .await
+    }
+
     async fn game_db_novelty(
         &self,
         fen: Fen,

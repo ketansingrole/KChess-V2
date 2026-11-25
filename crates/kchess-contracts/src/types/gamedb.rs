@@ -393,6 +393,10 @@ pub struct GameDbRepertoireGap {
     pub san: String,
     /// Your move, not your opponent's.
     pub yours: bool,
+    /// The repertoire has it: one of a player's choices it is ready for
+    /// (`gameDbRepertoirePlayer`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prepared: bool,
     pub games: u64,
     pub won: u64,
     pub drawn: u64,
