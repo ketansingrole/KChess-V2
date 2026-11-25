@@ -184,7 +184,7 @@ fn skip_box(cx: &App) -> Checkbox {
 }
 
 /// What the update just installed brought: `releases`, those new to this profile.
-fn open_after_update(releases: Vec<Release>, window: &mut Window, cx: &mut App) {
+pub(crate) fn open_after_update(releases: Vec<Release>, window: &mut Window, cx: &mut App) {
     crate::widgets::open_dialog(window, cx, move |dialog, window, cx| {
         let palette = *cx.global::<Palette>();
         let (width, room) = room(window, px(240.));

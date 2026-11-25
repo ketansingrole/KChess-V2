@@ -460,15 +460,19 @@ impl SettingsPage {
                     .child(error)
             }))
             .child(about);
-        let can_check = updates.can_check();
-        v_flex().gap(px(16.)).child(status).when(can_check, |page| {
-            page.child(
-                self.rows()
-                    .switch("update-auto-check", settings, true, palette)
-                    .switch("update-auto-download", settings, true, palette)
-                    .switch("update-install-on-quit", settings, true, palette)
-                    .card(palette),
-            )
-        })
+        let mut rows = self.rows();
+        if updates.can_check() {
+            rows = rows
+                .switch("update-auto-check", settings, true, palette)
+                .switch("update-auto-download", settings, true, palette)
+                .switch("update-install-on-quit", settings, true, palette);
+        }
+        // Every installation shows what an update brought, however it was updated, so the
+        // switch stays where the updater's own are hidden.
+        let rows = rows.switch("update-show-notes", settings, true, palette);
+        v_flex()
+            .gap(px(16.))
+            .child(status)
+            .child(rows.card(palette))
     }
 }

@@ -23,8 +23,9 @@ fn an_update_shows_its_notes_once(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.shows("whats-new"), "the notes show once");
 }
 
-/// The notes after an update say how to stop them: the box turns them off (as Settings →
-/// Updates does), and the next update starts with none, though it still counts as shown.
+/// The notes after an update say how to stop them: the box turns them off, and the next update
+/// starts with none, though it still counts as shown. Settings → Updates turns them back on, on
+/// every installation: its switch was first left out of the page.
 #[gpui_kit::test]
 fn the_notes_after_an_update_can_be_turned_off(cx: &mut gpui_kit::TestAppContext) {
     let app = Harness::start(cx);
@@ -42,6 +43,12 @@ fn the_notes_after_an_update_can_be_turned_off(cx: &mut gpui_kit::TestAppContext
     assert!(!app.shows("whats-new"), "the notes stay off");
     let seen: Option<String> = app.cx.update(|cx| crate::prefs::get(cx, SEEN_KEY, None));
     assert_eq!(seen, Some(crate::updates::current_version()));
+    // Settings → Updates turns them back on, though this build cannot update itself and hides
+    // the updater's own switches.
+    app.open_settings("Updates");
+    assert!(!app.shows("update-auto-check"));
+    app.click("update-show-notes");
+    app.wait_for_saved("updateShowNotes", serde_json::json!(true));
 }
 
 /// Notes read before installing marked the update's version read; when that install failed, the
