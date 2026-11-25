@@ -799,6 +799,11 @@ core_api! {
             color: Side,
             database: DatabaseId
         ) -> crate::types::GameDbRepertoireGames;
+        /// The endgames of Your games with five pieces or fewer where your move gave away a
+        /// win, or a draw, as the endgame tablebases on this computer have it, the newest first.
+        #[assist(Lookups)]
+        GameDbYourEndgames = "gameDbYourEndgames" fn game_db_your_endgames(
+        ) -> crate::types::YourEndgames;
         #[writes(GameDb)]
         GameDbMasterInstall = "gameDbMasterInstall" fn game_db_master_install(;
             months: Option<MasterMonths>

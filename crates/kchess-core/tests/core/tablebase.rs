@@ -305,3 +305,110 @@ async fn the_core_answers_a_covered_tablebase_lookup_from_the_tables_on_disk() {
     assert!(!folder.exists());
     core.close().await;
 }
+
+/// The endgames of Your games: without tables nothing is looked for; with them, each game's
+/// first move that gave away a win or a draw, the newest game first. A rook left to be taken
+/// draws KR vs K, with White or with Black; a rook kept safe is no slip.
+#[tokio::test]
+async fn your_endgames_list_the_wins_your_moves_gave_away() {
+    let profile = tempfile::tempdir().unwrap();
+    let host = support::host();
+    let core = Core::open(Config::new(profile.path().to_path_buf()), host).expect("opens");
+    core.call("gameDbStatus", vec![]).await.expect("status");
+    let games = [
+        (
+            "white-slip",
+            "8/8/8/8/8/8/1k6/R3K3 w - - 0 1",
+            ["a1a2", "b2a2"].as_slice(),
+            1,
+        ),
+        (
+            "white-safe",
+            "8/8/8/8/8/8/1k6/R3K3 w - - 0 1",
+            ["a1a8"].as_slice(),
+            2,
+        ),
+        (
+            "black-slip",
+            "8/8/8/8/8/8/1K6/r3k3 b - - 0 1",
+            ["a1a2", "b2a2"].as_slice(),
+            3,
+        ),
+    ];
+    for (id, fen, moves, day) in games {
+        let (white, black) = if fen.contains(" w ") {
+            ("You", "Stockfish")
+        } else {
+            ("Stockfish", "You")
+        };
+        let started = 1_761_091_200_000_i64 + day * 86_400_000;
+        core.call(
+            "saveArchivedGame",
+            vec![json!({
+                "id": id, "source": "computer", "startedAt": started, "updatedAt": started,
+                "white": white, "black": black, "result": "1/2-1/2", "reason": "insufficient",
+                "timeControl": "-", "finished": true,
+                "setup": { "variant": "standard", "fen": fen }, "moves": moves,
+            })],
+        )
+        .await
+        .expect("saves the game");
+    }
+    core.own_games_settled_for_tests().await;
+    core.call("resumeOnline", vec![])
+        .await
+        .expect("no game is live");
+
+    let none = core
+        .call("gameDbYourEndgames", vec![])
+        .await
+        .expect("answers");
+    assert_eq!(none, json!({ "tables": false, "games": 0, "endgames": [] }));
+
+    let folder = profile.path().join("tablebases");
+    std::fs::create_dir_all(&folder).unwrap();
+    for file in listed() {
+        std::fs::copy(fixtures_dir().join(&file.name), folder.join(&file.name)).unwrap();
+    }
+    let found = core
+        .call("gameDbYourEndgames", vec![])
+        .await
+        .expect("answers");
+    assert_eq!(
+        (&found["tables"], &found["games"]),
+        (&json!(true), &json!(3))
+    );
+    let read: Vec<(String, String, String, String, String, String)> = found["endgames"]
+        .as_array()
+        .expect("endgames")
+        .iter()
+        .map(|endgame| {
+            let text = |key: &str| endgame[key].as_str().expect(key).to_string();
+            (
+                text("side"),
+                text("goal"),
+                text("san"),
+                text("became"),
+                text("material"),
+                text("opponent"),
+            )
+        })
+        .collect();
+    let row = |side: &str, san: &str| {
+        (
+            side.to_string(),
+            "win".to_string(),
+            san.to_string(),
+            "draw".to_string(),
+            "KR vs K".to_string(),
+            "Stockfish".to_string(),
+        )
+    };
+    assert_eq!(read, [row("black", "Ra2+"), row("white", "Ra2+")]);
+    assert_eq!(
+        found["endgames"][1]["fen"],
+        "8/8/8/8/8/8/1k6/R3K3 w - - 0 1"
+    );
+    assert_eq!(found["endgames"][1]["number"], 1);
+    core.close().await;
+}
