@@ -248,8 +248,9 @@ pub fn add_mistakes(
             continue;
         };
         let depth = evaluation.depth.unwrap_or(0.0);
+        // A shallow engine score is no answer to drill; the tablebases' always is.
         if review.moves.get(index).map(String::as_str) == Some(best)
-            || (review.source == ReviewSource::Local && depth < 10.0)
+            || (review.source == ReviewSource::Local && depth < 10.0 && !evaluation.tablebase)
         {
             continue;
         }
@@ -1305,6 +1306,38 @@ mod tests {
         let answered =
             answer_mistake(&db, drill["id"].as_str().unwrap(), true, 2.0).expect("answer");
         assert_eq!(answered[0]["variant"], json!("crazyhouse"), "{answered}");
+    }
+
+    /// A won endgame the tablebases saw let go is a drill, though tablebase scores have no depth:
+    /// its answer is the tables' move.
+    #[test]
+    fn a_tablebase_blunder_becomes_a_drill() {
+        let db = drills_db();
+        let fen = "8/8/8/8/8/8/1k6/R3K3 w - - 0 1";
+        let moves = ["a1a2", "b2a2"].map(String::from);
+        let key = json!(kchess_domain::records::review::review_key(
+            fen, &moves, None
+        ));
+        let evals = json!([
+            { "cp": 1000, "best": "a1a8", "pv": ["a1a8"], "tablebase": true },
+            { "cp": 0, "best": "b2a2", "pv": ["b2a2"], "tablebase": true },
+            { "cp": 0 },
+        ]);
+        crate::store::reviews::write_review(
+            &QUIET,
+            &db,
+            serde_json::from_value(json!({
+                "key": key, "fen": fen, "moves": moves, "source": "local",
+                "complete": true, "depth": 18, "updatedAt": 7, "evals": evals,
+            }))
+            .expect("a stored review"),
+        )
+        .expect("write review");
+        let added =
+            add_mistakes(&QUIET, &db, key.as_str().unwrap(), Some("white"), 1.0).expect("add");
+        assert_eq!(added["added"], json!(1), "{added}");
+        assert_eq!(added["items"][0]["solution"], json!(["a1a8"]));
+        assert_eq!(added["items"][0]["judgment"], json!("blunder"));
     }
 
     #[test]

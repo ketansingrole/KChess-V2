@@ -246,6 +246,9 @@ struct State {
 
 struct Shared {
     ctx: EngineContext,
+    /// The endgame tablebases, which judge a position with five pieces or fewer in place of the
+    /// engine (`tablebase_evals`).
+    tablebases: std::sync::OnceLock<crate::tablebase::Tablebases>,
     engine: Arc<EngineSlot>,
     storage: ReviewStore,
     state: Mutex<State>,
@@ -280,11 +283,23 @@ impl Reviews {
         Reviews {
             shared: Arc::new(Shared {
                 engine: EngineSlot::new(ctx.clone(), IDLE),
+                tablebases: std::sync::OnceLock::new(),
                 ctx,
                 storage,
                 state: Mutex::new(State::default()),
                 idle_tx,
             }),
+        }
+    }
+
+    /// Judge endgames with `tablebases` while they are on this computer.
+    pub fn use_tablebases(&self, tablebases: crate::tablebase::Tablebases) {
+        // Set once, as the core starts.
+        if self.shared.tablebases.set(tablebases).is_err() {
+            self.shared
+                .ctx
+                .host
+                .log(Level::Warn, "review", "The tablebases were set twice.");
         }
     }
 
@@ -599,6 +614,71 @@ fn empty_review(job: &Job) -> StoredReview {
 /// Whether the evaluation carries a score.
 fn has_score(score: Option<&ReviewEval>) -> bool {
     score.is_some_and(|score| score.cp.is_some() || score.mate.is_some())
+}
+
+/// The positions of `job` the endgame tablebases decide, judged by them: a win 1000 and a loss
+/// -1000 from White's side, a draw 0, with the tables' best move. None for each other position,
+/// and for all of them in a variant or without the tables. A probe that fails leaves its position
+/// to the engine.
+async fn tablebase_evals(s: &Shared, job: &Job) -> Vec<Option<ReviewEval>> {
+    let Some(tablebases) = s
+        .tablebases
+        .get()
+        .cloned()
+        .filter(|_| job.variant.is_empty())
+    else {
+        return Vec::new();
+    };
+    let positions: Vec<(String, &'static str)> = job
+        .positions
+        .iter()
+        .map(|position| (position.fen.clone(), position.turn))
+        .collect();
+    let host = Arc::clone(&s.ctx.host);
+    tokio::task::spawn_blocking(move || {
+        let tables = tablebases.tables()?;
+        let pieces = |fen: &str| {
+            fen.split(' ')
+                .next()
+                .unwrap_or_default()
+                .chars()
+                .filter(char::is_ascii_alphabetic)
+                .count()
+        };
+        Some(
+            positions
+                .iter()
+                .map(|(fen, turn)| {
+                    if pieces(fen) > crate::tablebase::PIECES as usize {
+                        return None;
+                    }
+                    let (outcome, best) = match crate::tablebase::verdict(&tables, fen) {
+                        Ok(verdict) => verdict?,
+                        Err(cause) => {
+                            host.log(
+                                Level::Warn,
+                                "review",
+                                &format!("A tablebase probe failed: {cause}"),
+                            );
+                            return None;
+                        }
+                    };
+                    let white = if *turn == "white" { outcome } else { -outcome };
+                    Some(ReviewEval {
+                        cp: Some(f64::from(white.signum()) * 1000.0),
+                        pv: best.clone().map(|best| vec![best]),
+                        best,
+                        tablebase: true,
+                        ..ReviewEval::default()
+                    })
+                })
+                .collect(),
+        )
+    })
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_default()
 }
 
 /// The score of a finished game's last position.
@@ -1096,6 +1176,16 @@ async fn run(s: &Arc<Shared>, job: Arc<Job>) {
     lock(&s.state).running = None;
 }
 
+/// The score of position `index` known without a search: the game's end, or the tablebases'
+/// verdict (`judged`).
+fn settled(job: &Job, judged: &[Option<ReviewEval>], index: usize) -> Option<ReviewEval> {
+    let position = &job.positions[index];
+    match position.end {
+        Some(end) => Some(end_eval(end, position.turn)),
+        None => judged.get(index).cloned().flatten(),
+    }
+}
+
 /// The passes over one game: quick then deep when someone asked, deep only in the background.
 async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> Result<()> {
     let total = job.positions.len();
@@ -1144,6 +1234,7 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
         review.evals = vec![None; total];
     }
     target.uci.write("ucinewgame")?;
+    let judged = tablebase_evals(s, job).await;
     let passes: Vec<(u32, u64)> = if job.background.load(Ordering::SeqCst) {
         vec![(FULL_DEPTH, FULL_MS)]
     } else {
@@ -1153,8 +1244,8 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
         let mut since_save = 0usize;
         for index in 0..total {
             let known = review.evals[index].clone();
-            if let Some(end) = job.positions[index].end {
-                review.evals[index] = Some(end_eval(end, job.positions[index].turn));
+            if let Some(settled) = settled(job, &judged, index) {
+                review.evals[index] = Some(settled);
             } else if !has_score(known.as_ref())
                 || known.as_ref().and_then(|known| known.depth).unwrap_or(0.0) < f64::from(depth)
             {
@@ -1330,6 +1421,7 @@ async fn search_once(
                             best: line.pv.first().cloned(),
                             pv: Some(line.pv.iter().take(PV_LENGTH).cloned().collect()),
                             depth: Some(line.depth),
+                            tablebase: false,
                         };
                     },
                     Some(Duration::from_millis(ms + 10_000)),

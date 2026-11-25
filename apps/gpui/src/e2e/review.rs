@@ -122,3 +122,48 @@ fn a_crazyhouse_game_is_reviewed_in_its_variant(cx: &mut gpui_kit::TestAppContex
     // them; the scripted engine's lines are not legal here, so it makes no drill).
     assert!(app.shows("practice-review-mistakes"));
 }
+
+/// With the endgame tablebases on this computer, a review judges five pieces or fewer by them:
+/// leaving the rook to be taken in a won KR vs K is the blunder that draws it, whatever the
+/// engine would have said.
+#[gpui_kit::test]
+fn an_endgame_is_reviewed_by_the_tablebases(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start_with(cx, super::practice::with_tablebases);
+    app.open("Analysis board");
+    super::analysis::import(
+        &mut app,
+        "[SetUp \"1\"]\n[FEN \"8/8/8/8/8/8/1k6/R3K3 w - - 0 1\"]\n\n1. Ra2+ Kxa2 1/2-1/2",
+    );
+    app.wait_gone("import-run");
+    app.click("Review");
+    app.click("review-start");
+    let page = |cx: &gpui_kit::App| crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx);
+    app.wait_for("the review to finish", |window, cx| {
+        window.try_find("review-stop").is_none()
+            && window.try_find("review-start").is_none()
+            && page(cx).is_some_and(|page| page.read(cx).finished_review(cx).is_some())
+    });
+    let (review, analysis) = app
+        .with_window(|_, cx| page(cx).and_then(|page| page.read(cx).finished_review(cx)))
+        .expect("the finished review");
+    let first = review.evals[0].clone().expect("the start's score");
+    assert!(first.tablebase, "{first:?}");
+    assert_eq!(
+        analysis.moves[0].judgment,
+        Some(kchess_domain::records::review::Judgment::Blunder),
+        "{analysis:?} {review:?}"
+    );
+    // The move's mark says what it gave away, and the tables' move that kept the win.
+    app.click("Moves");
+    let path = crate::game::tree::path_of(&["a1a2".to_string()]);
+    let said = app
+        .find(format!("label-{path}"))
+        .label()
+        .map(str::to_string)
+        .unwrap_or_default();
+    assert!(
+        said.starts_with("Blunder: throws away the win · R") && said.ends_with(" wins (tablebase)"),
+        "{said}"
+    );
+}
