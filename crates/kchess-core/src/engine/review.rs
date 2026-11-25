@@ -621,7 +621,12 @@ fn has_score(score: Option<&ReviewEval>) -> bool {
 /// and for all of them in a variant or without the tables. A probe that fails leaves its position
 /// to the engine.
 async fn tablebase_evals(s: &Shared, job: &Job) -> Vec<Option<ReviewEval>> {
-    let Some(tablebases) = s.tablebases.get().cloned().filter(|_| job.variant.is_empty()) else {
+    let Some(tablebases) = s
+        .tablebases
+        .get()
+        .cloned()
+        .filter(|_| job.variant.is_empty())
+    else {
         return Vec::new();
     };
     let positions: Vec<(String, &'static str)> = job
@@ -1171,6 +1176,16 @@ async fn run(s: &Arc<Shared>, job: Arc<Job>) {
     lock(&s.state).running = None;
 }
 
+/// The score of position `index` known without a search: the game's end, or the tablebases'
+/// verdict (`judged`).
+fn settled(job: &Job, judged: &[Option<ReviewEval>], index: usize) -> Option<ReviewEval> {
+    let position = &job.positions[index];
+    match position.end {
+        Some(end) => Some(end_eval(end, position.turn)),
+        None => judged.get(index).cloned().flatten(),
+    }
+}
+
 /// The passes over one game: quick then deep when someone asked, deep only in the background.
 async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> Result<()> {
     let total = job.positions.len();
@@ -1229,10 +1244,8 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
         let mut since_save = 0usize;
         for index in 0..total {
             let known = review.evals[index].clone();
-            if let Some(end) = job.positions[index].end {
-                review.evals[index] = Some(end_eval(end, job.positions[index].turn));
-            } else if let Some(Some(judged)) = judged.get(index) {
-                review.evals[index] = Some(judged.clone());
+            if let Some(settled) = settled(job, &judged, index) {
+                review.evals[index] = Some(settled);
             } else if !has_score(known.as_ref())
                 || known.as_ref().and_then(|known| known.depth).unwrap_or(0.0) < f64::from(depth)
             {

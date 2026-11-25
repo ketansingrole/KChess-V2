@@ -152,6 +152,18 @@ fn an_endgame_is_reviewed_by_the_tablebases(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(
         analysis.moves[0].judgment,
         Some(kchess_domain::records::review::Judgment::Blunder),
-        "{analysis:?}"
+        "{analysis:?} {review:?}"
+    );
+    // The move's mark says what it gave away, and the tables' move that kept the win.
+    app.click("Moves");
+    let path = crate::game::tree::path_of(&["a1a2".to_string()]);
+    let said = app
+        .find(format!("label-{path}"))
+        .label()
+        .map(str::to_string)
+        .unwrap_or_default();
+    assert!(
+        said.starts_with("Blunder: throws away the win · R") && said.ends_with(" wins (tablebase)"),
+        "{said}"
     );
 }

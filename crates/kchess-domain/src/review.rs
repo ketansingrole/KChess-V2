@@ -201,8 +201,7 @@ fn judge(before: Score, after: Score, mover_white: bool) -> Option<Judgment> {
     let sure_win = |score: Score, cp: f64| score.tablebase && cp >= MAX_CP;
     let sure_loss = |score: Score, cp: f64| score.tablebase && cp <= -MAX_CP;
     if !delivered {
-        if mate_before.is_none() && mate_after.is_some_and(mated) && !sure_loss(before, cp_before)
-        {
+        if mate_before.is_none() && mate_after.is_some_and(mated) && !sure_loss(before, cp_before) {
             return Some(if cp_before < -999.0 {
                 Judgment::Inaccuracy
             } else if cp_before < -700.0 {
