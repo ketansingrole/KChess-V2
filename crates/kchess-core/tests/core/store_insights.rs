@@ -515,8 +515,9 @@ fn endgames_count_the_won_and_drawn_positions_by_their_pieces() {
         let query = insights_query(&query);
         store
             .db
-            .read(|c| insights::endgames(c.db, &query, NOW, tables))
+            .read(|c| insights::replayed_games(c.db, &query, NOW, tables))
             .expect("endgames")
+            .0
     };
     let report = endgames(json!({ "account": "Alice" }), Some(&tables)).expect("standard");
     assert_eq!(
@@ -546,6 +547,89 @@ fn endgames_count_the_won_and_drawn_positions_by_their_pieces() {
             json!({ "account": "Alice", "variant": "atomic" }),
             Some(&tables)
         ),
+        None
+    );
+}
+
+/// Pawn structures by who had them: the same isolated queen pawn counts as yours in the game
+/// you had it and as theirs in the game your opponent had it; one traded off at once counts in
+/// neither. They need no tablebases, and a variant has none.
+#[test]
+fn structures_count_the_games_each_side_kept_one() {
+    const ISOLATED: &str = "r1bq1rk1/pp2bppp/2n1pn2/8/3P4/2NB1N2/PP3PPP/R1BQ1RK1 w - - 0 1";
+    const TRADED: &str = "r1bq1rk1/pp2bppp/2n2n2/4p3/3P4/2NB1N2/PP3PPP/R1BQ1RK1 w - - 0 1";
+    let store = fresh();
+    let set_up = |id: &str, fen: &str, color: &str, winner: Value, moves: &str, day: f64| {
+        game(
+            id,
+            &[
+                ("createdAt", json!(NOW - day * DAY)),
+                ("color", json!(color)),
+                ("winner", winner),
+                ("moves", json!(moves)),
+                (
+                    "pgn",
+                    json!(format!(
+                        "[Event \"Casual\"]\n[SetUp \"1\"]\n[FEN \"{fen}\"]\n\n{moves} *\n"
+                    )),
+                ),
+            ],
+        )
+    };
+    save_games(
+        &store,
+        vec![
+            set_up(
+                "Yours",
+                ISOLATED,
+                "white",
+                json!("white"),
+                "Re1 Nb4 Bb1 b6",
+                1.0,
+            ),
+            set_up(
+                "Theirs",
+                ISOLATED,
+                "black",
+                Value::Null,
+                "Re1 Nb4 Bb1 b6",
+                2.0,
+            ),
+            set_up(
+                "Traded",
+                TRADED,
+                "white",
+                json!("black"),
+                "dxe5 Nxe5 Nxe5 Qd4 Re1",
+                3.0,
+            ),
+        ],
+    );
+    let structures = |query: Value| {
+        let query = insights_query(&query);
+        store
+            .db
+            .read(|c| insights::replayed_games(c.db, &query, NOW, None))
+            .expect("structures")
+            .1
+    };
+    let report = structures(json!({ "account": "Alice" })).expect("standard");
+    assert_eq!(
+        json!(report),
+        json!({
+            "games": 3,
+            "yours": [{
+                "structure": "isolatedQueenPawn",
+                "record": { "total": 1, "win": 1, "loss": 0, "draw": 0 },
+            }],
+            "theirs": [{
+                "structure": "isolatedQueenPawn",
+                "record": { "total": 1, "win": 0, "loss": 0, "draw": 1 },
+            }],
+        })
+    );
+    assert_eq!(
+        structures(json!({ "account": "Alice", "variant": "atomic" })),
         None
     );
 }

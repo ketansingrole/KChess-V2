@@ -13,7 +13,7 @@ use super::explore::Reached;
 use super::{schema, search};
 use crate::store::sql::Sql as _;
 use kchess_contracts::error::{CoreError, Result};
-use kchess_contracts::types::{ExplorerSpeed, GameDbQuery, GameDbStructure};
+use kchess_contracts::types::{ExplorerSpeed, GameDbQuery};
 use kchess_domain::gamedb::patterns::{self, Material, Placement, Speed, Structure};
 use kchess_domain::gamedb::{self};
 
@@ -56,13 +56,7 @@ impl Wanted {
             speed: query.speed,
             material,
             pieces,
-            structure: query.structure.map(|structure| match structure {
-                GameDbStructure::IsolatedQueenPawn => Structure::IsolatedQueenPawn,
-                GameDbStructure::HangingPawns => Structure::HangingPawns,
-                GameDbStructure::Carlsbad => Structure::Carlsbad,
-                GameDbStructure::MaroczyBind => Structure::MaroczyBind,
-                GameDbStructure::Stonewall => Structure::Stonewall,
-            }),
+            structure: query.structure.map(Structure::from),
         })
     }
 
