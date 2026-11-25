@@ -227,9 +227,11 @@ impl LichessDialog {
                 return;
             }
         };
-        let db = cx.global::<GameDbHandle>().0.clone();
-        db.update(cx, |db, cx| db.install_lichess(request, cx));
         window.close_dialog(cx);
+        kchess_board::game_db::with_room(self.size, "Download anyway", window, cx, move |_, cx| {
+            let db = cx.global::<GameDbHandle>().0.clone();
+            db.update(cx, |db, cx| db.install_lichess(request.clone(), cx));
+        });
     }
 }
 

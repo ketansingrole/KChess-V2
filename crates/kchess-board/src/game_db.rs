@@ -3,7 +3,8 @@
 
 use std::path::PathBuf;
 
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::{Button, ButtonVariant};
+use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use kchess_app::log::ResultExt as _;
@@ -296,6 +297,89 @@ impl GameDb {
     }
 }
 
+/// A database grows to about twice its download once its games are indexed: TCEC's 27 MB
+/// download made a 57 MB database (measured 2026-11-25). Three times leaves room for indexing.
+const GROWTH: u64 = 3;
+/// What a download must leave free, so the computer and its other programs keep working.
+const KEEP_FREE: u64 = 2 * 1024 * 1024 * 1024;
+
+/// The bytes free on the databases' disk when they are too few for a download or import of
+/// `size` bytes (unknown: none), its database and `KEEP_FREE` besides; `None` when there is room
+/// or the system did not say.
+pub fn short_of_room(free: Option<u64>, size: Option<u64>) -> Option<u64> {
+    let free = free?;
+    let need = size
+        .unwrap_or(0)
+        .saturating_mul(GROWTH)
+        .saturating_add(KEEP_FREE);
+    (free < need).then_some(free)
+}
+
+/// What the warning says: the room left, and what the games could take when their size is known.
+fn room_left(free: u64, size: Option<u64>) -> String {
+    let free = widgets::format_bytes(free as f64);
+    match size {
+        Some(size) => format!(
+            "{free} is free. These games could take about {} once they are in.",
+            widgets::format_bytes(size.saturating_mul(GROWTH) as f64)
+        ),
+        None => format!("{free} is free."),
+    }
+}
+
+/// Run `start` when the disk has room for `size` bytes more (`short_of_room`); otherwise only
+/// once the person says to `go` ahead anyway ("Download anyway").
+pub fn with_room(
+    size: Option<u64>,
+    go: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+    start: impl Fn(&mut Window, &mut App) + 'static,
+) {
+    let free = cx.global::<GameDbHandle>().0.read(cx).status.free_bytes;
+    let Some(free) = short_of_room(free, size) else {
+        start(window, cx);
+        return;
+    };
+    let description = room_left(free, size);
+    let start = std::rc::Rc::new(start);
+    widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
+        let start = start.clone();
+        dialog
+            .title("Your disk is almost full")
+            .description(description.clone())
+            .ok_text(go)
+            .ok_variant(ButtonVariant::Danger)
+            .cancel_text("Cancel")
+            .show_cancel(true)
+            .on_ok(move |_, window, cx| {
+                start(window, cx);
+                true
+            })
+    });
+}
+
+/// Import the file at `path`, once its size is read (off the main thread) and the disk has room
+/// for it (`with_room`).
+pub fn import_with_room(path: PathBuf, window: &mut Window, cx: &mut App) {
+    let size = cx.background_spawn({
+        let path = path.clone();
+        async move { std::fs::metadata(&path).map(|meta| meta.len()).ok() }
+    });
+    window
+        .spawn(cx, async move |cx| {
+            let size = size.await;
+            cx.update(|window, cx| {
+                with_room(size, "Import anyway", window, cx, move |_, cx| {
+                    let db = cx.global::<GameDbHandle>().0.clone();
+                    db.update(cx, |db, cx| db.import(path.clone(), cx));
+                })
+            })
+            .ok();
+        })
+        .detach();
+}
+
 /// Ask for a PGN file, then import it. Nothing happens when the dialog is cancelled.
 pub fn choose_and_import(window: &mut Window, cx: &mut App) {
     let chosen = cx.prompt_for_paths(PathPromptOptions {
@@ -312,11 +396,8 @@ pub fn choose_and_import(window: &mut Window, cx: &mut App) {
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
-            cx.update(|_, cx| {
-                let db = cx.global::<GameDbHandle>().0.clone();
-                db.update(cx, |db, cx| db.import(path, cx));
-            })
-            .ok();
+            cx.update(|window, cx| import_with_room(path, window, cx))
+                .ok();
         })
         .detach();
 }
@@ -414,6 +495,38 @@ pub fn import_card(cx: &App, palette: &Palette) -> impl IntoElement + use<> {
                 .text_color(palette.error)
                 .child(error)
         }))
+}
+
+#[cfg(test)]
+mod room_tests {
+    use super::{GROWTH, KEEP_FREE, room_left, short_of_room};
+
+    /// The warning names the room left, and what the games could take when that is known.
+    #[test]
+    fn the_warning_says_what_is_free_and_what_the_games_take() {
+        let gb = 1024 * 1024 * 1024;
+        assert_eq!(
+            room_left(gb, Some(gb)),
+            "1.0 GB is free. These games could take about 3.0 GB once they are in."
+        );
+        assert_eq!(room_left(gb, None), "1.0 GB is free.");
+    }
+
+    /// A download needs its database's room and `KEEP_FREE` besides; a disk the system says
+    /// nothing about is never called full.
+    #[test]
+    fn a_download_is_short_of_room_below_its_database_and_a_margin() {
+        let size = 1_000_000;
+        let need = size * GROWTH + KEEP_FREE;
+        assert_eq!(short_of_room(Some(need - 1), Some(size)), Some(need - 1));
+        assert_eq!(short_of_room(Some(need), Some(size)), None);
+        assert_eq!(
+            short_of_room(Some(KEEP_FREE - 1), None),
+            Some(KEEP_FREE - 1)
+        );
+        assert_eq!(short_of_room(Some(KEEP_FREE), None), None);
+        assert_eq!(short_of_room(None, Some(u64::MAX)), None);
+    }
 }
 
 #[cfg(test)]

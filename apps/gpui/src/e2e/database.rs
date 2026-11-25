@@ -499,6 +499,55 @@ fn the_master_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext)
     });
 }
 
+/// With the disk almost full, a download asks first, saying how much is free: Cancel leaves
+/// everything as it was, and Download anyway downloads.
+#[gpui_kit::test]
+fn a_download_asks_first_when_the_disk_is_almost_full(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestQueryExt as _;
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    // The core reads the disk's free space; this one then reads as 1 GB.
+    app.wait_for_app("the free space read", |cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .status
+            .free_bytes
+            .is_some()
+    });
+    app.cx.update(|cx| {
+        let db = cx.global::<kchess_board::game_db::GameDbHandle>().0.clone();
+        db.update(cx, |db, _| db.status.free_bytes = Some(1024 * 1024 * 1024));
+    });
+    app.click("database-tcec");
+    app.wait_for("the warning", |window, _| {
+        window.try_find_by_label("Download anyway").is_some()
+    });
+    app.click_label("Cancel");
+    app.wait_for("the warning to go", |window, _| {
+        window.try_find_by_label("Download anyway").is_none()
+    });
+    assert!(
+        app.cx.update(|cx| !cx
+            .global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .busy()),
+        "nothing downloads"
+    );
+
+    app.click("database-tcec");
+    app.click_label("Download anyway");
+    app.wait_for_app("the engine games in", |cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .iter()
+            .any(|info| info.source == kchess_contracts::types::DatabaseSource::Tcec)
+    });
+}
+
 /// The engine games button downloads TCEC's latest release into a database of its own: its
 /// standard competition games alone, listed with the release's attribution; the button then
 /// offers to update them.

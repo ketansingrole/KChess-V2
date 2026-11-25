@@ -267,9 +267,12 @@ impl PlayerDialog {
                 return;
             }
         };
-        let db = cx.global::<GameDbHandle>().0.clone();
-        db.update(cx, |db, cx| db.install_player(request, cx));
         window.close_dialog(cx);
+        // A player's games are seldom large, but they need the room the others do.
+        kchess_board::game_db::with_room(None, "Download anyway", window, cx, move |_, cx| {
+            let db = cx.global::<GameDbHandle>().0.clone();
+            db.update(cx, |db, cx| db.install_player(request.clone(), cx));
+        });
     }
 
     fn render_speeds(&self, cx: &mut Context<Self>) -> impl IntoElement {

@@ -91,20 +91,8 @@ fn update(info: &DatabaseInfo) -> Option<(&'static str, Run)> {
                 Box::new(move |window, cx| crate::lichess::open(Some(rating), window, cx)),
             ))
         }
-        DatabaseSource::Master => Some((
-            "Update",
-            Box::new(|_, cx| {
-                let db = cx.global::<GameDbHandle>().0.clone();
-                db.update(cx, |db, cx| db.install_masters(cx));
-            }),
-        )),
-        DatabaseSource::Tcec => Some((
-            "Update",
-            Box::new(|_, cx| {
-                let db = cx.global::<GameDbHandle>().0.clone();
-                db.update(cx, |db, cx| db.install_tcec(cx));
-            }),
-        )),
+        DatabaseSource::Master => Some(("Update", Box::new(crate::install_masters))),
+        DatabaseSource::Tcec => Some(("Update", Box::new(crate::install_tcec))),
         // Your games keep themselves up to date; an imported file has nothing to fetch.
         DatabaseSource::Own | DatabaseSource::Imported => None,
     }

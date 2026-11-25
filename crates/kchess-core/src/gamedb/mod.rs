@@ -452,7 +452,16 @@ impl GameDbService {
             }
         }
         databases.sort_by_key(|database| database.name.to_lowercase());
-        Ok(GameDbStatus { databases, busy })
+        let dir = self.inner.dir.clone();
+        let free_bytes = tokio::task::spawn_blocking(move || crate::disk::free_bytes(&dir))
+            .await
+            .ok()
+            .flatten();
+        Ok(GameDbStatus {
+            databases,
+            busy,
+            free_bytes,
+        })
     }
 
     /// The one run (an import or the master games download) that may write, claimed for the

@@ -69,10 +69,12 @@ const SORTS: [(&str, &str); 3] = [
 const RESULTS: [&str; 4] = ["All", "White won", "Draws", "Black won"];
 /// The master games: Lichess's broadcast archive, some 770 MB to download in all (2026-11).
 const MASTERS_LABEL: &str = "Master games · 770 MB";
+const MASTERS_BYTES: u64 = 770 * 1024 * 1024;
 const MASTERS_TIP: &str =
     "Games from top over-the-board events since 2020, from Lichess's broadcasts";
 /// TCEC's engine games: its compact release, some 27 MB to download (2026-06).
 const TCEC_LABEL: &str = "Engine games · 27 MB";
+const TCEC_BYTES: u64 = 27 * 1024 * 1024;
 const TCEC_TIP: &str = "Every game of the Top Chess Engine Championship's competitions";
 const LICHESS_TIP: &str = "A month of rated games between strong Lichess players";
 /// Below this width the table keeps the players and the result.
@@ -851,10 +853,7 @@ impl Render for DatabasePage {
                             SharedString::new_static(MASTERS_LABEL)
                         })
                         .tooltip(MASTERS_TIP)
-                        .on_click(|_, _, cx| {
-                            let db = cx.global::<GameDbHandle>().0.clone();
-                            db.update(cx, |db, cx| db.install_masters(cx));
-                        }),
+                        .on_click(|_, window, cx| install_masters(window, cx)),
                 )
                 .child(
                     Button::new("database-tcec")
@@ -867,10 +866,7 @@ impl Render for DatabasePage {
                             SharedString::new_static(TCEC_LABEL)
                         })
                         .tooltip(TCEC_TIP)
-                        .on_click(|_, _, cx| {
-                            let db = cx.global::<GameDbHandle>().0.clone();
-                            db.update(cx, |db, cx| db.install_tcec(cx));
-                        }),
+                        .on_click(|_, window, cx| install_tcec(window, cx)),
                 )
             })
             .child(game_db::import_card(cx, &palette));
@@ -1093,14 +1089,8 @@ impl PageView for DatabasePage {
             Action::Import => game_db::choose_and_import(window, cx),
             Action::Player => player::open(None, window, cx),
             Action::Lichess => lichess::open(None, window, cx),
-            Action::Masters => {
-                let db = cx.global::<GameDbHandle>().0.clone();
-                db.update(cx, |db, cx| db.install_masters(cx));
-            }
-            Action::Tcec => {
-                let db = cx.global::<GameDbHandle>().0.clone();
-                db.update(cx, |db, cx| db.install_tcec(cx));
-            }
+            Action::Masters => install_masters(window, cx),
+            Action::Tcec => install_tcec(window, cx),
             Action::Manage => manage::open(window, cx),
             Action::ClearFilters => {
                 this.update(cx, |page, cx| page.clear_filters(window, cx));
@@ -1123,8 +1113,29 @@ pub fn manage_databases(window: &mut Window, cx: &mut App) {
 
 pub use manage::total_bytes;
 
-/// Import a PGN file dropped on the Database page.
-pub fn import_dropped(path: std::path::PathBuf, cx: &mut App) {
-    let db = cx.global::<GameDbHandle>().0.clone();
-    db.update(cx, |db, cx| db.import(path, cx));
+/// Import a PGN file dropped on the Database page, once the disk has room for it.
+pub fn import_dropped(path: std::path::PathBuf, window: &mut Window, cx: &mut App) {
+    game_db::import_with_room(path, window, cx);
+}
+
+/// Download the master games (or their newer months), once the disk has room for them.
+pub(crate) fn install_masters(window: &mut Window, cx: &mut App) {
+    game_db::with_room(
+        Some(MASTERS_BYTES),
+        "Download anyway",
+        window,
+        cx,
+        |_, cx| {
+            let db = cx.global::<GameDbHandle>().0.clone();
+            db.update(cx, |db, cx| db.install_masters(cx));
+        },
+    );
+}
+
+/// Download TCEC's engine games, once the disk has room for them.
+pub(crate) fn install_tcec(window: &mut Window, cx: &mut App) {
+    game_db::with_room(Some(TCEC_BYTES), "Download anyway", window, cx, |_, cx| {
+        let db = cx.global::<GameDbHandle>().0.clone();
+        db.update(cx, |db, cx| db.install_tcec(cx));
+    });
 }
