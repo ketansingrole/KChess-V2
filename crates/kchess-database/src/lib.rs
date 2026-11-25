@@ -14,6 +14,7 @@ use kchess_app::{core, loading, prefs};
 use kchess_board::{game_db, live_game, widgets};
 use kchess_ui::theme;
 
+mod event;
 mod lichess;
 mod manage;
 mod player;
@@ -837,6 +838,18 @@ impl DatabasePage {
     }
 
     /// The report on the player `name` of the database shown.
+    fn event_table(
+        &mut self,
+        game: u64,
+        event: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(database) = self.database.clone() {
+            event::open(cx.entity().downgrade(), database, game, event, window, cx);
+        }
+    }
+
     fn about(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(database) = self.database.clone() {
             report::open(cx.entity().downgrade(), database, name, window, cx);
@@ -1098,6 +1111,26 @@ impl GamesMenu {
                     }),
             )
         });
+        let event = self
+            .game
+            .as_ref()
+            .and_then(|game| Some((game.id, game.event.clone()?)))
+            .filter(|(_, event)| !event.is_empty() && event != "?");
+        let menu = match event {
+            Some((game, event)) => {
+                let page = self.page.clone();
+                menu.item(
+                    PopupMenuItem::new("Event table")
+                        .icon(icon("trophy"))
+                        .on_click(move |_, window, cx| {
+                            let event = event.clone();
+                            page.update(cx, |page, cx| page.event_table(game, event, window, cx))
+                                .ok();
+                        }),
+                )
+            }
+            None => menu,
+        };
         let menu = if self.game.is_some() {
             menu.separator()
         } else {
@@ -1573,16 +1606,35 @@ impl PageView for DatabasePage {
 /// The Database page listing the games that reached `fen` (the analysis board's position).
 /// Opens game `row` of database `database` on the analysis board.
 pub fn open_game(database: String, row: &GameDbRow, window: &mut Window, cx: &mut App) {
+    open_game_by_id(
+        database,
+        row.id,
+        row.white.clone(),
+        row.black.clone(),
+        window,
+        cx,
+    );
+}
+
+/// Opens game `game` of database `database`, between `white` and `black`, on the analysis board.
+fn open_game_by_id(
+    database: String,
+    game: u64,
+    white: String,
+    black: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let request = cx.global::<AppCore>().request(calls::GameDbGame {
         database: DatabaseId(database.clone()),
-        game: GameDbGameId(row.id),
+        game: GameDbGameId(game),
     });
     let origin = GameOrigin {
-        white: Some(row.white.clone()),
-        black: Some(row.black.clone()),
+        white: Some(white),
+        black: Some(black),
         database: Some(DatabaseGame {
             database: database.clone(),
-            game: row.id,
+            game,
         }),
         ..GameOrigin::default()
     };
@@ -1616,6 +1668,13 @@ pub fn open_game(database: String, row: &GameDbRow, window: &mut Window, cx: &mu
 pub fn games_at(fen: String, window: &mut Window, cx: &mut App) {
     kchess_nav::shell::show::<DatabasePage>(window, cx, move |page, window, cx| {
         page.show_position(fen, window, cx)
+    });
+}
+
+/// The Database page with the table of game `game`'s event `event` from database `database`.
+pub fn event_table(database: String, game: u64, event: String, window: &mut Window, cx: &mut App) {
+    kchess_nav::shell::show::<DatabasePage>(window, cx, move |_, window, cx| {
+        event::open(cx.entity().downgrade(), database, game, event, window, cx)
     });
 }
 

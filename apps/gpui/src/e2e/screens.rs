@@ -1552,3 +1552,101 @@ fn whats_new() {
         crate::profile::TEST_DATA_DIR.set(None);
     }
 }
+
+/// An event's table, a ten-player round robin with its crosstable, in both appearances:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::event_table -- --ignored`
+/// writes `<dir>/event-table-<appearance>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn event_table() {
+    use kchess_contracts::calls;
+    use kchess_contracts::check::{DatabaseName, PgnFilePath};
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).to_path_buf();
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    const PLAYERS: [(&str, u32); 10] = [
+        ("Gukesh D", 2794),
+        ("Praggnanandhaa R", 2741),
+        ("Abdusattorov, Nodirbek", 2768),
+        ("Wei, Yi", 2743),
+        ("Firouzja, Alireza", 2760),
+        ("Giri, Anish", 2745),
+        ("Erigaisi, Arjun", 2801),
+        ("Keymer, Vincent", 2730),
+        ("Van Foreest, Jorden", 2680),
+        ("Mendonca, Leon Luke", 2650),
+    ];
+    // Each pair once, the result from their order and the round: a full table with a spread.
+    let mut pgn = String::new();
+    let mut round = 0;
+    for (white, (w, we)) in PLAYERS.iter().enumerate() {
+        for (black, (b, be)) in PLAYERS.iter().enumerate().skip(white + 1) {
+            round += 1;
+            let result = match (white * 7 + black * 3 + round) % 5 {
+                0 | 1 => "1/2-1/2",
+                2 | 3 => "1-0",
+                _ => "0-1",
+            };
+            pgn += &format!(
+                "[Event \"Tata Steel Masters\"]\n[Site \"Wijk aan Zee\"]\n\
+                 [Date \"2025.01.{:02}\"]\n[Round \"{}\"]\n[White \"{w}\"]\n[Black \"{b}\"]\n\
+                 [WhiteElo \"{we}\"]\n[BlackElo \"{be}\"]\n[Result \"{result}\"]\n\n1. e4 e5 {result}\n\n",
+                18 + round % 13,
+                1 + round % 13
+            );
+        }
+    }
+    let files = tempfile::tempdir().expect("a folder for the file");
+    let path = files.path().join("tata.pgn");
+    std::fs::write(&path, pgn).expect("the file");
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), 1100., 820.);
+        cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
+        let imported = cx.update(|cx| {
+            cx.global::<crate::core::AppCore>()
+                .request(calls::GameDbImport {
+                    path: PgnFilePath(path.to_string_lossy().into_owned()),
+                    into: None,
+                    name: Some(DatabaseName("Tata Steel".into())),
+                })
+        });
+        let database = cx
+            .foreground_executor()
+            .block_test(imported)
+            .expect("the games are imported")
+            .database
+            .id;
+        let page = cx.update(|cx| {
+            cx.global::<crate::core::AppCore>()
+                .request(calls::GameDbGames {
+                    query: kchess_contracts::types::GameDbQuery {
+                        database: database.clone(),
+                        offset: 0,
+                        limit: 1,
+                        ..Default::default()
+                    },
+                })
+        });
+        let game = cx
+            .foreground_executor()
+            .block_test(page)
+            .expect("the games")
+            .games[0]
+            .id;
+        cx.update_window(window, |_, window, cx| {
+            kchess_database::event_table(database, game, "Tata Steel Masters".into(), window, cx)
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("event-table-{name}.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::quit::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}

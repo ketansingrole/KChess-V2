@@ -731,6 +731,13 @@ core_api! {
             database: DatabaseId,
             name: PlayerName
         ) -> GameDbPlayerReport;
+        /// The event of game `game` of `database`, as it was played around that game's date:
+        /// its standings and each player's results.
+        #[assist(Lookups)]
+        GameDbEvent = "gameDbEvent" fn game_db_event(
+            database: DatabaseId,
+            game: GameDbGameId
+        ) -> crate::types::GameDbEventReport;
         /// How many games of `database` are copies of an earlier one: the same players, date,
         /// result, start and moves.
         GameDbDuplicates = "gameDbDuplicates" fn game_db_duplicates(database: DatabaseId) -> u64;
