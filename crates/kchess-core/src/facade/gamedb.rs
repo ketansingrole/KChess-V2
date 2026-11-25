@@ -111,6 +111,14 @@ impl GameDbApi for Core {
         self.gamedb.opening_report(fen.0).await
     }
 
+    async fn game_db_event(
+        &self,
+        database: DatabaseId,
+        game: GameDbGameId,
+    ) -> Result<kchess_contracts::types::GameDbEventReport> {
+        self.gamedb.event_report(&database.0, game.0).await
+    }
+
     async fn game_db_player(
         &self,
         database: DatabaseId,

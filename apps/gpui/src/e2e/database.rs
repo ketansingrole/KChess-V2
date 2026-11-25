@@ -1031,6 +1031,40 @@ fn a_player_s_report_reads_their_games_at_a_glance(cx: &mut gpui_kit::TestAppCon
     );
 }
 
+/// A game's menu opens its event's table: the standings by points, with each player's record,
+/// tiebreak and performance, and the crosstable, whose result opens its game and whose player
+/// opens their report.
+#[gpui_kit::test]
+fn an_event_s_table_reads_its_standings(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_games(&mut app);
+    app.click(("database-game-actions", 1usize));
+    app.click_label("Event table");
+    assert_eq!(
+        app.find("event-summary").label(),
+        Some("2024.01.20–2024.01.21 · 2 games · 2 players")
+    );
+    assert_eq!(
+        app.find(("event-player", 0usize)).label(),
+        Some("1. Carlsen, Magnus, 1½ points, won 1, drew 1, lost 0")
+    );
+    assert_eq!(
+        app.find(("event-player", 1usize)).label(),
+        Some("2. Gukesh D, ½ points, won 0, drew 1, lost 1")
+    );
+    app.click_label("Carlsen, Magnus against Gukesh D: 1");
+    app.wait_for_page(crate::pages::Page::Analysis);
+
+    app.open("Game database");
+    app.click(("database-game-actions", 0usize));
+    app.click_label("Event table");
+    app.click(("event-player", 1usize));
+    assert_eq!(
+        app.find("report-summary").label(),
+        Some("2 games · 2024 · Rated 2725")
+    );
+}
+
 /// More → Opening report on the board: the position's games through the databases, its main
 /// lines, one played onto the board, and its strongest games, one opened.
 #[gpui_kit::test]
