@@ -176,12 +176,19 @@ fn the_databases_are_listed_with_their_size_to_manage(cx: &mut gpui_kit::TestApp
     app.press("escape");
     app.wait_gone("manage-total");
 
-    app.open_settings("Data & storage");
+    // Settings → Storage lists them with every other download, and counts them in the total.
+    app.open_settings("Storage");
     assert_eq!(
-        app.find("data-databases-total").label(),
-        Some(format!("{size} · 1 database").as_str())
+        app.find("storage-databases").label(),
+        Some(format!("Game databases, 1 database · {size}").as_str())
     );
-    app.click("data-databases");
+    let total = app
+        .find("storage-total")
+        .label()
+        .unwrap_or_default()
+        .to_string();
+    assert!(total.starts_with("KChess uses "), "{total}");
+    app.click("storage-databases-manage");
     app.wait_for_page(crate::pages::Page::Database);
     app.click(("manage-delete", 0usize));
     app.click_label("Delete");
@@ -512,7 +519,7 @@ fn a_download_asks_first_when_the_disk_is_almost_full(cx: &mut gpui_kit::TestApp
     app.open("Game database");
     // The disk then reads as having 1 GB free.
     app.cx
-        .update(|cx| cx.set_global(kchess_board::game_db::PinnedFreeSpace(1024 * 1024 * 1024)));
+        .update(|cx| cx.set_global(kchess_board::room::PinnedFreeSpace(1024 * 1024 * 1024)));
     app.click("database-tcec");
     app.wait_for("the warning", |window, _| {
         window.try_find_by_label("Download anyway").is_some()

@@ -32,6 +32,7 @@ pub mod position_engine;
 pub mod puzzle_board;
 pub mod puzzle_db;
 pub mod rating_history;
+pub mod room;
 pub mod sound;
 #[cfg(any(test, feature = "test-support"))]
 // Test code, which other crates' tests build too.

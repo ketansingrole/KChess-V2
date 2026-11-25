@@ -146,7 +146,11 @@ async fn the_speech_model_is_kept_while_a_window_listens() {
         .call_as(a, "voiceModelDelete", vec![])
         .await
         .expect_err("in use");
-    assert!(refused.message.contains("Turn voice input off"), "{}", refused.message);
+    assert!(
+        refused.message.contains("Turn voice input off"),
+        "{}",
+        refused.message
+    );
     assert!(kchess_core::voice::model_dir(dir.path()).exists());
     core.call_as(a, "voiceStop", vec![]).await.expect("A stops");
     core.call_as(a, "voiceModelDelete", vec![])

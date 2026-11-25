@@ -3,8 +3,7 @@
 
 use std::path::PathBuf;
 
-use gpui_kit::component::button::{Button, ButtonVariant};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use kchess_app::log::ResultExt as _;
@@ -300,42 +299,14 @@ impl GameDb {
 /// A database grows to about twice its download once its games are indexed: TCEC's 27 MB
 /// download made a 57 MB database (measured 2026-11-25). Three times leaves room for indexing.
 const GROWTH: u64 = 3;
-/// What a download must leave free, so the computer and its other programs keep working.
-const KEEP_FREE: u64 = 2 * 1024 * 1024 * 1024;
 
-/// The bytes free on the databases' disk when they are too few for a download or import of
-/// `size` bytes (unknown: none), its database and `KEEP_FREE` besides; `None` when there is room
-/// or the system did not say.
-pub fn short_of_room(free: Option<u64>, size: Option<u64>) -> Option<u64> {
-    let free = free?;
-    let need = size
-        .unwrap_or(0)
-        .saturating_mul(GROWTH)
-        .saturating_add(KEEP_FREE);
-    (free < need).then_some(free)
+/// What a download or import of `size` bytes takes once its games are in a database.
+pub fn grown(size: Option<u64>) -> Option<u64> {
+    size.map(|size| size.saturating_mul(GROWTH))
 }
 
-/// What the warning says: the room left, and what the games could take when their size is known.
-fn room_left(free: u64, size: Option<u64>) -> String {
-    let free = widgets::format_bytes(free as f64);
-    match size {
-        Some(size) => format!(
-            "{free} is free. These games could take about {} once they are in.",
-            widgets::format_bytes(size.saturating_mul(GROWTH) as f64)
-        ),
-        None => format!("{free} is free."),
-    }
-}
-
-/// The free space a test pins, whatever the disk running it says.
-#[cfg(any(test, feature = "test-support"))]
-pub struct PinnedFreeSpace(pub u64);
-
-#[cfg(any(test, feature = "test-support"))]
-impl Global for PinnedFreeSpace {}
-
-/// Run `start` when the disk has room for `size` bytes more (`short_of_room`), its free space
-/// read now; otherwise only once the person says to `go` ahead anyway ("Download anyway").
+/// Run `start` when the disk has room for a database made from `size` bytes of games
+/// (`crate::room::with_room`); otherwise only once the person says to `go` ahead anyway.
 pub fn with_room(
     size: Option<u64>,
     go: &'static str,
@@ -343,49 +314,7 @@ pub fn with_room(
     cx: &mut App,
     start: impl Fn(&mut Window, &mut App) + 'static,
 ) {
-    let asked = cx.global::<AppCore>().request(calls::FreeSpace {});
-    window
-        .spawn(cx, async move |cx| {
-            // A disk that cannot be read is not called full: the download goes ahead.
-            let free = asked.await.warn_on_err().flatten();
-            cx.update(|window, cx| {
-                #[cfg(any(test, feature = "test-support"))]
-                let free = cx
-                    .try_global::<PinnedFreeSpace>()
-                    .map_or(free, |pinned| Some(pinned.0));
-                match short_of_room(free, size) {
-                    None => start(window, cx),
-                    Some(free) => ask_for_room(room_left(free, size), go, window, cx, start),
-                }
-            })
-            .ok();
-        })
-        .detach();
-}
-
-/// Ask before a download or import the disk may have no room for, saying `description`.
-fn ask_for_room(
-    description: String,
-    go: &'static str,
-    window: &mut Window,
-    cx: &mut App,
-    start: impl Fn(&mut Window, &mut App) + 'static,
-) {
-    let start = std::rc::Rc::new(start);
-    widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-        let start = start.clone();
-        dialog
-            .title("Your disk is almost full")
-            .description(description.clone())
-            .ok_text(go)
-            .ok_variant(ButtonVariant::Danger)
-            .cancel_text("Cancel")
-            .show_cancel(true)
-            .on_ok(move |_, window, cx| {
-                start(window, cx);
-                true
-            })
-    });
+    crate::room::with_room(grown(size), go, window, cx, start);
 }
 
 /// Import the file at `path`, once its size is read (off the main thread) and the disk has room
@@ -528,111 +457,11 @@ pub fn import_card(cx: &App, palette: &Palette) -> impl IntoElement + use<> {
 
 #[cfg(test)]
 mod room_tests {
-    use super::{GROWTH, KEEP_FREE, room_left, short_of_room};
-
-    /// The warning names the room left, and what the games could take when that is known.
+    /// A database takes about three times its download once indexed: TCEC's 27 MB made 57 MB.
     #[test]
-    fn the_warning_says_what_is_free_and_what_the_games_take() {
-        let gb = 1024 * 1024 * 1024;
-        assert_eq!(
-            room_left(gb, Some(gb)),
-            "1.0 GB is free. These games could take about 3.0 GB once they are in."
-        );
-        assert_eq!(room_left(gb, None), "1.0 GB is free.");
-    }
-
-    /// A download needs its database's room and `KEEP_FREE` besides; a disk the system says
-    /// nothing about is never called full.
-    #[test]
-    fn a_download_is_short_of_room_below_its_database_and_a_margin() {
-        let size = 1_000_000;
-        let need = size * GROWTH + KEEP_FREE;
-        assert_eq!(short_of_room(Some(need - 1), Some(size)), Some(need - 1));
-        assert_eq!(short_of_room(Some(need), Some(size)), None);
-        assert_eq!(
-            short_of_room(Some(KEEP_FREE - 1), None),
-            Some(KEEP_FREE - 1)
-        );
-        assert_eq!(short_of_room(Some(KEEP_FREE), None), None);
-        assert_eq!(short_of_room(None, Some(u64::MAX)), None);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::GameDbHandle;
-    use crate::core::{AppCore, ClientEvent, CoreEvent};
-    use crate::testing::Started;
-    use kchess_contracts::types::{GameDbPhase, GameDbProgress, GameDbStatus};
-
-    /// An import lists its database; a refused one shows why, which the list read after it
-    /// leaves on screen.
-    #[gpui_kit::test]
-    fn an_import_lists_its_database_and_a_refusal_stays_shown(cx: &mut gpui_kit::TestAppContext) {
-        let mut app = Started::new(cx);
-        let db = app.with_window(|_, cx| {
-            super::init(cx);
-            cx.global::<GameDbHandle>().0.clone()
-        });
-        let files = tempfile::tempdir().expect("a folder");
-        let path = files.path().join("club.pgn");
-        std::fs::write(
-            &path,
-            "[White \"A\"]\n[Black \"B\"]\n[Result \"1-0\"]\n\n1. e4 1-0\n",
-        )
-        .expect("the file");
-        app.with_window(|_, cx| db.update(cx, |db, cx| db.import(path, cx)));
-        app.wait_for("the database listed", |_, cx| {
-            let db = db.read(cx);
-            db.databases().len() == 1 && !db.busy()
-        });
-        assert_eq!(
-            app.with_window(|_, cx| db.read(cx).databases()[0].name.clone()),
-            "club"
-        );
-
-        // The import's answer landed first and read the list; its end came after the read began
-        // (Windows and Linux CI, PR 415). The list still shows the database.
-        app.with_window(|_, cx| {
-            db.update(cx, |db, cx| {
-                db.status = GameDbStatus::default();
-                db.refresh(cx);
-            });
-            let done = GameDbProgress {
-                phase: GameDbPhase::Done,
-                database: "club".into(),
-                games: 1,
-                skipped: 0,
-                bytes: 0,
-                total_bytes: None,
-                message: None,
-            };
-            let events = cx.global::<AppCore>().events.clone();
-            events.update(cx, |_, cx| {
-                cx.emit(ClientEvent::Event(CoreEvent::GameDbProgress(done)))
-            });
-        });
-        app.wait_for("the database listed after its late end", |_, cx| {
-            db.read(cx).databases().len() == 1
-        });
-
-        let refused = files.path().join("notes.txt");
-        app.with_window(|_, cx| db.update(cx, |db, cx| db.import(refused, cx)));
-        app.wait_for("the refusal", |_, cx| db.read(cx).error.is_some());
-        for _ in 0..20 {
-            app.cx().run_until_parked();
-        }
-        let db = app.with_window(|_, cx| {
-            let db = db.read(cx);
-            (db.error.clone(), db.busy(), db.databases().len())
-        });
-        assert_eq!(
-            db,
-            (
-                Some("Choose a .pgn, .pgn.zst, .pgn.bz2, .zip or .7z file.".into()),
-                false,
-                1
-            )
-        );
+    fn a_database_is_reckoned_at_three_times_its_download() {
+        assert_eq!(super::grown(Some(27)), Some(81));
+        assert_eq!(super::grown(None), None);
+        assert_eq!(super::grown(Some(u64::MAX)), Some(u64::MAX));
     }
 }

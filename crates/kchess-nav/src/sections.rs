@@ -18,8 +18,8 @@ pub enum Section {
     Voice,
     Engine,
     Accounts,
-    Offline,
-    Data,
+    /// Everything KChess keeps on this computer and downloads, with the disk's free space.
+    Storage,
     Updates,
 }
 
@@ -62,7 +62,7 @@ impl SectionGroup {
 
 impl Section {
     /// Every category, in the sidebar's order.
-    pub const ALL: [Section; 15] = [
+    pub const ALL: [Section; 14] = [
         Section::Appearance,
         Section::Themes,
         Section::Sound,
@@ -75,8 +75,7 @@ impl Section {
         Section::Ai,
         Section::Accounts,
         Section::Online,
-        Section::Offline,
-        Section::Data,
+        Section::Storage,
         Section::Updates,
     ];
 
@@ -108,8 +107,7 @@ impl Section {
             Section::Ai => ("AI", "lightbulb", G::Analysis),
             Section::Accounts => ("Accounts", "user-round", G::Lichess),
             Section::Online => ("Online play", "globe-2", G::Lichess),
-            Section::Offline => ("Offline downloads", "download", G::System),
-            Section::Data => ("Data & storage", "database", G::System),
+            Section::Storage => ("Storage", "hard-drive", G::System),
             Section::Updates => ("Updates", "refresh-cw", G::System),
         }
     }

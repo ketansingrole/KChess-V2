@@ -1,4 +1,4 @@
-//! Settings → Data & storage: what KChess downloaded from Lichess for each
+//! Settings → Storage's accounts and housekeeping: what KChess downloaded from Lichess for each
 //! account and keeps on this computer, clearing the local scores, and the diagnostics export.
 
 use gpui_kit::component::button::{Button, ButtonVariant};
@@ -10,10 +10,10 @@ use kchess_contracts::calls;
 use kchess_contracts::types::{Account, UsageCell, UsageReport};
 use serde_json::json;
 
-use super::{Section, SettingsPage};
+use super::SettingsPage;
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::theme::{Palette, radii};
+use crate::theme::Palette;
 use crate::widgets::{self, Look, format_bytes, format_count};
 
 /// One account's line: what it keeps here and what it downloaded.
@@ -220,7 +220,8 @@ impl SettingsPage {
         cx.notify();
     }
 
-    pub(super) fn data(&self, cx: &mut Context<Self>, palette: &Palette) -> Div {
+    /// What each account keeps here and downloaded from Lichess, with the counters' reset.
+    pub(super) fn accounts_card(&self, cx: &mut Context<Self>, palette: &Palette) -> Div {
         let (rows, usage) = {
             let accounts = crate::accounts::handle(cx);
             let accounts = accounts.read(cx);
@@ -231,11 +232,6 @@ impl SettingsPage {
         };
         let downloaded = total(&usage, |used| used.bytes_in);
         let requests = total(&usage, |used| used.requests);
-        let stored: f64 = usage
-            .storage
-            .iter()
-            .map(|(_, kept)| (kept.bytes + kept.cache_bytes) as f64)
-            .sum();
         let since = usage
             .since
             .and_then(crate::dates::local)
@@ -246,26 +242,6 @@ impl SettingsPage {
                 .text_size(px(12.))
                 .text_color(palette.text_muted)
                 .child(text)
-        };
-        let tile = |label: &'static str, value: String, note: Option<String>| {
-            v_flex()
-                .flex_1()
-                .min_w(px(200.))
-                .gap(px(2.))
-                .px(px(16.))
-                .py(px(14.))
-                .rounded(radii::BOX)
-                .border_1()
-                .border_color(palette.border)
-                .bg(palette.bg)
-                .child(muted(label.into()))
-                .child(
-                    div()
-                        .text_size(px(20.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(value),
-                )
-                .children(note.map(muted))
         };
         let number_cell = |child: AnyElement| {
             v_flex()
@@ -288,37 +264,37 @@ impl SettingsPage {
                 .child(number_cell(count))
         };
         let head = |text: &'static str| muted(text.into()).into_any_element();
-        let usage_card = widgets::card(palette)
+        let downloads = format!(
+            "{} downloaded from Lichess · {}{since}",
+            format_bytes(downloaded),
+            widgets::format_counted(requests, "request", "requests")
+        );
+        widgets::card(palette)
             .gap(px(16.))
             .child(
-                h_flex().justify_end().child(
-                    Button::new("data-reset-usage")
-                        .outline()
-                        .icon(icon("rotate-ccw"))
-                        .label("Reset counters")
-                        .disabled(requests == 0.)
-                        .on_click(|_, window, cx| Self::ask_reset_usage(window, cx)),
-                ),
-            )
-            .child(
                 h_flex()
-                    .flex_wrap()
-                    .items_stretch()
+                    .justify_between()
                     .gap(px(12.))
-                    .child(tile(
-                        "Downloaded",
-                        format_bytes(downloaded),
-                        Some(format!(
-                            "{}{since}",
-                            widgets::format_counted(requests, "request", "requests")
-                        )),
-                    ))
-                    .child(tile("Stored games & profiles", format_bytes(stored), None))
-                    .child(tile(
-                        "Database file",
-                        format_bytes(usage.db_bytes as f64),
-                        None,
-                    )),
+                    .child(
+                        v_flex()
+                            .gap(px(2.))
+                            .child(widgets::heading("Accounts", palette))
+                            .child(
+                                div()
+                                    .id("storage-downloaded")
+                                    .test_support()
+                                    .aria_label(downloads.clone())
+                                    .child(muted(downloads)),
+                            ),
+                    )
+                    .child(
+                        Button::new("data-reset-usage")
+                            .outline()
+                            .icon(icon("rotate-ccw"))
+                            .label("Reset counters")
+                            .disabled(requests == 0.)
+                            .on_click(|_, window, cx| Self::ask_reset_usage(window, cx)),
+                    ),
             )
             .map(|card| {
                 if rows.is_empty() {
@@ -366,86 +342,27 @@ impl SettingsPage {
                             )
                         })),
                 )
-            });
-        // The game databases are the largest thing kept here, and grow with every download.
-        let databases = {
-            let db = cx
-                .global::<kchess_board::game_db::GameDbHandle>()
-                .0
-                .read(cx);
-            let count = db.databases().len();
-            let bytes = crate::pages::database::total_bytes(db.databases());
-            let summary = if count == 0 {
-                "None".to_string()
-            } else {
-                format!(
-                    "{} · {}",
-                    format_bytes(bytes as f64),
-                    widgets::format_counted(count as f64, "database", "databases")
-                )
-            };
-            widgets::card(palette)
-                .gap(px(12.))
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .gap(px(12.))
-                        .child(widgets::heading("Game databases", palette))
-                        .child(
-                            Button::new("data-databases")
-                                .outline()
-                                .icon(icon("hard-drive"))
-                                .label("Manage")
-                                .on_click(|_, window, cx| {
-                                    crate::pages::database::manage_databases(window, cx)
-                                }),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("data-databases-total")
-                        .test_support()
-                        .aria_label(summary.clone())
-                        .text_size(px(13.))
-                        .text_color(palette.text_muted)
-                        .child(summary),
-                )
-        };
-        let puzzles = widgets::card(palette)
-            .gap(px(12.))
-            .child(
-                h_flex()
-                    .justify_between()
-                    .gap(px(12.))
-                    .child(widgets::heading("Puzzles & practice", palette))
-                    .child(
-                        Button::new("data-clear-runs")
-                            .outline()
-                            .icon(icon("eraser"))
-                            .label("Clear local scores")
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.ask_clear_runs(window, cx)),
-                            ),
-                    ),
-            )
-            .child(
+            })
+    }
+
+    /// Clearing the local scores, and the diagnostics export.
+    pub(super) fn scores_card(&self, cx: &mut Context<Self>, palette: &Palette) -> Div {
+        self.rows()
+            .row(
+                "Local scores",
+                self.runs_note.clone(),
                 h_flex().child(
-                    Button::new("data-offline")
+                    Button::new("data-clear-runs")
                         .outline()
-                        .icon(icon("download"))
-                        .label("Offline downloads")
-                        .on_click(|_, window, cx| {
-                            crate::shell::open_settings(Section::Offline, window, cx)
-                        }),
+                        .icon(icon("eraser"))
+                        .label("Clear local scores")
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.ask_clear_runs(window, cx)),
+                        ),
                 ),
+                None,
+                palette,
             )
-            .children(
-                self.runs_note
-                    .clone()
-                    .map(|note| widgets::hint(note, palette)),
-            );
-        let diagnostics = self
-            .rows()
             .row(
                 "Diagnostics",
                 Some(self.diagnostics_note.clone().unwrap_or_else(|| {
@@ -462,13 +379,7 @@ impl SettingsPage {
                 None,
                 palette,
             )
-            .card(palette);
-        v_flex()
-            .gap(px(16.))
-            .child(usage_card)
-            .child(databases)
-            .child(puzzles)
-            .child(diagnostics)
+            .card(palette)
     }
 }
 

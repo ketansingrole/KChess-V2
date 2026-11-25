@@ -113,7 +113,10 @@ async fn the_core_downloads_the_model_and_reports_its_progress() {
         TestHost::new(),
     )
     .expect("core");
-    empty.call("voiceModelDelete", vec![]).await.expect("nothing to delete");
+    empty
+        .call("voiceModelDelete", vec![])
+        .await
+        .expect("nothing to delete");
     empty.close().await;
 
     // A model that cannot be had is the install's error, and nothing is published.

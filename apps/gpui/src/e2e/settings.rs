@@ -145,7 +145,7 @@ fn a_category_opened_in_a_short_window_scrolls_into_its_list(cx: &mut gpui_kit::
     });
     assert_eq!(group, Some(gpui_kit::Role::Group));
     // Updates, the last category, is scrolled into the dialog's list.
-    let updates = app.find("s5-2").bounds();
+    let updates = app.find("s5-1").bounds();
     let list = app.find("settings-sections").bounds();
     assert!(
         updates.bottom() <= list.bottom(),
@@ -155,7 +155,7 @@ fn a_category_opened_in_a_short_window_scrolls_into_its_list(cx: &mut gpui_kit::
     app.click("settings-close");
     assert!(!app.shows(super::SETTINGS_SHOWN));
     app.click("settings");
-    let updates = app.find("s5-2").bounds();
+    let updates = app.find("s5-1").bounds();
     assert!(updates.bottom() <= list.bottom());
 }
 
@@ -437,16 +437,60 @@ fn the_update_badge_is_never_under_the_buttons(cx: &mut gpui_kit::TestAppContext
 }
 
 #[gpui_kit::test]
-fn the_core_downloads_the_voice_model_from_offline_downloads(cx: &mut gpui_kit::TestAppContext) {
+fn the_core_downloads_the_voice_model_from_storage(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.online();
-    app.open_settings("Offline downloads");
-    // The core reports no model in the profile, so the card offers to download one.
-    assert!(app.enabled("offline-voice-download"));
-    app.click("offline-voice-download");
+    app.open_settings("Storage");
+    // The core reports no model in the profile, so its row offers to download one.
+    assert!(app.enabled("storage-voice-download"));
+    app.click("storage-voice-download");
     // The tests' model cannot be had: the core's error is shown, and the download offered again.
-    app.find("offline-voice-error");
-    assert!(app.enabled("offline-voice-download"));
+    app.find("storage-voice-error");
+    assert!(app.enabled("storage-voice-download"));
+}
+
+/// Storage lists every download in one place, with the disk's free space; one that would leave
+/// the disk almost full asks first, and Cancel leaves it undownloaded.
+#[gpui_kit::test]
+fn storage_lists_every_download_and_asks_before_filling_the_disk(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut app = Harness::start(cx);
+    app.online();
+    app.open_settings("Storage");
+    for row in ["storage-databases", "storage-puzzles", "storage-voice"] {
+        app.find(row);
+    }
+    app.wait_for("the free space", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find(gpui_kit::ElementId::from("storage-free"))
+            .is_some()
+    });
+    let free = app
+        .find("storage-free")
+        .label()
+        .unwrap_or_default()
+        .to_string();
+    assert!(free.ends_with(" free on this disk"), "{free}");
+    // No game database yet: the row leads to the Database page.
+    app.click("storage-databases-open");
+    app.wait_for_page(crate::pages::Page::Database);
+
+    app.open_settings("Storage");
+    app.cx
+        .update(|cx| cx.set_global(crate::room::PinnedFreeSpace(1024 * 1024 * 1024)));
+    app.click("db-install");
+    app.wait_for("the warning", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.try_find_by_label("Download anyway").is_some()
+    });
+    app.click_label("Cancel");
+    app.wait_for("the warning to go", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.try_find_by_label("Download anyway").is_none()
+    });
+    assert!(app.shows("db-install"), "nothing downloads");
 }
 
 /// A setting saved elsewhere (another window, the command line) is shown here at once: the

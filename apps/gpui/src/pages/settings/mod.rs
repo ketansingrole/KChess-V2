@@ -7,8 +7,9 @@ mod appearance;
 mod data;
 pub(crate) mod defaults;
 mod engine;
-mod offline;
 mod rows;
+mod speech_model;
+mod storage;
 mod toggles;
 pub(crate) use toggles::{Quick, TOGGLES, Toggle};
 pub mod updates;
@@ -159,12 +160,8 @@ fn other_rows(section: Section) -> &'static [&'static str] {
         Section::Engine => &["Status", "Game review", "Review my games automatically"],
         Section::Ai => &["ChatGPT"],
         Section::Online => &["Check correspondence games"],
-        Section::Data => &["Diagnostics"],
-        Section::Gestures
-        | Section::Analysis
-        | Section::Accounts
-        | Section::Offline
-        | Section::Updates => &[],
+        Section::Storage => &["Local scores", "Diagnostics"],
+        Section::Gestures | Section::Analysis | Section::Accounts | Section::Updates => &[],
     }
 }
 
@@ -185,10 +182,10 @@ fn other_words(section: Section) -> &'static str {
             "my accounts lichess sign in log in connect disconnect sync tracked Use for online play"
         }
         Section::Online => "",
-        Section::Offline => "Downloaded puzzles voice model Saved games and studies engine",
-        Section::Data => {
-            "Export diagnostics Clear local scores Reset counters Database file storage Game databases \
-             disk space"
+        Section::Storage => {
+            "Offline downloads Data disk space free Downloads Game databases Puzzles voice speech \
+             model Stockfish engine Accounts downloaded Export diagnostics Clear local scores \
+             Reset counters"
         }
         Section::Updates => {
             "version about upgrade Check for updates What's new release notes \
@@ -264,7 +261,9 @@ pub struct SettingsPage {
     /// What the system says about the microphone.
     mic: crate::microphone::Host,
     mic_asking: bool,
-    /// Data & storage: what clearing the scores and exporting diagnostics said.
+    /// Storage: the bytes free on the profile's disk, when the system says.
+    free_space: Option<u64>,
+    /// Storage: what clearing the scores and exporting diagnostics said.
     runs_note: Option<SharedString>,
     diagnostics_note: Option<SharedString>,
     exporting: bool,
@@ -432,6 +431,11 @@ impl SettingsPage {
                 &cx.global::<crate::puzzle_db::PuzzleDbHandle>().0.clone(),
                 |_, _, cx| cx.notify(),
             ),
+            // Storage lists the game databases and their size.
+            cx.observe(
+                &cx.global::<crate::game_db::GameDbHandle>().0.clone(),
+                |_, _, cx| cx.notify(),
+            ),
             cx.observe(
                 &cx.global::<crate::updates::UpdatesHandle>().0.clone(),
                 |_, _, cx| cx.notify(),
@@ -499,6 +503,7 @@ impl SettingsPage {
             mic_error: None,
             mic: crate::microphone::host(cx),
             mic_asking: false,
+            free_space: None,
             runs_note: None,
             diagnostics_note: None,
             exporting: false,
@@ -533,18 +538,19 @@ impl SettingsPage {
                 }
             }
         }
-        if matches!(section, Section::Engine | Section::Offline) {
+        if matches!(section, Section::Engine | Section::Storage) {
             self.refresh_engine(cx);
         }
-        if matches!(section, Section::Accounts | Section::Data) {
+        if matches!(section, Section::Accounts | Section::Storage) {
             crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.refresh(cx));
         }
         if section == Section::Ai {
             crate::ai::handle(cx).update(cx, |ai, cx| ai.refresh(cx));
         }
-        if section == Section::Offline {
+        if section == Section::Storage {
             self.voice_model_error = None;
             self.refresh_voice_model(cx);
+            self.refresh_free_space(cx);
             let db = cx.global::<crate::puzzle_db::PuzzleDbHandle>().0.clone();
             db.update(cx, |db, cx| db.refresh(cx));
         }
@@ -553,7 +559,7 @@ impl SettingsPage {
 
     /// Another window installed or deleted the engine: the engine shown is read again.
     fn engine_changed(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.section, Section::Engine | Section::Offline) {
+        if matches!(self.section, Section::Engine | Section::Storage) {
             self.refresh_engine(cx);
         }
     }
@@ -977,14 +983,13 @@ impl Render for SettingsPage {
                 .child(self.notifications(&settings, &palette, cx))
                 .child(self.background(&settings, &palette, cx)),
             Section::Engine => self.engine(&settings, cx, &palette),
-            Section::Offline => self.offline(cx, &palette),
             Section::Updates => self.updates(&settings, cx, &palette),
             Section::Accounts => v_flex()
                 .gap(px(16.))
                 .child(self.accounts(cx, &palette))
                 .child(self.chesscom_accounts(cx, &palette)),
             Section::Voice => self.voice(&settings, cx, &palette),
-            Section::Data => self.data(cx, &palette),
+            Section::Storage => self.storage(cx, &palette),
         };
         self.sync_zoom(window, cx);
         self.sync_ai(window, cx);
