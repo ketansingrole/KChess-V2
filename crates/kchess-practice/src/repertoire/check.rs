@@ -47,12 +47,21 @@ pub struct Step {
 /// each is reached (a transposition adds its moves to it), in the trees' order: at most
 /// `MOST_STEPS`.
 pub fn steps(roots: &[TreeNode], color: Color) -> Vec<Step> {
+    collect(roots, |node| super::to_play(node, color))
+}
+
+/// Every position of `roots` where the repertoire goes on, either side to move, as `steps`.
+pub fn every_step(roots: &[TreeNode]) -> Vec<Step> {
+    collect(roots, |node| !node.children.is_empty())
+}
+
+fn collect(roots: &[TreeNode], keep: impl Fn(&TreeNode) -> bool) -> Vec<Step> {
     let mut steps: Vec<Step> = Vec::new();
     let mut at: HashMap<String, usize> = HashMap::new();
     for root in roots {
         let mut stack: Vec<(&TreeNode, Line)> = vec![(root, Vec::new())];
         while let Some((node, line)) = stack.pop() {
-            if super::to_play(node, color) {
+            if keep(node) {
                 let moves = node
                     .children
                     .iter()
@@ -240,27 +249,6 @@ impl RepertoireCheck {
             .collect()
     }
 
-    /// The listed move's line on the analysis board, from the start or from its position.
-    fn analyse(&self, step: usize, uci: &str, window: &mut Window, cx: &mut App) {
-        let Some(step) = self.steps.get(step) else {
-            return;
-        };
-        let open = if step.start == STANDARD_FEN {
-            let mut moves: Vec<String> = step.line.iter().map(|(.., uci)| uci.clone()).collect();
-            moves.push(uci.to_string());
-            Open::Line(moves)
-        } else {
-            let after = step
-                .moves
-                .iter()
-                .find(|(played, ..)| played == uci)
-                .map(|(.., fen)| fen.clone());
-            Open::Position(after)
-        };
-        window.close_dialog(cx);
-        analysis::open(open, window, cx);
-    }
-
     fn row(
         &self,
         index: usize,
@@ -268,53 +256,89 @@ impl RepertoireCheck {
         cx: &Context<Self>,
         palette: &Palette,
     ) -> impl IntoElement + use<> {
-        let step = &self.steps[listed.step];
-        let before: Vec<(u32, &str)> = step
-            .line
-            .iter()
-            .map(|(ply, san, _)| (*ply, san.as_str()))
-            .collect();
-        let whole: Vec<(u32, &str)> = before
-            .iter()
-            .copied()
-            .chain([(step.ply, listed.san.as_str())])
-            .collect();
-        let line = line_text(whole.iter().copied());
-        // The repertoire's move stands out from the moves that lead to it.
-        let lead = line_text(before.iter().copied());
-        let yours = line
-            .strip_prefix(lead.as_str())
-            .unwrap_or(line.as_str())
-            .trim_start()
-            .to_string();
-        let (at, uci) = (listed.step, listed.uci.clone());
-        v_flex()
-            .id(("repertoire-check-move", index))
-            .test_support()
-            .role(Role::Button)
-            .keyboard_focus(palette.primary)
-            .aria_label(format!("{line}: {}", listed.reason))
-            .gap(px(2.))
-            .px(px(8.))
-            .py(px(6.))
-            .rounded(radii::BOX)
-            .cursor_pointer()
-            .pressable(palette)
-            .on_click(cx.listener(move |this, _, window, cx| this.analyse(at, &uci, window, cx)))
-            .child(
-                h_flex()
-                    .gap(px(4.))
-                    .text_size(px(13.))
-                    .when(!lead.is_empty(), |row| row.child(lead.clone()))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(yours)),
-            )
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(palette.text_muted)
-                    .child(listed.reason.clone()),
-            )
+        let step = self.steps[listed.step].clone();
+        let uci = listed.uci.clone();
+        line_row(
+            ("repertoire-check-move", index),
+            &step,
+            &listed.san,
+            &listed.reason,
+            palette,
+        )
+        .on_click(cx.listener(move |_, _, window, cx| open_line(&step, &uci, window, cx)))
+        .test_support()
     }
+}
+
+/// `step`'s line and then `uci` on the analysis board: from the start, or from the position after
+/// it when the tree starts elsewhere.
+pub fn open_line(step: &Step, uci: &str, window: &mut Window, cx: &mut App) {
+    let open = if step.start == STANDARD_FEN {
+        let mut moves: Vec<String> = step.line.iter().map(|(.., uci)| uci.clone()).collect();
+        moves.push(uci.to_string());
+        Open::Line(moves)
+    } else {
+        Open::Position(after(&step.fen, uci).or_else(|| Some(step.fen.clone())))
+    };
+    window.close_dialog(cx);
+    analysis::open(open, window, cx);
+}
+
+/// The position after `uci` from `fen`.
+fn after(fen: &str, uci: &str) -> Option<String> {
+    use kchess_domain::rules;
+    let mut pos = rules::standard_from_fen(fen)?;
+    let m = rules::legal_move(&pos, rules::parse_uci(uci)?)?;
+    shakmaty::Position::play_unchecked(&mut pos, m);
+    Some(rules::make_fen(&pos))
+}
+
+/// A move of `step` to look at, `san`: its line with the move standing out, and why, `reason`.
+pub fn line_row(
+    id: (&'static str, usize),
+    step: &Step,
+    san: &str,
+    reason: &str,
+    palette: &Palette,
+) -> Stateful<Div> {
+    let before: Vec<(u32, &str)> = step
+        .line
+        .iter()
+        .map(|(ply, san, _)| (*ply, san.as_str()))
+        .collect();
+    let whole: Vec<(u32, &str)> = before.iter().copied().chain([(step.ply, san)]).collect();
+    let line = line_text(whole.iter().copied());
+    // The move stands out from the moves that lead to it.
+    let lead = line_text(before.iter().copied());
+    let played = line
+        .strip_prefix(lead.as_str())
+        .unwrap_or(line.as_str())
+        .trim_start()
+        .to_string();
+    v_flex()
+        .id(id)
+        .role(Role::Button)
+        .keyboard_focus(palette.primary)
+        .aria_label(format!("{line}: {reason}"))
+        .gap(px(2.))
+        .px(px(8.))
+        .py(px(6.))
+        .rounded(radii::BOX)
+        .cursor_pointer()
+        .pressable(palette)
+        .child(
+            h_flex()
+                .gap(px(4.))
+                .text_size(px(13.))
+                .when(!lead.is_empty(), |row| row.child(lead))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(played)),
+        )
+        .child(
+            div()
+                .text_size(px(12.))
+                .text_color(palette.text_muted)
+                .child(reason.to_string()),
+        )
 }
 
 impl Render for RepertoireCheck {
@@ -391,7 +415,7 @@ impl Render for RepertoireCheck {
 
 #[cfg(test)]
 mod tests {
-    use super::{TreeNode, line_text, steps};
+    use super::{TreeNode, every_step, line_text, steps};
     use crate::repertoire::study_roots;
     use kchess_contracts::types::StudyChapter;
     use shakmaty::Color;
@@ -444,6 +468,32 @@ mod tests {
         // As Black: the positions after White's moves.
         let black = steps_for_black(&root);
         assert_eq!(black, ["1. e4", "1. d4"]);
+    }
+
+    #[test]
+    fn every_step_is_each_position_the_repertoire_goes_on_from_either_side() {
+        let root = root("1. e4 e5 (1... c5 2. Nf3) 2. Nf3 *");
+        let read: Vec<(String, Vec<String>)> = every_step(std::slice::from_ref(&root))
+            .iter()
+            .map(|step| {
+                (
+                    line_text(step.line.iter().map(|(ply, san, _)| (*ply, san.as_str()))),
+                    step.moves.iter().map(|(_, san, _)| san.clone()).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            read,
+            [
+                (String::new(), vec!["e4".to_string()]),
+                (
+                    "1. e4".to_string(),
+                    vec!["e5".to_string(), "c5".to_string()]
+                ),
+                ("1. e4 e5".to_string(), vec!["Nf3".to_string()]),
+                ("1. e4 c5".to_string(), vec!["Nf3".to_string()]),
+            ]
+        );
     }
 
     fn steps_for_black(root: &TreeNode) -> Vec<String> {

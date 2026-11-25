@@ -1225,8 +1225,85 @@ fn more_filters_find_games_by_length_speed_material_structure_and_pieces(
     wait_for_listed(&mut app, "the game with a knight kept on a4", &[ISOLATED]);
 }
 
-/// Practice → Repertoire checks a study's lines against the game databases: Black's 1...c5 is
-/// played in 1 of 21 games, so it is listed to look at, and opens on the analysis board.
+/// Practice's repertoire trainer on a new study of `pgn`, as `color`.
+fn train_repertoire(app: &mut Harness, pgn: &str, color: &str) {
+    let made = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let pgn = pgn.to_string();
+    app.cx.update(|cx| {
+        let save = cx
+            .global::<crate::studies::StudyHandle>()
+            .0
+            .read(cx)
+            .command(kchess_contracts::types::StudyCommand::Save {
+                name: "Repertoire".into(),
+                pgn,
+                id: None,
+                chapter_id: None,
+            });
+        let made = made.clone();
+        cx.spawn(async move |_| {
+            let answer = save.await.expect("the study is saved");
+            *made.borrow_mut() = answer.id;
+        })
+        .detach();
+    });
+    app.wait_for("the study", |_, _| made.borrow().is_some());
+    let id = made.borrow().clone().expect("its id");
+    app.with_window(|window, cx| {
+        crate::prefs::set(cx, "kchess:repertoire-color", color);
+        kchess_practice::repertoire::train_study(id, window, cx);
+    });
+}
+
+/// Practice → Repertoire → Check → Against your games: your games with White, followed through
+/// a White repertoire; the two that left it with 2. Nc3, where it plays 2. Nf3, are listed with
+/// how they went, and open on the analysis board.
+#[gpui_kit::test]
+fn a_repertoire_is_checked_against_your_games(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    let games: [(&str, &[&str], &str); 3] = [
+        ("a", &["e2e4", "e7e5", "b1c3"], "1-0"),
+        ("b", &["e2e4", "e7e5", "b1c3"], "1/2-1/2"),
+        ("c", &["e2e4", "c7c5", "g1f3"], "1-0"),
+    ];
+    for (id, moves, result) in games {
+        let game = serde_json::json!({
+            "id": id, "source": "computer", "startedAt": 1_761_091_200_000_i64,
+            "updatedAt": 1_761_091_260_000_i64, "white": "You", "black": "Stockfish",
+            "result": result, "reason": "Checkmate", "timeControl": "-", "finished": true,
+            "setup": { "variant": "standard", "fen": start }, "moves": moves,
+        });
+        app.request(kchess_contracts::calls::SaveArchivedGame {
+            game: kchess_contracts::check::ArchivedGame(game),
+        });
+    }
+    app.open("Game database");
+    wait_for_databases(&mut app, "Your games", &[("Your games", 3)]);
+
+    train_repertoire(&mut app, "1. e4 e5 (1... c5 2. Nf3) 2. Nf3 *", "white");
+    app.click("repertoire-check");
+    app.click_label("Against your games");
+    assert_eq!(
+        app.find("repertoire-games-summary").label(),
+        Some("3 games as White · 3 in the repertoire · 2 left it")
+    );
+    assert_eq!(
+        app.find(("repertoire-games-move", 0usize)).label(),
+        Some(
+            "1. e4 e5 2. Nc3: You played it in 2 games · You scored 75% · Repertoire: Nf3 · \
+             Last 2025.10.22"
+        )
+    );
+    assert!(!app.shows(("repertoire-games-move", 1usize)));
+    app.click(("repertoire-games-move", 0usize));
+    app.wait_for_page(crate::pages::Page::Analysis);
+    app.find("tree-e2e4 e7e5 b1c3");
+}
+
+/// Practice → Repertoire → Check → Against databases checks a study's lines against the game
+/// databases: Black's 1...c5 is played in 1 of 21 games, so it is listed to look at, and opens on
+/// the analysis board.
 #[gpui_kit::test]
 fn a_repertoire_is_checked_against_the_databases(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
@@ -1242,32 +1319,9 @@ fn a_repertoire_is_checked_against_the_databases(cx: &mut gpui_kit::TestAppConte
         .simulate_path_prompt_response(move |_| Some(vec![path]));
     wait_for_databases(&mut app, "the games in", &[("club", 21)]);
 
-    let made = std::rc::Rc::new(std::cell::RefCell::new(None));
-    app.cx.update(|cx| {
-        let save = cx
-            .global::<crate::studies::StudyHandle>()
-            .0
-            .read(cx)
-            .command(kchess_contracts::types::StudyCommand::Save {
-                name: "Sicilian".into(),
-                pgn: "1. e4 c5 *".into(),
-                id: None,
-                chapter_id: None,
-            });
-        let made = made.clone();
-        cx.spawn(async move |_| {
-            let answer = save.await.expect("the study is saved");
-            *made.borrow_mut() = answer.id;
-        })
-        .detach();
-    });
-    app.wait_for("the study", |_, _| made.borrow().is_some());
-    let id = made.borrow().clone().expect("its id");
-    app.with_window(|window, cx| {
-        crate::prefs::set(cx, "kchess:repertoire-color", "black");
-        kchess_practice::repertoire::train_study(id, window, cx);
-    });
+    train_repertoire(&mut app, "1. e4 c5 *", "black");
     app.click("repertoire-check");
+    app.click_label("Against databases");
     assert_eq!(
         app.find("repertoire-check-summary").label(),
         Some("1 move checked · 1 to look at")

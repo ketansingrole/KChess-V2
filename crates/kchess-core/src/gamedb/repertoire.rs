@@ -3,25 +3,35 @@
 //! explorer and the novelty mark look a position up (`explore::moves_from`: at any depth,
 //! transpositions included), and each of the repertoire's moves there is judged by the games
 //! (`kchess_domain::training::repertoire_check`).
+//!
+//! Through your own games (`gameDbRepertoireGames`) it is the other way round: each of Your
+//! games where you had the repertoire's side is replayed through the repertoire's positions,
+//! both sides', found by position (so a transposition stays in it), until a move it does not
+//! have: one of yours, where it plays another, or your opponent's, which it has no answer to.
+//! Your games are a few thousand, so replaying each once costs less than a lookup a position.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rusqlite::Connection;
 use shakmaty::Color;
 
-use super::explore;
 use super::tree::Stats;
+use super::{explore, search};
+use crate::store::sql::Sql as _;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    GameDbRepertoireCheck, GameDbRepertoireMove, GameDbVerdict, RepertoireStep,
+    GameDbRepertoireCheck, GameDbRepertoireGames, GameDbRepertoireGap, GameDbRepertoireMove,
+    GameDbVerdict, RepertoireStep,
 };
-use kchess_domain::gamedb;
+use kchess_domain::gamedb::{self, Outcome};
 use kchess_domain::rules;
 use kchess_domain::training::repertoire_check::{self, Counts, Verdict};
 
 /// The other moves an answer names beside the repertoire's.
 pub const OTHERS: usize = 3;
+/// The most places your games left a repertoire that an answer lists.
+pub const MOST_GAPS: usize = 100;
 
 fn counts(stats: &Stats) -> Counts {
     Counts {
@@ -125,4 +135,136 @@ pub fn check(
         });
     }
     Ok(checks)
+}
+
+/// Where your games left a repertoire: a step and a move, with its games so far.
+struct Gap {
+    step: usize,
+    found: GameDbRepertoireGap,
+    /// The last game's `date_key`.
+    last: i64,
+}
+
+/// The games of Your games (`db`) where one of `names` (in any case) had `color`, each replayed
+/// through `steps` until it left them; a game that does not start in them goes in at the first
+/// of their positions it reaches. At most `MOST_GAPS` places, the most played first.
+pub fn your_games(
+    db: &Connection,
+    steps: &[RepertoireStep],
+    color: Color,
+    names: &[String],
+    stop: &AtomicBool,
+) -> Result<GameDbRepertoireGames> {
+    let names: HashSet<String> = names
+        .iter()
+        .map(|name| name.trim().to_lowercase())
+        .collect();
+    // Each position's first step and the repertoire's moves there, packed, from every step
+    // that reaches it.
+    let mut at: HashMap<u64, (usize, Vec<u16>)> = HashMap::new();
+    for (index, step) in steps.iter().enumerate() {
+        let Some(pos) = rules::standard_from_fen(&step.fen) else {
+            continue;
+        };
+        let (_, book) = at
+            .entry(gamedb::position_key(&pos))
+            .or_insert_with(|| (index, Vec::new()));
+        for uci in &step.moves {
+            if let Some(m) = rules::parse_uci(uci).and_then(|m| rules::legal_move(&pos, m)) {
+                let mv = gamedb::pack_move(&m);
+                if !book.contains(&mv) {
+                    book.push(mv);
+                }
+            }
+        }
+    }
+    let mut statement = db
+        .prepare(
+            "SELECT w.name, b.name, g.fen, g.moves, g.result, g.date, g.date_key FROM games g
+             JOIN players w ON w.id = g.white JOIN players b ON b.id = g.black
+             WHERE g.import_id <= ?1",
+        )
+        .sql()?;
+    let mut rows = statement.query([search::visible(db)?]).sql()?;
+    let mut answer = GameDbRepertoireGames::default();
+    let mut gaps: HashMap<(usize, u16), Gap> = HashMap::new();
+    while let Some(row) = rows.next().sql()? {
+        if stop.load(Ordering::Relaxed) {
+            return Err(CoreError::new("The repertoire check stopped."));
+        }
+        let player: String = row.get(if color == Color::White { 0 } else { 1 }).sql()?;
+        if !names.contains(&player.trim().to_lowercase()) {
+            continue;
+        }
+        answer.games += 1;
+        let fen: Option<String> = row.get(2).sql()?;
+        let code: Vec<u8> = row.get(3).sql()?;
+        let Some((mut pos, moves)) = gamedb::start_of(fen.as_deref())
+            .and_then(|start| Some((start.clone(), gamedb::decode_line(&start, &code)?)))
+        else {
+            continue;
+        };
+        let mut inside = false;
+        let mut left = None;
+        for m in moves {
+            match at.get(&gamedb::position_key(&pos)) {
+                Some((step, book)) => {
+                    inside = true;
+                    if !book.contains(&gamedb::pack_move(&m)) {
+                        left = Some((*step, pos.clone(), m));
+                        break;
+                    }
+                }
+                // Out of the repertoire's positions after being in them: past its end.
+                None if inside => break,
+                None => {}
+            }
+            shakmaty::Position::play_unchecked(&mut pos, m);
+        }
+        answer.reached += u64::from(inside);
+        let Some((step, from, m)) = left else {
+            continue;
+        };
+        let outcome = Outcome::from_score(row.get(4).sql()?);
+        let (date, key): (Option<String>, i64) = (row.get(5).sql()?, row.get(6).sql()?);
+        let gap = gaps
+            .entry((step, gamedb::pack_move(&m)))
+            .or_insert_with(|| Gap {
+                step,
+                found: GameDbRepertoireGap {
+                    step: u32::try_from(step).unwrap_or(u32::MAX),
+                    uci: rules::make_uci(&m),
+                    san: rules::san_and_play(&mut from.clone(), m),
+                    yours: shakmaty::Position::turn(&from) == color,
+                    ..GameDbRepertoireGap::default()
+                },
+                last: i64::MIN,
+            });
+        gap.found.games += 1;
+        match (outcome, color) {
+            (Outcome::White, Color::White) | (Outcome::Black, Color::Black) => gap.found.won += 1,
+            (Outcome::White, Color::Black) | (Outcome::Black, Color::White) => gap.found.lost += 1,
+            (Outcome::Draw, _) => gap.found.drawn += 1,
+            (Outcome::Unknown, _) => {}
+        }
+        if key > gap.last {
+            gap.last = key;
+            gap.found.last = date;
+        }
+    }
+    let mut gaps: Vec<Gap> = gaps.into_values().collect();
+    gaps.sort_by_key(|gap| {
+        (
+            std::cmp::Reverse(gap.found.games),
+            std::cmp::Reverse(gap.last),
+            gap.step,
+            gap.found.uci.clone(),
+        )
+    });
+    answer.gaps = gaps
+        .into_iter()
+        .take(MOST_GAPS)
+        .map(|gap| gap.found)
+        .collect();
+    Ok(answer)
 }

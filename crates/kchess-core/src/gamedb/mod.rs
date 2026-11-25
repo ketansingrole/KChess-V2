@@ -1119,6 +1119,32 @@ impl GameDbService {
         self.inner.logged("repertoire check", result)
     }
 
+    /// A repertoire's positions through your games in Your games where one of `names` had
+    /// `color`: none without Your games.
+    pub async fn repertoire_games(
+        &self,
+        steps: Vec<kchess_contracts::types::RepertoireStep>,
+        color: shakmaty::Color,
+        names: Vec<String>,
+    ) -> Result<kchess_contracts::types::GameDbRepertoireGames> {
+        if !self.inner.ids().iter().any(|id| id == own::OWN_ID) {
+            return Ok(Default::default());
+        }
+        let file = self.inner.file(own::OWN_ID);
+        // Dropped by its caller (the dialog closed), the check stops at its next game.
+        let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
+        let stopped = Arc::clone(&stop.0);
+        let result = tokio::task::spawn_blocking(move || {
+            let db = schema::open_read(&file)?;
+            repertoire::your_games(&db, &steps, color, &names, &stopped)
+        })
+        .await
+        .map_err(|_| CoreError::new("Your games could not be read. Try again."))
+        .and_then(|found| found);
+        drop(stop);
+        self.inner.logged("repertoire check of your games", result)
+    }
+
     /// Stops the import and the rebuild of "Your games"; `close` waits for them to end.
     pub fn stop(&self) {
         self.cancel();

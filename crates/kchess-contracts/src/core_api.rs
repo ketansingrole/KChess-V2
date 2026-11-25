@@ -780,6 +780,15 @@ core_api! {
         GameDbRepertoire = "gameDbRepertoire" fn game_db_repertoire(
             steps: RepertoireSteps
         ) -> Vec<crate::types::GameDbRepertoireCheck>;
+        /// A repertoire's positions, both sides', through your games in Your games where you
+        /// had `color` (your Lichess and Chess.com names, and "You"): where each left it, by a
+        /// move of yours it does not play or a reply of your opponent's it has no answer to,
+        /// the most played first.
+        #[assist(Lookups)]
+        GameDbRepertoireGames = "gameDbRepertoireGames" fn game_db_repertoire_games(
+            steps: RepertoireSteps,
+            color: Side
+        ) -> crate::types::GameDbRepertoireGames;
         #[writes(GameDb)]
         GameDbMasterInstall = "gameDbMasterInstall" fn game_db_master_install(;
             months: Option<MasterMonths>
