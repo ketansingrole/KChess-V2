@@ -52,6 +52,7 @@ use kchess_ui::icon;
 
 pub mod check;
 mod lines;
+pub(crate) use lines::due_in_study;
 pub mod your_games;
 use lines::*;
 

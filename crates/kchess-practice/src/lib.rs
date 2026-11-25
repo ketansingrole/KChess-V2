@@ -28,6 +28,7 @@ pub mod mistakes;
 pub mod repertoire;
 pub mod run;
 mod square_color;
+pub mod today;
 mod under_board;
 
 use gpui_kit::component::v_flex;

@@ -138,3 +138,18 @@ pub(super) fn schedule_text(summary: &repetition::Summary, now: f64) -> Option<S
 pub(super) fn to_play(node: &TreeNode, color: Color) -> bool {
     !node.children.is_empty() && kchess_domain::rules::fen_turn(&node.fen) == color
 }
+
+/// How many lines of `study`'s repertoire are due at `now` in its schedule `table`, as the
+/// repertoire counts them drilled from all its chapters.
+pub(crate) fn due_in_study(
+    study: &Study,
+    table: &kchess_domain::keyed::Keyed<repetition::Card>,
+    now: f64,
+) -> usize {
+    let roots = study_roots(&study.chapters);
+    let ids: Vec<String> = roots
+        .iter()
+        .flat_map(|root| leaves(root).into_iter().map(|path| line_id(root, &path)))
+        .collect();
+    repetition::summary(ids.iter().map(String::as_str), Some(table), now).due
+}
