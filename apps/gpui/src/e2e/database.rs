@@ -148,6 +148,72 @@ fn a_pgn_file_dropped_on_the_page_is_imported(cx: &mut gpui_kit::TestAppContext)
     app.find("database-delete");
 }
 
+/// A `.pgn.bz2`, as FICS packs its games, dropped on the Database page is imported, named
+/// after the file.
+#[gpui_kit::test]
+fn a_bzip2_pgn_file_dropped_on_the_page_is_imported(cx: &mut gpui_kit::TestAppContext) {
+    use std::io::Write as _;
+    let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::fast());
+    encoder.write_all(GAMES.as_bytes()).expect("packs");
+    let packed = encoder.finish().expect("packed");
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    app.find("gamedb-import");
+    let _folder = app.drop_file(
+        "ficsgamesdb_2024_standard2000_nomovetimes_1.pgn.bz2",
+        &packed,
+    );
+    wait_for_listed(
+        &mut app,
+        "the dropped file's games",
+        &[GUKESH_CARLSEN, CARLSEN_GUKESH, SMITH_JONES],
+    );
+    app.wait_for_app("its database, named after the file", |cx| {
+        let db = cx
+            .global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx);
+        db.databases()
+            .iter()
+            .any(|info| info.name == "ficsgamesdb_2024_standard2000_nomovetimes_1")
+    });
+}
+
+/// The downloads and the import stay where they were drawn when a database is listed after the
+/// page first drew ("Your games" is built as games sync): in a wide window, the database's
+/// choice, count and Delete joined their row, which then took two lines and pushed the master
+/// and engine games and the import down to the second.
+#[gpui_kit::test]
+fn the_downloads_hold_still_when_a_database_is_listed(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{px, size};
+    const ACTIONS: [&str; 5] = [
+        "database-player",
+        "database-lichess",
+        "database-masters",
+        "database-tcec",
+        "gamedb-import",
+    ];
+    fn places(app: &mut Harness) -> Vec<gpui_kit::Point<gpui_kit::Pixels>> {
+        ACTIONS
+            .iter()
+            .map(|&id| app.find(id).bounds().origin)
+            .collect()
+    }
+    let mut app = Harness::start(cx);
+    app.cx
+        .simulate_window_resize(app.window, size(px(1320.), px(880.)));
+    app.open("Game database");
+    let before = places(&mut app);
+    let _folder = app.drop_file("club.pgn", GAMES.as_bytes());
+    wait_for_listed(
+        &mut app,
+        "the dropped file's games",
+        &[GUKESH_CARLSEN, CARLSEN_GUKESH, SMITH_JONES],
+    );
+    app.find("database-delete");
+    assert_eq!(places(&mut app), before);
+}
+
 /// A `.zip` or a `.7z` of PGN files dropped on the Database page is imported as one database,
 /// named after the archive, with the games of every PGN file in it.
 #[gpui_kit::test]
@@ -293,6 +359,46 @@ fn the_master_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext)
             .elements()
             .iter()
             .any(|element| element.label() == Some("Update master games"))
+    });
+}
+
+/// The engine games button downloads TCEC's latest release into a database of its own: its
+/// standard competition games alone, listed with the release's attribution; the button then
+/// offers to update them.
+#[gpui_kit::test]
+fn the_engine_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    assert_eq!(
+        app.find("database-tcec").label(),
+        Some("Engine games · 27 MB")
+    );
+    app.click("database-tcec");
+    wait_for_listed(
+        &mut app,
+        "the competition game alone",
+        &["Stockfish dev against LCZero 0.32, 1-0"],
+    );
+    app.wait_for_app("the release's attribution", |cx| {
+        let db = cx
+            .global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx);
+        db.databases().iter().any(|info| {
+            info.source == kchess_contracts::types::DatabaseSource::Tcec
+                && info.games == 1
+                && info
+                    .attribution
+                    .as_deref()
+                    .is_some_and(|text| text.contains("CC BY-SA 3.0"))
+        })
+    });
+    app.wait_for("the button to update them", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .elements()
+            .iter()
+            .any(|element| element.label() == Some("Update engine games"))
     });
 }
 

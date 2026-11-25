@@ -16,6 +16,7 @@ pub mod own;
 pub mod player;
 pub mod schema;
 pub mod search;
+pub mod tcec;
 pub mod tree;
 
 use std::collections::HashMap;
@@ -212,14 +213,16 @@ fn file_stem(path: &Path) -> String {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let lower = name.to_ascii_lowercase();
-    let stem = [".pgn.zst", ".pgn.zip", ".pgn.7z", ".zip", ".7z", ".pgn"]
-        .iter()
-        .find_map(|ext| {
-            lower
-                .ends_with(ext)
-                .then(|| &name[..name.len() - ext.len()])
-        })
-        .unwrap_or(&name);
+    let stem = [
+        ".pgn.zst", ".pgn.bz2", ".pgn.zip", ".pgn.7z", ".zip", ".7z", ".pgn",
+    ]
+    .iter()
+    .find_map(|ext| {
+        lower
+            .ends_with(ext)
+            .then(|| &name[..name.len() - ext.len()])
+    })
+    .unwrap_or(&name);
     let stem: String = stem.trim().chars().take(80).collect();
     if stem.is_empty() {
         "Games".to_string()

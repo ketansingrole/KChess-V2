@@ -69,7 +69,7 @@ async fn a_file_is_imported_searched_and_read_through_the_core() {
         .expect_err("a relative path is refused");
     assert_eq!(
         refused.message,
-        "Choose a .pgn, .pgn.zst, .zip or .7z file."
+        "Choose a .pgn, .pgn.zst, .pgn.bz2, .zip or .7z file."
     );
     let imported = core
         .call(

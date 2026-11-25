@@ -268,6 +268,7 @@ pub fn source_text(source: DatabaseSource) -> &'static str {
         DatabaseSource::Master => "master",
         DatabaseSource::Player => "player",
         DatabaseSource::Lichess => "lichess",
+        DatabaseSource::Tcec => "tcec",
     }
 }
 
@@ -277,6 +278,7 @@ fn source_of(text: &str) -> DatabaseSource {
         "master" => DatabaseSource::Master,
         "player" => DatabaseSource::Player,
         "lichess" => DatabaseSource::Lichess,
+        "tcec" => DatabaseSource::Tcec,
         _ => DatabaseSource::Imported,
     }
 }

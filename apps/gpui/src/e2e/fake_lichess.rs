@@ -465,6 +465,11 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
             None => not_found(out),
         };
     }
+    // TCEC's latest release on GitHub, and its compact zip of engine games.
+    if let Some(answer) = tcec_release(request.path()) {
+        let (content_type, body) = answer;
+        return kchess_testkit::respond(out, 200, content_type, &body);
+    }
     // Lichess's rated games (`database.lichess.org/standard/`): two months, each with one game
     // of two 2400s among weaker and faster ones.
     if let Some(name) = request.path().strip_prefix("/database/standard/") {
@@ -900,6 +905,51 @@ fn master_archive(name: &str) -> Option<Vec<u8>> {
     } else {
         None
     }
+}
+
+/// The engine games of TCEC's release: a standard competition game, and a Chess960 one that
+/// only the zip's other files hold.
+pub const TCEC_GAME: &str = "[Event \"TCEC Season 29 - Superfinal\"]\n[Date \"2026.05.30\"]\n\
+     [White \"Stockfish dev\"]\n[Black \"LCZero 0.32\"]\n[Result \"1-0\"]\n\n\
+     1. d4 {book} Nf6 2. c4 e6 1-0\n\n";
+const TCEC_FRC: &str = "[Event \"TCEC FRC 7\"]\n[Date \"2026.03.01\"]\n[White \"Fischer\"]\n\
+     [Black \"Random\"]\n[Result \"0-1\"]\n\n1. e4 e5 0-1\n\n";
+
+/// TCEC's compact zip: every game, then the standard competitions' and Chess960's files.
+fn tcec_zip() -> Vec<u8> {
+    use std::io::Write as _;
+    use zip::write::SimpleFileOptions;
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default();
+    for (name, text) in [
+        ("TCEC-everything.pgn", format!("{TCEC_GAME}{TCEC_FRC}")),
+        (
+            "TCEC-everything-compet-traditional.pgn",
+            TCEC_GAME.to_string(),
+        ),
+        ("TCEC-everything-compet-frc.pgn", TCEC_FRC.to_string()),
+    ] {
+        writer.start_file(name, options).expect("starts a file");
+        writer.write_all(text.as_bytes()).expect("writes it");
+    }
+    writer.finish().expect("finishes").into_inner()
+}
+
+/// What the stand-in for TCEC's GitHub releases answers at `path`: the latest release, with the
+/// zip's digest, or the zip.
+fn tcec_release(path: &str) -> Option<(&'static str, Vec<u8>)> {
+    use sha2::Digest as _;
+    const TAG: &str = "S29-final";
+    const ASSET: &str = "TCEC-everything-compact.zip";
+    if path == "/tcec/latest" {
+        let digest = kchess_delta::hex(&sha2::Sha256::digest(tcec_zip()));
+        let answer = json!({
+            "tag_name": TAG,
+            "assets": [{ "name": ASSET, "digest": format!("sha256:{digest}") }],
+        });
+        return Some(("application/json", answer.to_string().into_bytes()));
+    }
+    (path == format!("/tcec/download/{TAG}/{ASSET}")).then(|| ("application/zip", tcec_zip()))
 }
 
 /// The months of Lichess's rated games the stand-in lists, newest first.

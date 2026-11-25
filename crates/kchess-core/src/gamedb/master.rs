@@ -144,8 +144,8 @@ const WORDING: download::Wording = download::Wording {
     too_large: "The master games download is unexpectedly large.",
 };
 
-/// A month's download, removed however its month ends.
-struct Partial(PathBuf);
+/// A download saved to a file, removed however its import ends.
+pub(super) struct Partial(pub PathBuf);
 
 impl Drop for Partial {
     fn drop(&mut self) {
@@ -175,22 +175,29 @@ pub(super) async fn fetch_text(
 }
 
 /// Downloads `month` from `url` into `path`, reporting its bytes, and checks its digest.
-async fn fetch_month(
+pub(super) async fn fetch_file(
     client: &reqwest::Client,
     url: &str,
     path: &std::path::Path,
-    month: &Month,
+    expected: &Expected<'_>,
     cancel: &CancellationToken,
     usage: download::Usage<'_>,
     reporter: &mut Reporter,
 ) -> Result<()> {
-    let staging = |cause| CoreError::wrap("Could not save the master games download", cause);
+    let staging = |cause| CoreError::wrap("Could not save the download", cause);
     let limits = download::Limits {
-        max_bytes: MAX_MONTH,
+        max_bytes: expected.max_bytes,
         deadline: None,
     };
-    let mut body =
-        download::open(client, || client.get(url), limits, cancel, usage, &WORDING).await?;
+    let mut body = download::open(
+        client,
+        || client.get(url),
+        limits,
+        cancel,
+        usage,
+        expected.wording,
+    )
+    .await?;
     let mut count = import::Count {
         total_bytes: body.total().unwrap_or(0),
         ..import::Count::default()
@@ -214,13 +221,19 @@ async fn fetch_month(
     drop(file);
     received?;
     flushed?;
-    if kchess_delta::hex(&hasher.finalize()) != month.sha256 {
-        return Err(CoreError::new(format!(
-            "The master games of {} did not arrive intact. Try again.",
-            month.month
-        )));
+    if kchess_delta::hex(&hasher.finalize()) != expected.sha256 {
+        return Err(CoreError::new(expected.broken.clone()));
     }
     Ok(())
+}
+
+/// What a download saved to a file (`fetch_file`) must be: its SHA-256 (lowercase hex), at most
+/// `max_bytes`, its failures in `wording`'s words and a digest other than its own in `broken`.
+pub(super) struct Expected<'a> {
+    pub sha256: &'a str,
+    pub max_bytes: u64,
+    pub wording: &'a download::Wording,
+    pub broken: String,
 }
 
 impl GameDbService {
@@ -318,11 +331,20 @@ impl GameDbService {
             reporter.earlier = total;
             reporter.month = Some(month.month.clone());
             let url = format!("{archive}{}", month.file);
-            fetch_month(
+            let expected = Expected {
+                sha256: &month.sha256,
+                max_bytes: MAX_MONTH,
+                wording: &WORDING,
+                broken: format!(
+                    "The master games of {} did not arrive intact. Try again.",
+                    month.month
+                ),
+            };
+            fetch_file(
                 &client,
                 &url,
                 &partial.0,
-                &month,
+                &expected,
                 cancel,
                 usage,
                 &mut reporter,

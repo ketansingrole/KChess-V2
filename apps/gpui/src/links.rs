@@ -256,7 +256,7 @@ pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
     // database.
     let name = path.to_string_lossy().to_ascii_lowercase();
     if crate::shell::current_page(cx) == Some(crate::pages::Page::Database)
-        && [".pgn", ".pgn.zst", ".zip", ".7z"]
+        && [".pgn", ".pgn.zst", ".pgn.bz2", ".zip", ".7z"]
             .iter()
             .any(|extension| name.ends_with(extension))
     {

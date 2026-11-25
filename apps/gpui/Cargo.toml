@@ -116,6 +116,9 @@ embed-resource = "3"
 base64 = "0.23"
 # A `.zip` of PGN files for the Database page's import (already in Cargo.lock through the core).
 zip = { version = "9", default-features = false, features = ["deflate"] }
+# A `.pgn.bz2` (FICS's games) for the Database page's import (already in Cargo.lock through the
+# core).
+bzip2 = "0.6"
 # The slow calls a frame made, which the end-to-end tests fail on (`slow_calls::drawing`).
 kchess-app = { workspace = true, features = ["test-support"] }
 # The sounds played and the board images kept, which the end-to-end tests read.

@@ -4427,6 +4427,7 @@ dependencies = [
  "aes-gcm",
  "base64 0.23.1",
  "bytes",
+ "bzip2",
  "flate2",
  "futures-util",
  "getrandom 0.4.3",
@@ -4518,6 +4519,7 @@ name = "kchess-gpui"
 version = "2026.11.9"
 dependencies = [
  "base64 0.23.1",
+ "bzip2",
  "dirs 7.0.0",
  "embed-resource",
  "futures",

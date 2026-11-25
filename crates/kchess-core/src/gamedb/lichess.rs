@@ -386,6 +386,7 @@ impl GameDbService {
             packing: PgnPacking::Zstd,
             label: Some(month.file.clone()),
             keep: Some(keep),
+            entry: None,
         };
         let target = if file.is_file() {
             import::Target::Existing { file: file.clone() }

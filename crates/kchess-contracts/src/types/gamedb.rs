@@ -9,6 +9,7 @@ union!(#[doc = "Where a database's games came from."] DatabaseSource {
     Master = "master",
     Player = "player",
     Lichess = "lichess",
+    Tcec = "tcec",
 });
 
 union!(#[doc = "Where a player's games are downloaded from."] GameSite {

@@ -71,6 +71,13 @@ impl GameDbApi for Core {
             .await
     }
 
+    async fn game_db_tcec_install(&self) -> Result<GameDbImported> {
+        let (latest, downloads) = &self.tcec_urls;
+        self.gamedb
+            .tcec_install(latest, downloads, &*self.usage)
+            .await
+    }
+
     async fn game_db_lichess_months(&self) -> Result<LichessArchive> {
         self.gamedb
             .lichess_months(&self.lichess_games_url, &*self.usage)

@@ -313,6 +313,84 @@ async fn the_tree_counts_each_position_however_it_was_reached() {
     assert_eq!(bb5.stats.best_elo, (2830 + 2725) / 2);
 }
 
+/// `text` packed as bzip2, as one stream.
+fn bzipped(text: &[u8]) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::fast());
+    encoder.write_all(text).unwrap();
+    encoder.finish().unwrap()
+}
+
+#[tokio::test]
+async fn a_bzip2_file_imports_every_stream_and_a_damaged_one_imports_nothing() {
+    let (profile, files) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (games, host) = service(profile.path());
+    // Two streams, as parallel compressors write them, split inside the second game.
+    let cut = GAMES.find("[Event \"Club\"]").unwrap() - 40;
+    let mut packed = bzipped(&GAMES.as_bytes()[..cut]);
+    packed.extend(bzipped(&GAMES.as_bytes()[cut..]));
+    let path = source(
+        files.path(),
+        "ficsgamesdb_2024_standard2000_nomovetimes_7.pgn.bz2",
+        &packed,
+    );
+    let result = games
+        .import(
+            path,
+            PgnPacking::Bzip2,
+            None,
+            None,
+            DatabaseSource::Imported,
+        )
+        .await
+        .unwrap();
+    // As the text itself imports: its Atomic and broken games are skipped.
+    assert_eq!((result.added, result.skipped), (3, 2));
+    assert_eq!(
+        result.database.name,
+        "ficsgamesdb_2024_standard2000_nomovetimes_7"
+    );
+    let mut damaged = bzipped(GAMES.as_bytes());
+    let middle = damaged.len() / 2;
+    damaged[middle] ^= 0xff;
+    let path = source(files.path(), "bad.pgn.bz2", &damaged);
+    let error = games
+        .import(
+            path,
+            PgnPacking::Bzip2,
+            None,
+            None,
+            DatabaseSource::Imported,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.message.contains("not a readable .pgn.bz2"),
+        "{}",
+        error.message
+    );
+    // A text that is not bzip2 at all.
+    let path = source(files.path(), "plain.pgn.bz2", GAMES.as_bytes());
+    let error = games
+        .import(
+            path,
+            PgnPacking::Bzip2,
+            None,
+            None,
+            DatabaseSource::Imported,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.message.contains("not a readable .pgn.bz2"),
+        "{}",
+        error.message
+    );
+    assert_eq!(games.status().await.unwrap().databases.len(), 1);
+    let failed = host.named("gamedb:progress");
+    assert_eq!(failed.last().unwrap()["phase"], "failed");
+}
+
 #[tokio::test]
 async fn a_zstd_file_imports_as_its_text_and_a_damaged_one_imports_nothing() {
     use ruzstd::encoding::{CompressionLevel, compress_to_vec};
