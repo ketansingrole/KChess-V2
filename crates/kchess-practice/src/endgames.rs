@@ -86,7 +86,9 @@ fn course_icon(id: &str) -> Icon {
 }
 
 /// An endgame of your games as a drill: the position before your move, its goal, and what you
-/// played there.
+/// played there. Its id is the position's: Your games is written again as games sync, which
+/// numbers its games afresh, so a game's id there would hand this drill's runs (finished, and
+/// when it is due again) to another game's endgame, or to none.
 pub fn your_drill(endgame: &YourEndgame) -> Drill {
     let dots = if endgame.side == "white" { "." } else { "..." };
     let outcome = match (endgame.goal.as_str(), endgame.became.as_str()) {
@@ -94,7 +96,7 @@ pub fn your_drill(endgame: &YourEndgame) -> Drill {
         _ => "loses",
     };
     Drill {
-        id: format!("own:{}", endgame.game),
+        id: format!("own:{}", endgame.fen),
         title: endgame.material.clone(),
         group: if endgame.goal == "win" { WINS } else { DRAWS }.to_string(),
         fen: endgame.fen.clone(),
@@ -669,6 +671,41 @@ impl Render for Endgames {
 #[cfg(test)]
 mod tests {
     use super::{courses, drills};
+
+    /// Your games numbered afresh (a sync writes it again) leaves an endgame's drill as it was;
+    /// another position is another drill.
+    #[test]
+    fn your_endgames_drill_keeps_its_id_when_its_game_is_numbered_afresh() {
+        use kchess_contracts::types::YourEndgame;
+        let endgame = YourEndgame {
+            game: "41".into(),
+            fen: "8/8/8/8/8/8/1k6/R3K3 w - - 0 1".into(),
+            side: "white".into(),
+            goal: "win".into(),
+            san: "Ra2+".into(),
+            became: "draw".into(),
+            material: "KR vs K".into(),
+            number: 1,
+            opponent: "Bob".into(),
+            date: None,
+        };
+        let renumbered = YourEndgame {
+            game: "97".into(),
+            ..endgame.clone()
+        };
+        let elsewhere = YourEndgame {
+            fen: "8/8/8/8/8/2k5/8/1Q2K3 w - - 0 1".into(),
+            ..endgame.clone()
+        };
+        assert_eq!(
+            super::your_drill(&renumbered).id,
+            super::your_drill(&endgame).id
+        );
+        assert_ne!(
+            super::your_drill(&elsewhere).id,
+            super::your_drill(&endgame).id
+        );
+    }
 
     #[test]
     fn the_shared_courses_and_drills_load() {
