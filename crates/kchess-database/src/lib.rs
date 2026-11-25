@@ -749,11 +749,13 @@ impl Render for DatabasePage {
             .databases(cx)
             .iter()
             .any(|info| info.source == DatabaseSource::Tcec);
-        let header = h_flex()
-            .gap(px(12.))
-            .flex_wrap()
-            .when(databases > 0, |row| {
-                row.child(
+        // The database's own row sits under the downloads, so the downloads stay put when a
+        // database is listed after the page first draws ("Your games" is built as games sync).
+        let chosen = (databases > 0).then(|| {
+            h_flex()
+                .gap(px(12.))
+                .flex_wrap()
+                .child(
                     div().w(px(240.)).child(
                         Select::new(&self.database_select)
                             .small()
@@ -766,46 +768,51 @@ impl Render for DatabasePage {
                         .text_color(palette.text_muted)
                         .child(widgets::format_counted(info.games as f64, "game", "games"))
                 }))
-            })
-            .child(div().flex_1())
-            .children(
-                self.shown_database(cx)
-                    .and_then(|info| info.player.clone())
-                    .filter(|_| !busy)
-                    .map(|earlier| {
-                        Button::new("database-update-player")
-                            .ghost()
-                            .small()
-                            .icon(icon("refresh-cw"))
-                            .label("Update games")
-                            .on_click(move |_, window, cx| {
-                                player::open(Some(earlier.clone()), window, cx)
-                            })
-                    }),
-            )
-            .children(
-                self.shown_database(cx)
-                    .and_then(|info| info.lichess_rating)
-                    .filter(|_| !busy)
-                    .map(|rating| {
-                        Button::new("database-update-lichess")
-                            .ghost()
-                            .small()
-                            .icon(icon("plus"))
-                            .label("Add a month")
-                            .on_click(move |_, window, cx| lichess::open(Some(rating), window, cx))
-                    }),
-            )
-            .when(databases > 0 && !busy, |row| {
-                row.child(
-                    Button::new("database-delete")
-                        .ghost()
-                        .small()
-                        .icon(icon("trash-2"))
-                        .label("Delete database")
-                        .on_click(cx.listener(|this, _, window, cx| this.delete(window, cx))),
+                .child(div().flex_1())
+                .children(
+                    self.shown_database(cx)
+                        .and_then(|info| info.player.clone())
+                        .filter(|_| !busy)
+                        .map(|earlier| {
+                            Button::new("database-update-player")
+                                .ghost()
+                                .small()
+                                .icon(icon("refresh-cw"))
+                                .label("Update games")
+                                .on_click(move |_, window, cx| {
+                                    player::open(Some(earlier.clone()), window, cx)
+                                })
+                        }),
                 )
-            })
+                .children(
+                    self.shown_database(cx)
+                        .and_then(|info| info.lichess_rating)
+                        .filter(|_| !busy)
+                        .map(|rating| {
+                            Button::new("database-update-lichess")
+                                .ghost()
+                                .small()
+                                .icon(icon("plus"))
+                                .label("Add a month")
+                                .on_click(move |_, window, cx| {
+                                    lichess::open(Some(rating), window, cx)
+                                })
+                        }),
+                )
+                .when(!busy, |row| {
+                    row.child(
+                        Button::new("database-delete")
+                            .ghost()
+                            .small()
+                            .icon(icon("trash-2"))
+                            .label("Delete database")
+                            .on_click(cx.listener(|this, _, window, cx| this.delete(window, cx))),
+                    )
+                })
+        });
+        let downloads = h_flex()
+            .gap(px(12.))
+            .flex_wrap()
             .when(!busy, |row| {
                 row.child(
                     Button::new("database-player")
@@ -858,6 +865,7 @@ impl Render for DatabasePage {
                 )
             })
             .child(game_db::import_card(cx, &palette));
+        let header = v_flex().gap(px(12.)).child(downloads).children(chosen);
         let body = if databases == 0 {
             widgets::card(&palette)
                 .py(px(30.))
