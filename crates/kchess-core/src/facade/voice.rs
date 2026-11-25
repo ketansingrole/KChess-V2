@@ -1,7 +1,7 @@
 //! The facade's offline speech recognition (`voiceStart`, `voiceAccept`, `voiceFinish`,
 //! `voiceStop`), answered by the `kchess-voice` helper (`crate::voice::recognizer`), and the
 //! speech model it loads (`voiceModelStatus`, `voiceModelInstall`, reporting
-//! `voicemodel:progress`).
+//! `voicemodel:progress`, and `voiceModelDelete`).
 
 use kchess_contracts::CoreEvent;
 use std::sync::Arc;
@@ -15,6 +15,8 @@ use kchess_contracts::error::{CoreError, Result};
 
 /// Another client's audio while one has voice input: one microphone at a time.
 const ELSEWHERE: &str = "Voice input is in use in another KChess window.";
+/// The model in use cannot be deleted.
+const LISTENING: &str = "Turn voice input off to delete its speech model.";
 
 /// Whether `caller` has voice input, or nobody does yet.
 fn is_mine(owner: Option<u64>, caller: u64) -> bool {
@@ -90,5 +92,14 @@ impl VoiceApi for Core {
         });
         self.voice_model.ensure(Some(progress)).await?;
         Ok(())
+    }
+
+    async fn voice_model_delete(&self) -> Result<()> {
+        // Held until the model is gone, so no window starts listening on a model being removed.
+        let owner = self.voice_owner.lock().await;
+        if owner.is_some() {
+            return Err(CoreError::new(LISTENING));
+        }
+        self.voice_model.delete().await
     }
 }

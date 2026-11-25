@@ -534,6 +534,7 @@ mod tests {
                 installed: true,
                 path: "/managed/stockfish".into(),
                 version: Some("17.1".into()),
+                bytes: 0,
             },
             can_download: true,
         }

@@ -343,7 +343,7 @@ pub fn with_room(
     cx: &mut App,
     start: impl Fn(&mut Window, &mut App) + 'static,
 ) {
-    let asked = cx.global::<AppCore>().request(calls::GameDbFreeSpace {});
+    let asked = cx.global::<AppCore>().request(calls::FreeSpace {});
     window
         .spawn(cx, async move |cx| {
             // A disk that cannot be read is not called full: the download goes ahead.

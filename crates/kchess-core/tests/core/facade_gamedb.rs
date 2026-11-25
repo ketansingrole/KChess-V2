@@ -148,7 +148,7 @@ async fn a_file_is_imported_searched_and_read_through_the_core() {
     assert_eq!(status["databases"][0]["games"], 2);
     // The disk's free space, read when asked.
     let free = core
-        .call("gameDbFreeSpace", vec![])
+        .call("freeSpace", vec![])
         .await
         .expect("free space");
     assert!(free.as_u64().is_some_and(|free| free > 0), "{free}");

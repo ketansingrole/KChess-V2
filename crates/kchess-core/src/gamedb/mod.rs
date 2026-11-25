@@ -437,15 +437,6 @@ impl GameDbService {
         own::settle(&self.inner).await
     }
 
-    /// The bytes free on the disk the databases are on, when the system says.
-    pub async fn free_bytes(&self) -> Option<u64> {
-        let dir = self.inner.dir.clone();
-        tokio::task::spawn_blocking(move || crate::disk::free_bytes(&dir))
-            .await
-            .ok()
-            .flatten()
-    }
-
     pub async fn status(&self) -> Result<GameDbStatus> {
         let busy = self.inner.running().is_some();
         self.inner.sweep();

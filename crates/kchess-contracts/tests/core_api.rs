@@ -45,7 +45,7 @@ fn game_database_reads_are_help_a_live_game_withholds() {
         let method = core_api::method(name).expect("declared");
         assert_eq!(method.assist, Some(Assist::Lookups), "{name}");
     }
-    for name in ["gameDbStatus", "gameDbFreeSpace", "gameDbCancel"] {
+    for name in ["gameDbStatus", "gameDbCancel"] {
         assert_eq!(
             core_api::method(name).expect("declared").assist,
             None,

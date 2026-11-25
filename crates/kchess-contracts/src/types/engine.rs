@@ -13,6 +13,9 @@ pub struct EngineManaged {
     /// The release tag recorded when it was downloaded, e.g. `sf_17.1`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// The size of the downloaded executable on disk; 0 when none is.
+    #[serde(default)]
+    pub bytes: u64,
 }
 
 /// The engine that would run: ready when its executable is.

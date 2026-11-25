@@ -132,3 +132,26 @@ async fn the_owners_stop_ends_its_session() {
     assert_eq!(refused.message, "Voice input isn’t listening.");
     core.close().await;
 }
+
+/// The model a window listens with is not deleted under it; once it stops, it may be.
+#[tokio::test(flavor = "current_thread")]
+async fn the_speech_model_is_kept_while_a_window_listens() {
+    let dir = tempfile::tempdir().expect("data folder");
+    let core = open(&dir);
+    let a = core.connect(ClientInfo::app());
+    core.call_as(a, "voiceStart", vec![json!(["e four"]), json!(16000)])
+        .await
+        .expect("A starts");
+    let refused = core
+        .call_as(a, "voiceModelDelete", vec![])
+        .await
+        .expect_err("in use");
+    assert!(refused.message.contains("Turn voice input off"), "{}", refused.message);
+    assert!(kchess_core::voice::model_dir(dir.path()).exists());
+    core.call_as(a, "voiceStop", vec![]).await.expect("A stops");
+    core.call_as(a, "voiceModelDelete", vec![])
+        .await
+        .expect("deleted");
+    assert!(!kchess_core::voice::model_dir(dir.path()).exists());
+    core.close().await;
+}

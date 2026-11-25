@@ -516,6 +516,9 @@ core_api! {
         VoiceModelStatus = "voiceModelStatus" fn voice_model_status() -> crate::voice::Status;
         /// Downloads, verifies and unpacks the speech model, reporting `voicemodel:progress`.
         VoiceModelInstall = "voiceModelInstall" fn voice_model_install() -> ();
+        /// Deletes the downloaded speech model, refused while it downloads or voice input
+        /// listens; `voiceModelInstall` brings it back.
+        VoiceModelDelete = "voiceModelDelete" fn voice_model_delete() -> ();
     }
 
     /// The local library: studies, played games, drills, sessions and repertoire notes.
@@ -624,9 +627,6 @@ core_api! {
     /// withholds, as the opening explorer is.
     trait GameDbApi {
         GameDbStatus = "gameDbStatus" fn game_db_status() -> crate::types::GameDbStatus;
-        /// The bytes free on the disk the databases are on, read now; none when the system does
-        /// not say. A frontend asks before a download, to warn when it would fill the disk.
-        GameDbFreeSpace = "gameDbFreeSpace" fn game_db_free_space() -> Option<u64>;
         /// Reads the PGN file at `path` into the database `into`, or into a new one named `name`
         /// (the file's name when absent). Progress arrives as `gamedb:progress`; a failed or
         /// cancelled import leaves every database as it was.
@@ -706,6 +706,9 @@ core_api! {
     trait SystemApi {
         /// Data downloaded from Lichess per account, and what is stored locally.
         Usage = "usage" fn usage() -> UsageReport;
+        /// The bytes free on the disk the profile is on, read now; none when the system does not
+        /// say. A frontend asks before a download, to warn when it would fill the disk.
+        FreeSpace = "freeSpace" fn free_space() -> Option<u64>;
         #[writes(Usage)]
         ResetUsage = "resetUsage" fn reset_usage() -> ();
         /// The user's own app themes from the profile's themes folder, with a line per file that

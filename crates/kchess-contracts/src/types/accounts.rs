@@ -106,6 +106,7 @@ pub struct UsageReport {
     /// When counting started; absent when nothing has been counted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<f64>,
-    /// Size of the databases on disk.
+    /// Size of the profile's own database (games, studies, accounts) on disk; the puzzles and
+    /// game databases report theirs.
     pub db_bytes: u64,
 }
