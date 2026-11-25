@@ -608,9 +608,27 @@ fn moved_after_first_frame(app: &mut Harness, opening: &Opening, moved: &mut Vec
     moved.extend(moved_since(app, &first, &opening.name()));
 }
 
+/// The showcase account signed in, its games synced and Your games made from them. Your games
+/// is written in the background a little after the sync ends (`gamedb::own`'s `QUIET`); a page
+/// opened before it lands would show what it offers from it (Practice → Repertoire's From games)
+/// a frame later, on a slow machine only (macOS CI, 2026-11-25). Each page here is checked
+/// against its own loading, in a world that is not changing under it.
+fn showcase(cx: &mut gpui_kit::TestAppContext) -> (Harness, super::fake_lichess::Handle) {
+    let (mut app, lichess) = Harness::signed_in_showcase(cx);
+    app.wait_for_app("Your games", |cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .iter()
+            .any(|database| database.source == kchess_contracts::types::DatabaseSource::Own)
+    });
+    (app, lichess)
+}
+
 /// Open every page for the first time at `width`×`height`, its data loading as it shows.
 fn first_openings_hold_still(cx: &mut gpui_kit::TestAppContext, (width, height): (f32, f32)) {
-    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    let (mut app, _lichess) = showcase(cx);
     app.cx
         .simulate_window_resize(app.window, size(px(width), px(height)));
     app.settle();
@@ -670,7 +688,7 @@ fn reopenings_hold_still(
 
 #[gpui_kit::test]
 fn a_page_opens_laid_out_for_the_window_it_opens_in(cx: &mut gpui_kit::TestAppContext) {
-    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    let (mut app, _lichess) = showcase(cx);
     let moved = reopenings_hold_still(&mut app, &checked_openings(), [SIZES[0], SIZES[2]]);
     assert!(
         moved.is_empty(),
@@ -698,7 +716,7 @@ fn tab_row_height(app: &mut Harness, id: &'static str, count: usize) -> Pixels {
 
 #[gpui_kit::test]
 fn a_board_under_tabs_opens_sized_for_the_room_left_under_them(cx: &mut gpui_kit::TestAppContext) {
-    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    let (mut app, _lichess) = showcase(cx);
     let under_tabs: Vec<Opening> = checked_openings()
         .into_iter()
         .filter(|opening| matches!(opening.page, Page::Practice | Page::Puzzles))
@@ -759,7 +777,7 @@ fn page_tabs(app: &mut Harness) -> Vec<(ElementId, String)> {
 /// Open each tab of every page for the first time at `width`×`height`, its data loading as it
 /// shows.
 fn first_tabs_hold_still(cx: &mut gpui_kit::TestAppContext, (width, height): (f32, f32)) {
-    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    let (mut app, _lichess) = showcase(cx);
     app.cx
         .simulate_window_resize(app.window, size(px(width), px(height)));
     let mut moved = Vec::new();
@@ -832,7 +850,7 @@ fn nothing_notifies_while_drawing(
     (width, height): (f32, f32),
     settings: bool,
 ) {
-    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    let (mut app, _lichess) = showcase(cx);
     app.cx
         .simulate_window_resize(app.window, size(px(width), px(height)));
     app.with_window(|window, _| window.record_views_notified_while_drawing(true));
