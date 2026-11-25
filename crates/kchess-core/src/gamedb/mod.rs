@@ -30,6 +30,7 @@ use crate::store::Database;
 use crate::store::sql::{Lane, LaneMessages, Sql as _};
 use crate::tasks::lock;
 use kchess_contracts::CoreEvent;
+use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
     DatabaseInfo, DatabaseSource, GameDbImported, GameDbPage, GameDbPhase as Phase, GameDbProgress,
@@ -203,14 +204,14 @@ fn new_id(name: &str) -> String {
     format!("{stem}-{:02x}{:02x}{:02x}", suffix[0], suffix[1], suffix[2])
 }
 
-/// The name a file gives a database: its name without `.pgn` or `.pgn.zst`.
+/// The name a file gives a database: its name without `.pgn`, `.pgn.zst` or `.zip`.
 fn file_stem(path: &Path) -> String {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let lower = name.to_ascii_lowercase();
-    let stem = [".pgn.zst", ".pgn"]
+    let stem = [".pgn.zst", ".pgn.zip", ".zip", ".pgn"]
         .iter()
         .find_map(|ext| {
             lower
@@ -358,14 +359,14 @@ impl Inner {
     async fn run_import(
         &self,
         target: import::Target,
-        compressed: bool,
+        packing: PgnPacking,
         mut reporter: Reporter,
         open: impl FnOnce() -> Result<import::Source> + Send + 'static,
     ) -> Result<import::Count> {
         let dir = self.dir.clone();
         tokio::task::spawn_blocking(move || {
             let result = open().and_then(|source| {
-                import::run(source, compressed, &target, &dir, TREE_ROWS, &mut reporter)
+                import::run(source, packing, &target, &dir, TREE_ROWS, &mut reporter)
             });
             if let import::Target::New { file, .. } = &target
                 && result.is_ok()
@@ -479,21 +480,19 @@ impl GameDbService {
     pub async fn import(
         &self,
         path: String,
-        compressed: bool,
+        packing: PgnPacking,
         into: Option<String>,
         name: Option<String>,
         source: DatabaseSource,
     ) -> Result<GameDbImported> {
-        let result = self
-            .import_inner(path, compressed, into, name, source)
-            .await;
+        let result = self.import_inner(path, packing, into, name, source).await;
         self.inner.logged("import", result)
     }
 
     async fn import_inner(
         &self,
         path: String,
-        compressed: bool,
+        packing: PgnPacking,
         into: Option<String>,
         name: Option<String>,
         source: DatabaseSource,
@@ -527,7 +526,7 @@ impl GameDbService {
         let profile = self.inner.profile.clone();
         let outcome = self
             .inner
-            .run_import(target, compressed, reporter, move || {
+            .run_import(target, packing, reporter, move || {
                 import::Source::chosen(&path, &profile)
             })
             .await;
@@ -708,7 +707,14 @@ pub fn write_database(data_dir: &Path, name: &str, pgn: &str) -> Result<String> 
         attribution: None,
     };
     let source = import::Source::chosen(&path, data_dir)?;
-    import::run(source, false, &target, &dir, TREE_ROWS, &mut Quiet)?;
+    import::run(
+        source,
+        PgnPacking::Plain,
+        &target,
+        &dir,
+        TREE_ROWS,
+        &mut Quiet,
+    )?;
     Ok(id)
 }
 

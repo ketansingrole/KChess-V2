@@ -76,7 +76,7 @@ can add them as a friend, challenge them or watch their current game.
   The **Database** page lists a game database's games, searched by player, side, event, years,
   rating and result, a page at a time, and opens any on the analysis board; the analysis board's
   _Games with this position_ lists the games that reached its position, at any depth. A PGN
-  file dropped on the page is imported. _Master games_ downloads Lichess's broadcast archive
+  file, or a `.zip` of them (TWIC's weekly issues), dropped on the page or picked is imported. _Master games_ downloads Lichess's broadcast archive
   (over-the-board games since 2020, CC BY-SA 4.0, shown under its games) month by month, checking
   each month's digest; _Update master games_ brings in the months published since. _Player's
   games_ downloads any Lichess or Chess.com player's standard games (every game or the newest

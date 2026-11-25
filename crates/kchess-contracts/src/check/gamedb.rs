@@ -68,30 +68,50 @@ impl Validate for GameDbGameId {
     }
 }
 
-/// A PGN file chosen to import: an absolute path ending in `.pgn` or `.pgn.zst`. The core opens
-/// it itself (it may be gigabytes), and checks there that it is a readable file outside the
-/// profile.
+/// A PGN file chosen to import: an absolute path ending in `.pgn`, `.pgn.zst` or `.zip` (the PGN
+/// files it holds). The core opens it itself (it may be gigabytes), and checks there that it is a
+/// readable file outside the profile.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[serde(transparent)]
 pub struct PgnFilePath(pub String);
 
+/// How a chosen file holds its PGN text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PgnPacking {
+    /// The text itself.
+    Plain,
+    /// Zstandard-compressed (`.pgn.zst`).
+    Zstd,
+    /// A zip archive: every `.pgn` file in it (`.zip`).
+    Zip,
+}
+
 impl PgnFilePath {
-    /// Whether the file is zstd-compressed.
-    pub fn compressed(&self) -> bool {
-        self.0.to_ascii_lowercase().ends_with(".zst")
+    /// How the file holds its games, by its extension.
+    pub fn packing(&self) -> PgnPacking {
+        let lower = self.0.to_ascii_lowercase();
+        if lower.ends_with(".zst") {
+            PgnPacking::Zstd
+        } else if lower.ends_with(".zip") {
+            PgnPacking::Zip
+        } else {
+            PgnPacking::Plain
+        }
     }
 }
 
 impl Validate for PgnFilePath {
     fn validate(value: J) -> Result<Self, Refusal> {
-        const PATH: &str = "Choose a .pgn or .pgn.zst file.";
+        const PATH: &str = "Choose a .pgn, .pgn.zst or .zip file.";
         let path: String = decode(value, |_| Some(PATH))?;
         let lower = path.to_ascii_lowercase();
         ensure(
             std::path::Path::new(&path).is_absolute()
                 && path.len() <= 4096
                 && !path.contains('\0')
-                && (lower.ends_with(".pgn") || lower.ends_with(".pgn.zst")),
+                && [".pgn", ".pgn.zst", ".zip"]
+                    .iter()
+                    .any(|extension| lower.ends_with(extension)),
             Some(PATH),
             "",
             String::new,
@@ -283,8 +303,26 @@ mod tests {
         } else {
             "/g/a.pgn.zst"
         };
-        assert!(check::<PgnFilePath>(sent(json!(zst))).unwrap().compressed());
-        for bad in ["games/twic.pgn", "/games/twic.txt", ""] {
+        assert_eq!(
+            check::<PgnFilePath>(sent(json!(zst))).unwrap().packing(),
+            PgnPacking::Zstd
+        );
+        let zip = if cfg!(windows) {
+            "C:\\g\\twic1620g.ZIP"
+        } else {
+            "/g/twic1620g.ZIP"
+        };
+        assert_eq!(
+            check::<PgnFilePath>(sent(json!(zip))).unwrap().packing(),
+            PgnPacking::Zip
+        );
+        assert_eq!(
+            check::<PgnFilePath>(sent(json!(absolute)))
+                .unwrap()
+                .packing(),
+            PgnPacking::Plain
+        );
+        for bad in ["games/twic.pgn", "/games/twic.txt", "/games/twic.7z", ""] {
             assert!(check::<PgnFilePath>(sent(json!(bad))).is_err(), "{bad}");
         }
     }

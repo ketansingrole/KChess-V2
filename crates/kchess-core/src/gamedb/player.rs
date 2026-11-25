@@ -19,6 +19,7 @@ use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use super::{GameDbService, Reporter, failed, import, progress, schema};
+use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
     DatabaseSource, ExplorerSpeed, GameDbImported, GameDbPhase as Phase, GameSite, PlayerGames,
@@ -311,7 +312,7 @@ impl GameDbService {
             format!("{}:{}", request.site.as_str(), request.username),
         );
         let count = inner
-            .run_import(target, false, reporter, move || {
+            .run_import(target, PgnPacking::Plain, reporter, move || {
                 import::Source::downloaded(&path, &label)
             })
             .await?;

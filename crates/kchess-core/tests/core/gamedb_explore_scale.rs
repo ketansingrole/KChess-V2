@@ -33,7 +33,7 @@ async fn gamedb_explore_scale() {
         games
             .import(
                 file.clone(),
-                file.ends_with(".zst"),
+                kchess_contracts::check::PgnFilePath(file.clone()).packing(),
                 None,
                 Some("Scale".into()),
                 DatabaseSource::Imported,

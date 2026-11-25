@@ -36,6 +36,7 @@ use crate::store::own_games::{self, OwnGames};
 use crate::store::sql::Sql as _;
 use crate::tasks::lock;
 use kchess_contracts::CoreEvent;
+use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{DatabaseSource, ProfileArea, ProfileChange};
 
@@ -341,7 +342,7 @@ async fn build(
     let input = import::Input {
         reader: Cursor::new(Arc::clone(pgn)),
         total_bytes: pgn.len() as u64,
-        compressed: false,
+        packing: PgnPacking::Plain,
         label: Some(fingerprint.to_string()),
     };
     let dir = inner.dir.clone();

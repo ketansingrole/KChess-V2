@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,6 +21,7 @@ use super::deep::{self, DeepBuilder};
 use super::schema;
 use super::tree::{Stats, TreeBuilder};
 use crate::store::sql::{Sql as _, transaction};
+use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::DatabaseSource;
 use kchess_domain::gamedb::{self, Outcome, Stored};
@@ -46,12 +47,12 @@ pub enum Target {
     Replace { file: PathBuf },
 }
 
-/// What an import reads: a PGN text (zstd-compressed when `compressed`) of `total_bytes`
-/// bytes, recorded in the database as `label` (a file's name).
+/// What an import reads: a PGN text, held as `packing` says, of `total_bytes` bytes, recorded
+/// in the database as `label` (a file's name).
 pub struct Input<R> {
     pub reader: R,
     pub total_bytes: u64,
-    pub compressed: bool,
+    pub packing: PgnPacking,
     pub label: Option<String>,
 }
 
@@ -60,7 +61,7 @@ pub struct Input<R> {
 pub struct Count {
     pub games: u64,
     pub skipped: u64,
-    /// Bytes of the file read (compressed bytes for a `.zst`).
+    /// Bytes of the file read (compressed bytes for a `.zst` or `.zip`).
     pub bytes: u64,
     pub total_bytes: u64,
 }
@@ -74,18 +75,79 @@ pub trait Watch {
     fn cancelled(&self) -> bool;
 }
 
-/// A file's bytes, counted as they are read.
+/// A file's bytes, counted as they are read: how far into the file reading has come, which a
+/// zip's reader moves by seeking (to its directory at the end, then to each file in turn).
 struct Counted<R> {
     inner: R,
     read: Arc<AtomicU64>,
 }
 
 impl<R: Read> Read for Counted<R> {
-    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         let n = self.inner.read(out)?;
         self.read.fetch_add(n as u64, Ordering::Relaxed);
         Ok(n)
     }
+}
+
+impl<R: Seek> Seek for Counted<R> {
+    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+        let at = self.inner.seek(to)?;
+        self.read.store(at, Ordering::Relaxed);
+        Ok(at)
+    }
+}
+
+/// Whether a zip's entry named `name` is a PGN file to read: a `.pgn` that is not macOS's
+/// record of another file's attributes (`__MACOSX/`, `._name.pgn`).
+fn zipped_pgn(name: &str) -> bool {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    name.to_ascii_lowercase().ends_with(".pgn")
+        && !name.starts_with("__MACOSX/")
+        && !base.starts_with("._")
+}
+
+/// Every PGN file a zip archive holds, one after another, to `sink`, in the archive's order. A
+/// blank line ends each, so the last game of one never runs into the first of the next.
+fn unzip_pgn(
+    reader: impl Read + Seek,
+    mut sink: impl FnMut(&[u8]) -> io::Result<()>,
+) -> Result<()> {
+    let unreadable = |cause: zip::result::ZipError| {
+        if let zip::result::ZipError::UnsupportedArchive(why) = cause
+            && why == zip::result::ZipError::PASSWORD_REQUIRED
+        {
+            return CoreError::new("That .zip is password-protected.");
+        }
+        CoreError::wrap("That .zip could not be read", cause)
+    };
+    let stopped = |cause: io::Error| CoreError::wrap("That .zip could not be read", cause);
+    let mut archive = zip::ZipArchive::new(reader).map_err(unreadable)?;
+    let mut found = false;
+    let mut chunk = vec![0u8; 64 * 1024];
+    for index in 0..archive.len() {
+        let mut entry = {
+            let about = archive.by_index_data(index).map_err(unreadable)?;
+            let name = about.name().map_err(unreadable)?;
+            if about.is_dir() || !zipped_pgn(&name) {
+                continue;
+            }
+            archive.by_index(index).map_err(unreadable)?
+        };
+        found = true;
+        loop {
+            let n = entry.read(&mut chunk).map_err(stopped)?;
+            if n == 0 {
+                break;
+            }
+            sink(&chunk[..n]).map_err(stopped)?;
+        }
+        sink(b"\n\n").map_err(stopped)?;
+    }
+    if !found {
+        return Err(CoreError::new("That .zip holds no .pgn file."));
+    }
+    Ok(())
 }
 
 fn cancelled_error() -> CoreError {
@@ -111,7 +173,7 @@ impl Source {
         }
         let file = File::open(&real).map_err(unreadable)?;
         if !file.metadata().map_err(unreadable)?.is_file() {
-            return Err(CoreError::new("Choose a .pgn or .pgn.zst file."));
+            return Err(CoreError::new("Choose a .pgn, .pgn.zst or .zip file."));
         }
         let name = path
             .file_name()
@@ -306,7 +368,7 @@ fn index_game(
 /// tree rows held in memory.
 pub fn run(
     source: Source,
-    compressed: bool,
+    packing: PgnPacking,
     target: &Target,
     dir: &Path,
     capacity: usize,
@@ -320,7 +382,7 @@ pub fn run(
     let input = Input {
         reader: file,
         total_bytes,
-        compressed,
+        packing,
         label: file_name,
     };
     read_into(input, target, dir, capacity, watch)
@@ -328,7 +390,7 @@ pub fn run(
 
 /// The games `input` reads into `target`, as `run` reads a file's: for games the core holds
 /// itself rather than in a file ("Your games", `own`).
-pub fn read_into<R: Read + Send + 'static>(
+pub fn read_into<R: Read + Seek + Send + 'static>(
     input: Input<R>,
     target: &Target,
     dir: &Path,
@@ -338,7 +400,7 @@ pub fn read_into<R: Read + Send + 'static>(
     let Input {
         reader,
         total_bytes,
-        compressed,
+        packing,
         label,
     } = input;
     let read = Arc::new(AtomicU64::new(0));
@@ -384,15 +446,21 @@ pub fn read_into<R: Read + Send + 'static>(
         )
         .sql()?;
         let import = db.last_insert_rowid();
-        let count = if compressed {
+        let count = if packing != PgnPacking::Plain {
             let (send, receive) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
             let decoder = std::thread::Builder::new()
-                .name("kchess-gamedb-zstd".into())
+                .name("kchess-gamedb-decode".into())
                 .spawn(move || {
-                    crate::zst::decode(counted, |chunk| {
+                    let sink = |chunk: &[u8]| {
                         send.blocking_send(chunk.to_vec())
-                            .map_err(|_| std::io::Error::other("import stopped"))
-                    })
+                            .map_err(|_| io::Error::other("import stopped"))
+                    };
+                    match packing {
+                        PgnPacking::Zip => unzip_pgn(counted, sink),
+                        _ => crate::zst::decode(counted, sink).map_err(|cause| {
+                            CoreError::wrap("That file is not a readable .pgn.zst", cause)
+                        }),
+                    }
                 })
                 .map_err(|e| CoreError::wrap("Could not start the import", e))?;
             let input = BufReader::with_capacity(1 << 20, crate::zst::ChannelReader::new(receive));
@@ -414,11 +482,7 @@ pub fn read_into<R: Read + Send + 'static>(
                 .map_err(|_| CoreError::new("The import stopped. Try again."))?;
             match (games, decoded) {
                 (Ok(games), Ok(())) => Ok(games),
-                (Err(error), _) => Err(error),
-                (Ok(_), Err(cause)) => Err(CoreError::wrap(
-                    "That file is not a readable .pgn.zst",
-                    cause,
-                )),
+                (Err(error), _) | (Ok(_), Err(error)) => Err(error),
             }?
         } else {
             let input = BufReader::with_capacity(1 << 20, counted);

@@ -1,8 +1,8 @@
 //! The Database page: the games of a game database on this computer, searched by player, side,
 //! event, years, rating, result and position, a page at a time, newest, oldest or best rated
-//! first; each opened on the analysis board. PGN files are imported here (picked or dropped),
-//! a player's games downloaded from Lichess or Chess.com to prepare against them (`player`), and
-//! a database deleted.
+//! first; each opened on the analysis board. PGN files, or zips of them, are imported here
+//! (picked or dropped), a player's games downloaded from Lichess or Chess.com to prepare against
+//! them (`player`), and a database deleted.
 
 // A failure is an answer, never a panic: no `unwrap` or `expect` outside tests (`check`).
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]

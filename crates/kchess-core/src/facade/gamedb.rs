@@ -21,11 +21,11 @@ impl GameDbApi for Core {
         into: Option<DatabaseId>,
         name: Option<DatabaseName>,
     ) -> Result<GameDbImported> {
-        let compressed = path.compressed();
+        let packing = path.packing();
         self.gamedb
             .import(
                 path.0,
-                compressed,
+                packing,
                 into.map(|id| id.0),
                 name.map(|name| name.0),
                 DatabaseSource::Imported,

@@ -102,7 +102,7 @@ async fn gamedb_scale() {
     let imported = games
         .import(
             file.clone(),
-            file.ends_with(".zst"),
+            kchess_contracts::check::PgnFilePath(file.clone()).packing(),
             None,
             Some("Scale".into()),
             DatabaseSource::Imported,

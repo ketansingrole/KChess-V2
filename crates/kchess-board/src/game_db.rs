@@ -129,7 +129,8 @@ impl GameDb {
         self.error = Some(crate::loading::failure("game-db", cause));
     }
 
-    /// Imports the PGN file at `path` (`.pgn` or `.pgn.zst`) into a new database named after it.
+    /// Imports the PGN file at `path` (`.pgn`, `.pgn.zst`, or a `.zip` of them) into a new
+    /// database named after it.
     pub fn import(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let import = cx.global::<AppCore>().request(calls::GameDbImport {
             path: PgnFilePath(path.to_string_lossy().into_owned()),
@@ -442,7 +443,11 @@ mod tests {
         });
         assert_eq!(
             db,
-            (Some("Choose a .pgn or .pgn.zst file.".into()), false, 1)
+            (
+                Some("Choose a .pgn, .pgn.zst or .zip file.".into()),
+                false,
+                1
+            )
         );
     }
 }
