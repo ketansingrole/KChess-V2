@@ -89,7 +89,8 @@ pub fn parse(words: &[String]) -> Result<Db, String> {
                     other => return Err(format!("db import does not take {other}.")),
                 }
             }
-            let path = path.ok_or("db import needs a .pgn, .pgn.zst, .zip or .7z file.")?;
+            let path =
+                path.ok_or("db import needs a .pgn, .pgn.zst, .pgn.bz2, .zip or .7z file.")?;
             let path = absolute(std::path::Path::new(&path))
                 .to_string_lossy()
                 .into_owned();

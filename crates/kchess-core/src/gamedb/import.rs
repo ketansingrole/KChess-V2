@@ -347,6 +347,21 @@ fn un7z_pgn(
         .map_err(unreadable)
 }
 
+/// The text of a `.pgn.bz2`, to `sink`: every bzip2 stream of it, one after another, as
+/// parallel compressors (`pbzip2`, `lbzip2`) write one stream per block of the text.
+fn bunzip_pgn(reader: impl Read, mut sink: impl FnMut(&[u8]) -> io::Result<()>) -> Result<()> {
+    let unreadable = |cause| CoreError::wrap("That file is not a readable .pgn.bz2", cause);
+    let mut decoder = bzip2::read::MultiBzDecoder::new(BufReader::new(reader));
+    let mut chunk = vec![0u8; 64 * 1024];
+    loop {
+        let n = decoder.read(&mut chunk).map_err(unreadable)?;
+        if n == 0 {
+            return Ok(());
+        }
+        sink(&chunk[..n]).map_err(unreadable)?;
+    }
+}
+
 fn cancelled_error() -> CoreError {
     CoreError::new("Import cancelled.")
 }
@@ -371,7 +386,9 @@ impl Source {
         }
         let file = File::open(&real).map_err(unreadable)?;
         if !file.metadata().map_err(unreadable)?.is_file() {
-            return Err(CoreError::new("Choose a .pgn, .pgn.zst, .zip or .7z file."));
+            return Err(CoreError::new(
+                "Choose a .pgn, .pgn.zst, .pgn.bz2, .zip or .7z file.",
+            ));
         }
         let name = path
             .file_name()
@@ -675,6 +692,7 @@ pub fn read_into<R: Read + Seek + Send + 'static>(
                     match packing {
                         PgnPacking::Zip => unzip_pgn(counted, wanted, sink),
                         PgnPacking::SevenZip => un7z_pgn(counted, wanted, sink),
+                        PgnPacking::Bzip2 => bunzip_pgn(counted, sink),
                         _ => crate::zst::decode(counted, sink).map_err(|cause| {
                             CoreError::wrap("That file is not a readable .pgn.zst", cause)
                         }),

@@ -484,7 +484,7 @@ mod tests {
         assert_eq!(
             db,
             (
-                Some("Choose a .pgn, .pgn.zst, .zip or .7z file.".into()),
+                Some("Choose a .pgn, .pgn.zst, .pgn.bz2, .zip or .7z file.".into()),
                 false,
                 1
             )

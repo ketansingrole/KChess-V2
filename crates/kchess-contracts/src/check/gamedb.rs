@@ -87,6 +87,8 @@ pub enum PgnPacking {
     Zip,
     /// A 7-Zip archive: every `.pgn` file in it (`.7z`).
     SevenZip,
+    /// bzip2-compressed (`.pgn.bz2`, as FICS packs its games), of one or more streams.
+    Bzip2,
 }
 
 impl PgnFilePath {
@@ -99,6 +101,8 @@ impl PgnFilePath {
             PgnPacking::Zip
         } else if lower.ends_with(".7z") {
             PgnPacking::SevenZip
+        } else if lower.ends_with(".bz2") {
+            PgnPacking::Bzip2
         } else {
             PgnPacking::Plain
         }
@@ -107,14 +111,14 @@ impl PgnFilePath {
 
 impl Validate for PgnFilePath {
     fn validate(value: J) -> Result<Self, Refusal> {
-        const PATH: &str = "Choose a .pgn, .pgn.zst, .zip or .7z file.";
+        const PATH: &str = "Choose a .pgn, .pgn.zst, .pgn.bz2, .zip or .7z file.";
         let path: String = decode(value, |_| Some(PATH))?;
         let lower = path.to_ascii_lowercase();
         ensure(
             std::path::Path::new(&path).is_absolute()
                 && path.len() <= 4096
                 && !path.contains('\0')
-                && [".pgn", ".pgn.zst", ".zip", ".7z"]
+                && [".pgn", ".pgn.zst", ".pgn.bz2", ".zip", ".7z"]
                     .iter()
                     .any(|extension| lower.ends_with(extension)),
             Some(PATH),
@@ -403,7 +407,22 @@ mod tests {
             check::<PgnFilePath>(sent(json!(seven))).unwrap().packing(),
             PgnPacking::SevenZip
         );
-        for bad in ["games/twic.pgn", "/games/twic.txt", "/games/twic.rar", ""] {
+        let fics = if cfg!(windows) {
+            "C:\\g\\ficsgamesdb_2024_standard2000_nomovetimes_1.PGN.BZ2"
+        } else {
+            "/g/ficsgamesdb_2024_standard2000_nomovetimes_1.PGN.BZ2"
+        };
+        assert_eq!(
+            check::<PgnFilePath>(sent(json!(fics))).unwrap().packing(),
+            PgnPacking::Bzip2
+        );
+        for bad in [
+            "games/twic.pgn",
+            "/games/twic.txt",
+            "/games/twic.rar",
+            "/games/twic.tar.bz2",
+            "",
+        ] {
             assert!(check::<PgnFilePath>(sent(json!(bad))).is_err(), "{bad}");
         }
     }

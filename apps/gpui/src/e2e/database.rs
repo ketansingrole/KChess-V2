@@ -148,6 +148,37 @@ fn a_pgn_file_dropped_on_the_page_is_imported(cx: &mut gpui_kit::TestAppContext)
     app.find("database-delete");
 }
 
+/// A `.pgn.bz2`, as FICS packs its games, dropped on the Database page is imported, named
+/// after the file.
+#[gpui_kit::test]
+fn a_bzip2_pgn_file_dropped_on_the_page_is_imported(cx: &mut gpui_kit::TestAppContext) {
+    use std::io::Write as _;
+    let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::fast());
+    encoder.write_all(GAMES.as_bytes()).expect("packs");
+    let packed = encoder.finish().expect("packed");
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    app.find("gamedb-import");
+    let _folder = app.drop_file(
+        "ficsgamesdb_2024_standard2000_nomovetimes_1.pgn.bz2",
+        &packed,
+    );
+    wait_for_listed(
+        &mut app,
+        "the dropped file's games",
+        &[GUKESH_CARLSEN, CARLSEN_GUKESH, SMITH_JONES],
+    );
+    app.wait_for_app("its database, named after the file", |cx| {
+        let db = cx
+            .global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx);
+        db.databases()
+            .iter()
+            .any(|info| info.name == "ficsgamesdb_2024_standard2000_nomovetimes_1")
+    });
+}
+
 /// A `.zip` or a `.7z` of PGN files dropped on the Database page is imported as one database,
 /// named after the archive, with the games of every PGN file in it.
 #[gpui_kit::test]
