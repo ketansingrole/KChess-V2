@@ -23,8 +23,9 @@ KChess is now a chess database too. Keep millions of games on your computer, fro
 - More → Opening report shows how games went from the position, its main lines and its strongest games.
 - The analysis board marks N on the first move of your game that no game in your databases played, and shows what was played there instead.
 - A game's menu → About opens a report on either player: how they score with each colour, their openings, their rating over time and their best wins.
+- A game's menu → Event table shows the tournament it was played in: who finished where, with tiebreaks and performance ratings, and for up to 16 players each one's result against every other. Click a result to open that game.
 - Practice → Repertoire → Check against databases looks up every move of your repertoire in your databases and lists the ones worth a look: moves no game played, moves few players chose, and moves that scored well below the usual choice.
-- More filters on the Database page finds games by length and time control, by an ending they reach, like rook against bishop (R vs B), or by a pawn structure, like an isolated queen pawn.
+- More filters on the Database page finds games by length and time control, by an ending they reach, like rook against bishop (R vs B), by a pawn structure, like an isolated queen pawn, or by pieces kept on squares, like a knight on d5 against a pawn on e6 (Nd5 vs e6).
 - You can copy games into another database, save them as a PGN file or delete them, one at a time or every game a search finds, and save a game from the analysis board into any database.
 - Tidy up removes games that came in twice and merges the spellings of one player's name, like "Carlsen, M" and "Carlsen, Magnus".
 - The endgame tablebases download in Settings → Storage, so the analysis board shows how any position with up to five pieces ends, with no connection.

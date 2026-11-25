@@ -33,7 +33,7 @@ pub enum Selection {
     /// The games a search listed, by id.
     Games(Vec<u64>),
     /// Every game a search of the database finds, whatever its page.
-    Search(GameDbQuery),
+    Search(Box<GameDbQuery>),
     /// Every game that copies an earlier one (`duplicates`).
     Duplicates,
 }

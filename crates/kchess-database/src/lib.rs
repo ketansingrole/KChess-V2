@@ -14,6 +14,7 @@ use kchess_app::{core, loading, prefs};
 use kchess_board::{game_db, live_game, widgets};
 use kchess_ui::theme;
 
+mod event;
 mod lichess;
 mod manage;
 mod player;
@@ -39,7 +40,7 @@ use kchess_contracts::types::{
     DatabaseInfo, DatabaseSource, ExplorerSpeed, GameDbQuery, GameDbResult, GameDbRow, GameDbSide,
     GameDbSort, GameDbStructure,
 };
-use kchess_domain::gamedb::patterns::Material;
+use kchess_domain::gamedb::patterns::{Material, Placement};
 use kchess_nav::page::{ActionInfo, Page, PageAction, PageView};
 use kchess_nav::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use kchess_ui::icon;
@@ -149,6 +150,7 @@ pub struct DatabasePage {
     max_moves_input: Entity<InputState>,
     speed_select: Entity<SelectState<Vec<Choice>>>,
     material_input: Entity<InputState>,
+    pieces_input: Entity<InputState>,
     structure_select: Entity<SelectState<Vec<Choice>>>,
     speed: Option<ExplorerSpeed>,
     structure: Option<GameDbStructure>,
@@ -231,6 +233,12 @@ fn material(text: &str) -> Option<String> {
     Material::parse(text).map(|_| text.trim().to_string())
 }
 
+/// Pieces typed in their field, once they read as each side's ("Nd5 vs e6"): until then, as
+/// material half typed, they filter nothing.
+fn pieces(text: &str) -> Option<String> {
+    Placement::parse(text).map(|_| text.trim().to_string())
+}
+
 /// A year typed in a year field; anything else is no year.
 fn year(text: &str) -> Option<i32> {
     let text = text.trim();
@@ -281,6 +289,7 @@ impl DatabasePage {
         let min_moves_input = field("Min moves", window, cx);
         let max_moves_input = field("Max moves", window, cx);
         let material_input = field("Material, e.g. R vs B", window, cx);
+        let pieces_input = field("Pieces, e.g. Nd5 vs e6", window, cx);
         let mut subscriptions = vec![
             cx.subscribe(
                 &database_select,
@@ -362,6 +371,7 @@ impl DatabasePage {
             &min_moves_input,
             &max_moves_input,
             &material_input,
+            &pieces_input,
         ] {
             subscriptions.push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
                 // Typing keeps the last answer's games until the next one comes, where a choice
@@ -423,6 +433,7 @@ impl DatabasePage {
             max_moves_input,
             speed_select,
             material_input,
+            pieces_input,
             structure_select,
             speed: None,
             structure: None,
@@ -523,6 +534,7 @@ impl DatabasePage {
             speed: self.speed,
             material: Self::text(&self.material_input, cx).and_then(|text| material(&text)),
             structure: self.structure,
+            pieces: Self::text(&self.pieces_input, cx).and_then(|text| pieces(&text)),
             sort: Some(self.sort),
             offset: u32::try_from(self.page * self.page_size).unwrap_or(u32::MAX),
             limit: u32::try_from(self.page_size).unwrap_or(20),
@@ -551,6 +563,7 @@ impl DatabasePage {
             &self.min_moves_input,
             &self.max_moves_input,
             &self.material_input,
+            &self.pieces_input,
         ]
         .iter()
         .any(|input| Self::text(input, cx).is_some())
@@ -631,6 +644,7 @@ impl DatabasePage {
             &self.min_moves_input,
             &self.max_moves_input,
             &self.material_input,
+            &self.pieces_input,
         ] {
             input.update(cx, |input, cx| input.set_value("", window, cx));
         }
@@ -824,6 +838,18 @@ impl DatabasePage {
     }
 
     /// The report on the player `name` of the database shown.
+    fn event_table(
+        &mut self,
+        game: u64,
+        event: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(database) = self.database.clone() {
+            event::open(cx.entity().downgrade(), database, game, event, window, cx);
+        }
+    }
+
     fn about(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(database) = self.database.clone() {
             report::open(cx.entity().downgrade(), database, name, window, cx);
@@ -933,7 +959,8 @@ impl DatabasePage {
                     .child(field(&self.max_moves_input, 96., "Max moves"))
                     .child(select(&self.speed_select, 150., "Time control"))
                     .child(field(&self.material_input, 180., "Material"))
-                    .child(select(&self.structure_select, 170., "Pawn structure")),
+                    .child(select(&self.structure_select, 170., "Pawn structure"))
+                    .child(field(&self.pieces_input, 180., "Pieces")),
             )
         })
     }
@@ -1084,6 +1111,26 @@ impl GamesMenu {
                     }),
             )
         });
+        let event = self
+            .game
+            .as_ref()
+            .and_then(|game| Some((game.id, game.event.clone()?)))
+            .filter(|(_, event)| !event.is_empty() && event != "?");
+        let menu = match event {
+            Some((game, event)) => {
+                let page = self.page.clone();
+                menu.item(
+                    PopupMenuItem::new("Event table")
+                        .icon(icon("trophy"))
+                        .on_click(move |_, window, cx| {
+                            let event = event.clone();
+                            page.update(cx, |page, cx| page.event_table(game, event, window, cx))
+                                .ok();
+                        }),
+                )
+            }
+            None => menu,
+        };
         let menu = if self.game.is_some() {
             menu.separator()
         } else {
@@ -1559,16 +1606,35 @@ impl PageView for DatabasePage {
 /// The Database page listing the games that reached `fen` (the analysis board's position).
 /// Opens game `row` of database `database` on the analysis board.
 pub fn open_game(database: String, row: &GameDbRow, window: &mut Window, cx: &mut App) {
+    open_game_by_id(
+        database,
+        row.id,
+        row.white.clone(),
+        row.black.clone(),
+        window,
+        cx,
+    );
+}
+
+/// Opens game `game` of database `database`, between `white` and `black`, on the analysis board.
+fn open_game_by_id(
+    database: String,
+    game: u64,
+    white: String,
+    black: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let request = cx.global::<AppCore>().request(calls::GameDbGame {
         database: DatabaseId(database.clone()),
-        game: GameDbGameId(row.id),
+        game: GameDbGameId(game),
     });
     let origin = GameOrigin {
-        white: Some(row.white.clone()),
-        black: Some(row.black.clone()),
+        white: Some(white),
+        black: Some(black),
         database: Some(DatabaseGame {
             database: database.clone(),
-            game: row.id,
+            game,
         }),
         ..GameOrigin::default()
     };
@@ -1602,6 +1668,13 @@ pub fn open_game(database: String, row: &GameDbRow, window: &mut Window, cx: &mu
 pub fn games_at(fen: String, window: &mut Window, cx: &mut App) {
     kchess_nav::shell::show::<DatabasePage>(window, cx, move |page, window, cx| {
         page.show_position(fen, window, cx)
+    });
+}
+
+/// The Database page with the table of game `game`'s event `event` from database `database`.
+pub fn event_table(database: String, game: u64, event: String, window: &mut Window, cx: &mut App) {
+    kchess_nav::shell::show::<DatabasePage>(window, cx, move |_, window, cx| {
+        event::open(cx.entity().downgrade(), database, game, event, window, cx)
     });
 }
 

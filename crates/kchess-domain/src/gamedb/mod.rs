@@ -19,6 +19,7 @@ use crate::rules;
 pub mod names;
 mod notes;
 pub mod patterns;
+pub mod standings;
 
 /// The first byte of a game's `extra` when it holds the notes `notes::pack` wrote.
 const EXTRA_NOTES: u8 = 1;

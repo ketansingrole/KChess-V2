@@ -230,6 +230,61 @@ pub struct GameDbPlayerReport {
     pub best: Vec<GameDbRow>,
 }
 
+/// One edition of an event in a database (`gameDbEvent`): the games under its name that were
+/// played around one game's date, with each player's standing and results.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbEventReport {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub site: Option<String>,
+    /// The first and last games' dates as their headers give them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_date: Option<String>,
+    pub games: u64,
+    /// The standings: the most points first, then Sonneborn–Berger, then the name.
+    pub players: Vec<GameDbEventPlayer>,
+}
+
+/// A player's standing in an event.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbEventPlayer {
+    pub name: String,
+    /// Their rating in the first of the event's games that gives one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<u32>,
+    /// Points in halves: 13 is 6½.
+    pub half_points: u32,
+    pub wins: u32,
+    pub draws: u32,
+    pub losses: u32,
+    /// Sonneborn–Berger in quarter points: the points of each opponent beaten, and half those of
+    /// each drawn.
+    pub tiebreak_quarters: u32,
+    /// The FIDE performance rating over their rated opponents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub performance: Option<u32>,
+    /// Their games with a result, in date and round order.
+    pub results: Vec<GameDbEventResult>,
+}
+
+/// One of a player's games in an event.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbEventResult {
+    pub game: u64,
+    /// The opponent's place in the standings, from 0.
+    pub opponent: u32,
+    pub white: bool,
+    /// The player's points in halves: 2 a win, 1 a draw, 0 a loss.
+    pub half_points: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub round: Option<String>,
+}
+
 /// A player's name in a database, with the games it is in.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -404,6 +459,10 @@ pub struct GameDbQuery {
     /// The games that reach this pawn structure and keep it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structure: Option<GameDbStructure>,
+    /// The games that put these pieces on these squares and keep them there ("Nd5 vs e6": one
+    /// side's pieces against the other's), either colour on either side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pieces: Option<String>,
     /// Newest first when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<GameDbSort>,

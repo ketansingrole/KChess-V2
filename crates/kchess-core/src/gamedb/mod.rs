@@ -9,6 +9,7 @@
 
 pub mod deep;
 pub mod edit;
+pub mod event;
 pub mod explore;
 pub mod import;
 pub mod lichess;
@@ -42,9 +43,9 @@ use kchess_contracts::CoreEvent;
 use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    DatabaseInfo, DatabaseSource, GameDbImported, GameDbNameGroup, GameDbNovelty,
-    GameDbOpeningReport, GameDbPage, GameDbPhase as Phase, GameDbPlayerReport, GameDbProgress,
-    GameDbQuery, GameDbSaved, GameDbStatus, LookupOptions, PositionLookup,
+    DatabaseInfo, DatabaseSource, GameDbEventReport, GameDbImported, GameDbNameGroup,
+    GameDbNovelty, GameDbOpeningReport, GameDbPage, GameDbPhase as Phase, GameDbPlayerReport,
+    GameDbProgress, GameDbQuery, GameDbSaved, GameDbStatus, LookupOptions, PositionLookup,
 };
 use kchess_domain::gamedb;
 
@@ -792,6 +793,13 @@ impl GameDbService {
         let lane = self.inner.reader(id)?;
         let result = lane.run(move |db| report::player(db, &name)).await;
         self.inner.logged("player report", result)
+    }
+
+    /// The edition of game `game`'s event in database `id`, with its standings.
+    pub async fn event_report(&self, id: &str, game: u64) -> Result<GameDbEventReport> {
+        let lane = self.inner.reader(id)?;
+        let result = lane.run(move |db| event::report(db, game)).await;
+        self.inner.logged("event report", result)
     }
 
     /// The names of database `id` that are likely one player's.
