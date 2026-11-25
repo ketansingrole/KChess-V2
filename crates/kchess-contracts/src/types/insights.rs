@@ -59,6 +59,10 @@ pub struct InsightsReport {
     /// How the endgames the tablebases decide went; none for a variant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endgames: Option<EndgameReport>,
+    /// How games went with each pawn structure, the player's and the opponent's; none for a
+    /// variant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structures: Option<StructureReport>,
     /// The variants other than standard the account has finished games in.
     pub variants: Vec<Variant>,
 }
@@ -108,6 +112,24 @@ pub struct EndgameRecord {
     /// The positions (FEN) where a move of the player's then let the win or the draw go, as
     /// Your endgames lists them.
     pub let_go: Vec<String>,
+}
+
+/// The pawn structures the games reached and kept, as a Database search finds them.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct StructureReport {
+    /// The games read, the newest first.
+    pub games: i64,
+    /// Each structure the player had, most games first.
+    pub yours: Vec<StructureRecord>,
+    /// Each structure the player played against, most games first.
+    pub theirs: Vec<StructureRecord>,
+}
+
+/// One pawn structure and how its games ended for the player.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StructureRecord {
+    pub structure: GameDbStructure,
+    pub record: GameRecord,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

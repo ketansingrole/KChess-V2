@@ -1466,3 +1466,87 @@ fn a_repertoire_is_checked_against_the_databases(cx: &mut gpui_kit::TestAppConte
     app.find("tree-e2e4 e7e5");
     wait_for_chapter(&mut app, &id, "1. e4 c5 ( 1... e5 )");
 }
+
+/// Insights → Your pawn structures: the synced game where you kept an isolated queen pawn is its
+/// line, which opens Your games on the Database page searched for your games with that
+/// structure; the game your opponent had it in is Their pawn structures', and the game where
+/// it went at once is neither's.
+#[gpui_kit::test]
+fn an_insights_structure_opens_its_games(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::set_up;
+    use crate::pages::insights::InsightsPage;
+    const ISOLATED: &str = "r1bq1rk1/pp2bppp/2n1pn2/8/3P4/2NB1N2/PP3PPP/R1BQ1RK1 w - - 0 1";
+    const TRADED: &str = "r1bq1rk1/pp2bppp/2n2n2/4p3/3P4/2NB1N2/PP3PPP/R1BQ1RK1 w - - 0 1";
+    let mut app = Harness::start(cx);
+    let _lichess = app.connect_with("Isolani", false, |session| {
+        session.synced = vec![
+            set_up(
+                "Yours001",
+                "Isolani",
+                true,
+                ISOLATED,
+                "Re1 Nb4 Bb1 b6",
+                Some("white"),
+            ),
+            set_up(
+                "Theirs01",
+                "Isolani",
+                false,
+                ISOLATED,
+                "Re1 Nb4 Bb1 b6",
+                None,
+            ),
+            set_up(
+                "Traded01",
+                "Isolani",
+                true,
+                TRADED,
+                "dxe5 Nxe5 Nxe5 Qd4 Re1",
+                Some("black"),
+            ),
+        ];
+    });
+    app.wait_for_app("Your games", |cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .iter()
+            .any(|database| database.source == kchess_contracts::types::DatabaseSource::Own)
+    });
+    app.open("Insights");
+    app.wait_for("the synced games' report", |_, cx| {
+        crate::shell::view::<InsightsPage>(cx).is_some_and(|page| {
+            let page = page.read(cx);
+            page.settled() && page.report_total() == Some(3.)
+        })
+    });
+    assert_eq!(
+        app.find(("insights-structure-yours", 0usize)).label(),
+        Some("Isolated queen pawn")
+    );
+    assert_eq!(
+        app.find(("insights-structure-theirs", 0usize)).label(),
+        Some("Isolated queen pawn")
+    );
+    let more = app.with_window(|window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find(("insights-structure-yours", 1usize))
+            .is_some()
+    });
+    assert!(!more, "the traded pawn is no structure");
+    app.click(("insights-structure-yours", 0usize));
+    app.wait_for_page(crate::pages::Page::Database);
+    wait_for_listed(
+        &mut app,
+        "Isolani's games with an isolated queen pawn",
+        &["Isolani against Bob, 1-0", "Bob against Isolani, 1/2-1/2"],
+    );
+    app.wait_for("the structure as the filter", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .try_find_by_label("Pawn structure")
+            .is_some_and(|select| select.value() == Some("Isolated queen pawn"))
+    });
+}

@@ -462,6 +462,32 @@ union!(#[doc = "A pawn structure a deep search looks for, of either colour."] Ga
     Stonewall = "stonewall",
 });
 
+impl From<GameDbStructure> for kchess_domain::gamedb::patterns::Structure {
+    fn from(structure: GameDbStructure) -> Self {
+        use kchess_domain::gamedb::patterns::Structure;
+        match structure {
+            GameDbStructure::IsolatedQueenPawn => Structure::IsolatedQueenPawn,
+            GameDbStructure::HangingPawns => Structure::HangingPawns,
+            GameDbStructure::Carlsbad => Structure::Carlsbad,
+            GameDbStructure::MaroczyBind => Structure::MaroczyBind,
+            GameDbStructure::Stonewall => Structure::Stonewall,
+        }
+    }
+}
+
+impl From<kchess_domain::gamedb::patterns::Structure> for GameDbStructure {
+    fn from(structure: kchess_domain::gamedb::patterns::Structure) -> Self {
+        use kchess_domain::gamedb::patterns::Structure;
+        match structure {
+            Structure::IsolatedQueenPawn => GameDbStructure::IsolatedQueenPawn,
+            Structure::HangingPawns => GameDbStructure::HangingPawns,
+            Structure::Carlsbad => GameDbStructure::Carlsbad,
+            Structure::MaroczyBind => GameDbStructure::MaroczyBind,
+            Structure::Stonewall => GameDbStructure::Stonewall,
+        }
+    }
+}
+
 /// A search of one database: every filter given must match.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]

@@ -1969,7 +1969,7 @@ fn repertoire_opponent() {
 }
 
 /// Insights with the showcase account's games and a few endgames from set-up positions: won and
-/// drawn ones by their pieces, in both appearances:
+/// drawn ones by their pieces, and the pawn structures each side had, in both appearances:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::insights_endgames -- --ignored`
 /// writes `<dir>/insights-endgames-<appearance>.png`.
 #[test]
@@ -1984,6 +1984,8 @@ fn insights_endgames() {
     const ROOK: &str = "8/8/8/8/8/8/1k6/R3K3 w - - 0 1";
     const QUEEN: &str = "8/8/8/8/8/2k5/8/1Q2K3 w - - 0 1";
     const HELD: &str = "8/8/8/8/8/8/kR6/4K3 b - - 0 1";
+    const ISOLATED: &str = "r1bq1rk1/pp2bppp/2n1pn2/8/3P4/2NB1N2/PP3PPP/R1BQ1RK1 w - - 0 1";
+    const CARLSBAD: &str = "r1bq1rk1/pp2bppp/2p2n2/3p4/3P4/2NBPN2/PP3PPP/R2Q1RK1 w - - 0 1";
     let me = "Rattiestword5";
     let synced = || {
         vec![
@@ -1994,6 +1996,23 @@ fn insights_endgames() {
             set_up("Queen002", me, true, QUEEN, "Qb8 Kc2", Some("white")),
             set_up("Held0001", me, false, HELD, "Kxb2", None),
             set_up("Held0002", me, false, HELD, "Ka3 Rb8", Some("white")),
+            set_up(
+                "Isolani1",
+                me,
+                true,
+                ISOLATED,
+                "Re1 Nb4 Bb1 b6",
+                Some("white"),
+            ),
+            set_up(
+                "Isolani2",
+                me,
+                true,
+                ISOLATED,
+                "Re1 Nb4 Bb1 b6",
+                Some("black"),
+            ),
+            set_up("Carlsbd1", me, false, CARLSBAD, "Qc2 Re8 Rab1 Bd6", None),
         ]
     };
     for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {

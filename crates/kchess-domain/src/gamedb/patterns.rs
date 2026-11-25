@@ -5,7 +5,7 @@
 //! capture made and taken back does not reach one), or holds when the game ends.
 
 use shakmaty::variant::VariantPosition;
-use shakmaty::{Bitboard, Board, Color, File, Position as _, Rank, Role, Square};
+use shakmaty::{Bitboard, Board, Color, File, Position, Rank, Role, Square};
 
 /// The plies a balance or a structure must last.
 pub const HOLD: usize = 4;
@@ -118,6 +118,14 @@ fn at(color: Color, file: File, rank: Rank) -> Square {
 }
 
 impl Structure {
+    pub const ALL: [Structure; 5] = [
+        Structure::IsolatedQueenPawn,
+        Structure::HangingPawns,
+        Structure::Carlsbad,
+        Structure::MaroczyBind,
+        Structure::Stonewall,
+    ];
+
     /// Whether `board` has it, with `color` as the side the structure names first.
     fn of(self, board: &Board, color: Color) -> bool {
         let ours = board.by_piece(Role::Pawn.of(color));
@@ -277,6 +285,44 @@ pub fn reaches(
     Some(held > 0)
 }
 
+/// The structures each side reaches and keeps in the game from `start` through `moves`, as
+/// `reaches` counts them, with the colour that has each: a side can have several, and both
+/// sides the same one.
+pub fn structures_held<P: Position + Clone>(
+    start: &P,
+    moves: &[shakmaty::Move],
+) -> Vec<(Structure, Color)> {
+    let kinds: Vec<(Structure, Color)> = Structure::ALL
+        .into_iter()
+        .flat_map(|structure| [(structure, Color::White), (structure, Color::Black)])
+        .collect();
+    let mut held = vec![0usize; kinds.len()];
+    let mut kept = vec![false; kinds.len()];
+    let mut pos = start.clone();
+    let look = |board: &Board, held: &mut [usize], kept: &mut [bool], changed: bool| {
+        for (index, (structure, color)) in kinds.iter().enumerate() {
+            let now = if changed {
+                structure.of(board, *color)
+            } else {
+                held[index] > 0
+            };
+            held[index] = if now { held[index] + 1 } else { 0 };
+            kept[index] |= held[index] >= HOLD;
+        }
+    };
+    look(pos.board(), &mut held, &mut kept, true);
+    for m in moves {
+        pos.play_unchecked(*m);
+        look(pos.board(), &mut held, &mut kept, changes_pawns(m));
+    }
+    kinds
+        .into_iter()
+        .zip(held.into_iter().zip(kept))
+        .filter(|(_, (held, kept))| *kept || *held > 0)
+        .map(|(kind, _)| kind)
+        .collect()
+}
+
 /// The moves that can change a material balance: captures and promotions.
 pub fn changes_material(m: &shakmaty::Move) -> bool {
     m.is_capture() || m.is_promotion()
@@ -336,6 +382,47 @@ mod tests {
             .into_position(CastlingMode::Standard)
             .unwrap();
         pos.board().clone()
+    }
+
+    #[test]
+    fn a_game_holds_the_structures_each_side_keeps() {
+        use shakmaty::san::San;
+        let play = |fen: &str, sans: &[&str]| {
+            let start: Chess = fen
+                .parse::<Fen>()
+                .unwrap()
+                .into_position(CastlingMode::Standard)
+                .unwrap();
+            let mut pos = start.clone();
+            let moves: Vec<shakmaty::Move> = sans
+                .iter()
+                .map(|san| {
+                    let m = san.parse::<San>().unwrap().to_move(&pos).unwrap();
+                    pos.play_unchecked(m);
+                    m
+                })
+                .collect();
+            structures_held(&start, &moves)
+        };
+        // White's isolated d-pawn, kept for four plies.
+        let isolated = "r1bq1rk1/pp2bppp/2n1pn2/8/3P4/2NB1N2/PP3PPP/R1BQ1RK1 w - - 0 1";
+        assert_eq!(
+            play(isolated, &["Re1", "Nb4", "Bb1", "b6"]),
+            vec![(Structure::IsolatedQueenPawn, Color::White)]
+        );
+        // Given back at once: dxe5 leaves no d-pawn, so it never lasted.
+        let traded = "r1bq1rk1/pp2bppp/2n2n2/4p3/3P4/2NB1N2/PP3PPP/R1BQ1RK1 w - - 0 1";
+        assert_eq!(
+            play(traded, &["dxe5", "Nxe5", "Nxe5", "Qd4", "Re1"]),
+            Vec::new()
+        );
+        // Reached as the game ends: it counts, as a search finds it.
+        let late = "r1bq1rk1/pp2bppp/2n1pn2/3p4/2PP4/2NB1N2/PP3PPP/R1BQ1RK1 b - - 0 1";
+        assert_eq!(
+            play(late, &["dxc4", "Bxc4"]),
+            vec![(Structure::IsolatedQueenPawn, Color::White)]
+        );
+        assert_eq!(play(late, &[]), Vec::new());
     }
 
     #[test]

@@ -12,8 +12,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::types::{
-    Blunders, EndgameRecord, EndgameReport, ExplorerSpeed, GameRecord, InsightsQuery,
-    InsightsReport, OpeningRecord, TimeUseReport,
+    Blunders, DatabaseSource, EndgameRecord, EndgameReport, ExplorerSpeed, GameRecord,
+    InsightsQuery, InsightsReport, OpeningRecord, StructureRecord, StructureReport, TimeUseReport,
 };
 use kchess_domain::perf::Speed;
 use kchess_domain::variant::Variant;
@@ -654,6 +654,87 @@ fn section(title: &'static str, rows: Vec<AnyElement>, palette: &Palette) -> Div
         .children(rows)
 }
 
+/// A result row that opens something: a button named `label`.
+fn opening_row(
+    id: impl Into<ElementId>,
+    label: String,
+    row: impl IntoElement,
+    palette: &Palette,
+    open: impl Fn(&mut Window, &mut App) + 'static,
+) -> AnyElement {
+    div()
+        .id(id)
+        .test_support()
+        .role(Role::Button)
+        .keyboard_focus(palette.primary)
+        .aria_label(label)
+        .px(px(6.))
+        .mx(px(-6.))
+        .rounded(crate::theme::radii::BOX)
+        .cursor_pointer()
+        .pressable(palette)
+        .child(row)
+        .on_click(move |_, window, cx| open(window, cx))
+        .into_any_element()
+}
+
+/// The pawn structures the player had and played against, each a result row that opens its
+/// games in Your games on the Database page (`own`, when there is one).
+fn structure_parts(
+    structures: Option<&StructureReport>,
+    own: Option<&str>,
+    player: &str,
+    palette: &Palette,
+) -> Vec<(&'static str, Vec<AnyElement>)> {
+    let Some(structures) = structures else {
+        return Vec::new();
+    };
+    let rows = |lines: &[StructureRecord], id: &'static str| -> Vec<AnyElement> {
+        lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| {
+                let name = kchess_database::structure_name(line.structure);
+                let row =
+                    widgets::result_row(name.to_string(), None, record(&line.record), palette);
+                let Some(own) = own else {
+                    return div().child(row).into_any_element();
+                };
+                let (own, player, structure) =
+                    (own.to_string(), player.to_string(), line.structure);
+                opening_row(
+                    (id, index),
+                    name.to_string(),
+                    row,
+                    palette,
+                    move |window, cx| {
+                        kchess_database::games_with_structure(
+                            own.clone(),
+                            player.clone(),
+                            structure,
+                            window,
+                            cx,
+                        )
+                    },
+                )
+            })
+            .collect()
+    };
+    [
+        (
+            "Your pawn structures",
+            rows(&structures.yours, "insights-structure-yours"),
+        ),
+        (
+            "Their pawn structures",
+            rows(&structures.theirs, "insights-structure-theirs"),
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, rows)| !rows.is_empty())
+    .collect()
+}
+
 /// The endgames the tablebases decide, won ones and drawn ones, each kind of endgame a result
 /// row; one whose win or draw a move of yours let go opens those positions in Your endgames.
 /// Without the tablebases, the way to them.
@@ -690,22 +771,13 @@ fn endgame_parts(
                     return div().child(row).into_any_element();
                 }
                 let positions = line.let_go.clone();
-                div()
-                    .id((id, index))
-                    .test_support()
-                    .role(Role::Button)
-                    .keyboard_focus(palette.primary)
-                    .aria_label(format!("{}: {let_go} let go", line.material))
-                    .px(px(6.))
-                    .mx(px(-6.))
-                    .rounded(crate::theme::radii::BOX)
-                    .cursor_pointer()
-                    .pressable(palette)
-                    .child(row)
-                    .on_click(move |_, window, cx| {
-                        kchess_practice::your_endgames(positions.clone(), window, cx)
-                    })
-                    .into_any_element()
+                opening_row(
+                    (id, index),
+                    format!("{}: {let_go} let go", line.material),
+                    row,
+                    palette,
+                    move |window, cx| kchess_practice::your_endgames(positions.clone(), window, cx),
+                )
             })
             .collect()
     };
@@ -861,8 +933,21 @@ impl Render for InsightsPage {
                 )
                 .into_any_element()
         } else if let Some(report) = self.report.clone() {
-            self.breakdowns(&report, self.area.size_in(window).width, &palette)
-                .into_any_element()
+            let own = cx
+                .global::<kchess_board::game_db::GameDbHandle>()
+                .0
+                .read(cx)
+                .databases()
+                .iter()
+                .find(|database| database.source == DatabaseSource::Own)
+                .map(|database| database.id.clone());
+            self.breakdowns(
+                &report,
+                own.as_deref(),
+                self.area.size_in(window).width,
+                &palette,
+            )
+            .into_any_element()
         } else {
             div().into_any_element()
         };
@@ -885,7 +970,14 @@ impl Render for InsightsPage {
 }
 
 impl InsightsPage {
-    fn breakdowns(&self, report: &InsightsReport, width: Pixels, palette: &Palette) -> Div {
+    /// The report's breakdowns; `own` is Your games, where a pawn structure's games open.
+    fn breakdowns(
+        &self,
+        report: &InsightsReport,
+        own: Option<&str>,
+        width: Pixels,
+        palette: &Palette,
+    ) -> Div {
         let bands = |bands: &[kchess_contracts::types::BandRecord]| -> Rows {
             bands
                 .iter()
@@ -944,6 +1036,12 @@ impl InsightsPage {
             .filter(|(title, rows)| *title != "By clock" || !rows.is_empty())
             .map(|(title, rows)| (title, result_rows(rows, palette)))
             .chain(endgame_parts(report.endgames.as_ref(), palette))
+            .chain(structure_parts(
+                report.structures.as_ref(),
+                own,
+                kchess_domain::chesscom::username_of(&report.account).unwrap_or(&report.account),
+                palette,
+            ))
             .collect();
         let openings = &report.by_opening;
         let best = best_and_weakest(openings);
