@@ -14,6 +14,7 @@ use kchess_app::{core, loading, prefs};
 use kchess_board::{game_db, widgets};
 use kchess_ui::theme;
 
+mod lichess;
 mod player;
 
 use gpui_kit::base::TestSupportExt as _;
@@ -69,6 +70,7 @@ const RESULTS: [&str; 4] = ["All", "White won", "Draws", "Black won"];
 const MASTERS_LABEL: &str = "Master games · 770 MB";
 const MASTERS_TIP: &str =
     "Games from top over-the-board events since 2020, from Lichess's broadcasts";
+const LICHESS_TIP: &str = "A month of rated games between strong Lichess players";
 /// Below this width the table keeps the players and the result.
 const NARROW: Pixels = px(720.);
 
@@ -262,7 +264,10 @@ impl DatabasePage {
             window,
             |this, _, event: &GameDbEvent, window, cx| match event {
                 GameDbEvent::PlayerInstalled { database, username } => {
-                    this.show_player(database.clone(), username.clone(), window, cx)
+                    this.show_database(database.clone(), username.clone(), window, cx)
+                }
+                GameDbEvent::LichessInstalled { database } => {
+                    this.show_database(database.clone(), String::new(), window, cx)
                 }
             },
         ));
@@ -460,10 +465,11 @@ impl DatabasePage {
 
     /// A player's database once their games are in: their games, the player's name as the
     /// filter, so that a side splits them into their games with White and with Black.
-    fn show_player(
+    /// Database `database`'s games, every filter cleared but the player's, `player`.
+    fn show_database(
         &mut self,
         database: String,
-        username: String,
+        player: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -475,7 +481,7 @@ impl DatabasePage {
         });
         self.database = Some(database);
         self.player_input
-            .update(cx, |input, cx| input.set_value(username, window, cx));
+            .update(cx, |input, cx| input.set_value(player, window, cx));
         self.reload(cx);
     }
 
@@ -770,6 +776,19 @@ impl Render for DatabasePage {
                             })
                     }),
             )
+            .children(
+                self.shown_database(cx)
+                    .and_then(|info| info.lichess_rating)
+                    .filter(|_| !busy)
+                    .map(|rating| {
+                        Button::new("database-update-lichess")
+                            .ghost()
+                            .small()
+                            .icon(icon("plus"))
+                            .label("Add a month")
+                            .on_click(move |_, window, cx| lichess::open(Some(rating), window, cx))
+                    }),
+            )
             .when(databases > 0 && !busy, |row| {
                 row.child(
                     Button::new("database-delete")
@@ -788,6 +807,15 @@ impl Render for DatabasePage {
                         .icon(icon("user"))
                         .label("Player's games…")
                         .on_click(|_, window, cx| player::open(None, window, cx)),
+                )
+                .child(
+                    Button::new("database-lichess")
+                        .outline()
+                        .small()
+                        .icon(icon("download"))
+                        .label("Lichess games…")
+                        .tooltip(LICHESS_TIP)
+                        .on_click(|_, window, cx| lichess::open(None, window, cx)),
                 )
                 .child(
                     Button::new("database-masters")
@@ -923,6 +951,7 @@ impl Render for DatabasePage {
 pub enum Action {
     Import,
     Player,
+    Lichess,
     Masters,
     ClearFilters,
 }
@@ -941,6 +970,12 @@ impl PageAction for Action {
                 "Download a player's games",
                 "user",
                 "opponent prepare preparation lichess chess.com scout",
+            ),
+            Action::Lichess => ActionInfo::new(
+                "database:lichess",
+                "Download strong Lichess games",
+                "download",
+                "lichess rated month elite strong rating 2400 games",
             ),
             Action::Masters => ActionInfo::new(
                 "database:masters",
@@ -980,6 +1015,7 @@ impl PageView for DatabasePage {
         if !cx.global::<GameDbHandle>().0.read(cx).busy() {
             actions.push(Action::Import);
             actions.push(Action::Player);
+            actions.push(Action::Lichess);
             actions.push(Action::Masters);
         }
         if self.filtered(cx) {
@@ -992,6 +1028,7 @@ impl PageView for DatabasePage {
         match action {
             Action::Import => game_db::choose_and_import(window, cx),
             Action::Player => player::open(None, window, cx),
+            Action::Lichess => lichess::open(None, window, cx),
             Action::Masters => {
                 let db = cx.global::<GameDbHandle>().0.clone();
                 db.update(cx, |db, cx| db.install_masters(cx));

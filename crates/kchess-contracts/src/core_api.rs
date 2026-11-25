@@ -672,6 +672,23 @@ core_api! {
         GameDbPlayerInstall = "gameDbPlayerInstall" fn game_db_player_install(
             request: PlayerGames
         ) -> GameDbImported;
+        /// Lichess's months of rated games, newest first (`database.lichess.org/standard`), and
+        /// the months each database of strong Lichess games holds.
+        GameDbLichessMonths = "gameDbLichessMonths" fn game_db_lichess_months() -> LichessArchive;
+        /// How many bytes a month of Lichess's rated games downloads, when Lichess says.
+        GameDbLichessSize = "gameDbLichessSize" fn game_db_lichess_size(
+            month: LichessMonth
+        ) -> Option<u64>;
+        /// Downloads a month of Lichess's rated games and keeps its strong games (both players
+        /// rated at least the request's floor; no bullet, no bots) in that floor's database
+        /// (`lichess-<floor>`), checked against the archive's SHA-256 as it arrives. The month,
+        /// some 30 GB, is read as it downloads and never saved. Progress arrives as
+        /// `gamedb:progress` (`downloading`, its games counted); `gameDbCancel` stops it and
+        /// leaves the database as it was.
+        #[writes(GameDb)]
+        GameDbLichessInstall = "gameDbLichessInstall" fn game_db_lichess_install(
+            request: LichessGames
+        ) -> GameDbImported;
     }
 
     /// Network usage and the user's themes.

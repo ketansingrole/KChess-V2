@@ -296,6 +296,65 @@ fn the_master_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext)
     });
 }
 
+/// Strong Lichess games: the dialog offers Lichess's newest month and says how large it is; the
+/// download keeps only the month's game of two 2400s, in a database of its own, which then offers
+/// to add a month, the one month it lacks.
+#[gpui_kit::test]
+fn a_month_of_strong_lichess_games_is_downloaded(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    app.click("database-lichess");
+    app.wait_for("the newest month and its size", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("lichess-download")
+            .and_then(|button| button.label().map(str::to_string))
+            .is_some_and(|label| label.starts_with("Download · ") && label.ends_with(" B"))
+    });
+    app.click("lichess-download");
+    wait_for_listed(
+        &mut app,
+        "the month's strong game alone",
+        &["Strong 2026-10 against Rival, 1-0"],
+    );
+    app.wait_for_app("its database, named for its floor", |cx| {
+        let db = cx
+            .global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx);
+        db.databases().iter().any(|info| {
+            info.source == kchess_contracts::types::DatabaseSource::Lichess
+                && info.name == "Lichess 2400+"
+                && info.lichess_rating == Some(2400)
+                && info.games == 1
+        })
+    });
+    app.click("database-update-lichess");
+    app.wait_for("the month it lacks", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .try_find_by_label("Month")
+            .is_some_and(|month| month.value() == Some("September 2026"))
+    });
+    app.click("lichess-download");
+    wait_for_listed(
+        &mut app,
+        "both months' strong games, newest first",
+        &[
+            "Strong 2026-10 against Rival, 1-0",
+            "Strong 2026-09 against Rival, 1-0",
+        ],
+    );
+    app.click("database-update-lichess");
+    app.wait_for("every month in: none to choose", |window, _| {
+        use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
+        window.try_find_by_label("Month").is_none()
+            && window
+                .try_find("lichess-download")
+                .is_some_and(|button| button.disabled() == Some(true))
+    });
+}
+
 /// A new search never draws the last search's games: kept until its answer came, they and the
 /// pager under them jumped to the new search's size a frame later (seen on CI's slower machines,
 /// where the answer took longer than a frame).

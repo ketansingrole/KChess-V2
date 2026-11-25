@@ -1846,3 +1846,52 @@ async fn an_older_file_answers_alike_and_gains_the_replay_and_word_indexes() {
     assert_eq!(answers(), indexed);
     games.close().await;
 }
+
+/// What `HeaderFilter` passes on of `text`, keeping the games whose headers name a white player
+/// in `kept`, reading `chunk` bytes at a time.
+fn filtered(text: &str, kept: &'static [&'static str], chunk: usize) -> String {
+    use std::io::Read as _;
+    let keep: import::Keep = Box::new(move |headers| {
+        let headers = String::from_utf8_lossy(headers);
+        kept.iter()
+            .any(|white| headers.contains(&format!("[White \"{white}\"]")))
+    });
+    let reader = std::io::BufReader::new(std::io::Cursor::new(text.as_bytes().to_vec()));
+    let mut filter = import::HeaderFilter::new(reader, keep);
+    let (mut out, mut buf) = (Vec::new(), vec![0; chunk]);
+    loop {
+        let n = filter.read(&mut buf).unwrap();
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n]);
+    }
+    String::from_utf8(out).unwrap()
+}
+
+#[test]
+fn a_header_filter_passes_on_only_the_games_it_keeps_whole() {
+    let a = "[White \"A\"]\n[Black \"B\"]\n\n1. e4 { [%clk 0:03:00] } 1... e5\n2. Nf3 1-0\n\n";
+    let b = "[White \"B\"]\n[Black \"A\"]\n\n1. d4 d5 0-1\n\n";
+    let c = "[White \"C\"]\n[Black \"A\"]\n\n1. c4 1/2-1/2\n";
+    // A last game with no moves, and no line ending.
+    let d = "[White \"D\"]\n[Black \"A\"]";
+    let text = format!("A comment before any game.\n\n{a}{b}{c}\n{d}");
+    for chunk in [1, 7, 4096] {
+        assert_eq!(filtered(&text, &["A", "C"], chunk), format!("{a}{c}\n"));
+        assert_eq!(filtered(&text, &["B", "D"], chunk), format!("{b}{d}"));
+        assert_eq!(filtered(&text, &[], chunk), "");
+    }
+    let games = parse_pgn(&filtered(&text, &["A", "C"], 64));
+    assert_eq!(games.len(), 2);
+}
+
+#[test]
+fn a_game_with_huge_headers_is_left_out() {
+    let huge = format!(
+        "[White \"A\"]\n[Annotator \"{}\"]\n\n1. e4 1-0\n\n",
+        "x".repeat(70 * 1024)
+    );
+    let small = "[White \"A\"]\n\n1. d4 0-1\n\n";
+    assert_eq!(filtered(&format!("{huge}{small}"), &["A"], 4096), small);
+}

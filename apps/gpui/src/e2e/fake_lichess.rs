@@ -465,6 +465,14 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
             None => not_found(out),
         };
     }
+    // Lichess's rated games (`database.lichess.org/standard/`): two months, each with one game
+    // of two 2400s among weaker and faster ones.
+    if let Some(name) = request.path().strip_prefix("/database/standard/") {
+        return match standard_archive(name) {
+            Some(body) => kchess_testkit::respond(out, 200, "application/octet-stream", &body),
+            None => not_found(out),
+        };
+    }
     match (request.method.as_str(), request.path()) {
         ("GET", "/api/broadcast/top") => return reply(out, &broadcast_listing()),
         ("GET", "/display") => {
@@ -892,6 +900,62 @@ fn master_archive(name: &str) -> Option<Vec<u8>> {
     } else {
         None
     }
+}
+
+/// The months of Lichess's rated games the stand-in lists, newest first.
+pub const STANDARD_MONTHS: [&str; 2] = ["2026-10", "2026-09"];
+
+/// A month of Lichess's rated games: a blitz game of two 2400s (kept at 2400), a bullet game of
+/// two 2500s and a rapid game of two 1900s (both left out).
+fn standard_games(month: &str) -> String {
+    let date = month.replace('-', ".");
+    let game = |white: &str, black: &str, elo: u32, control: &str, result: &str| {
+        format!(
+            "[Event \"Rated game\"]\n[Date \"{date}.03\"]\n[UTCDate \"{date}.03\"]\n[White \"{white}\"]\n\
+             [Black \"{black}\"]\n[Result \"{result}\"]\n[WhiteElo \"{elo}\"]\n\
+             [BlackElo \"{elo}\"]\n[TimeControl \"{control}\"]\n\n1. e4 e5 {result}\n\n"
+        )
+    };
+    [
+        game(&format!("Strong {month}"), "Rival", 2450, "180+2", "1-0"),
+        game("Fast", "Faster", 2500, "60+0", "0-1"),
+        game("Club", "Player", 1900, "600+0", "1/2-1/2"),
+    ]
+    .concat()
+}
+
+/// A file of Lichess's archive of rated games: its list of months, their digests, or a month's
+/// games packed as the archive packs them.
+fn standard_archive(name: &str) -> Option<Vec<u8>> {
+    use sha2::Digest as _;
+    let file = |month: &str| format!("lichess_db_standard_rated_{month}.pgn.zst");
+    let packed = |month: &str| {
+        ruzstd::encoding::compress_to_vec(
+            standard_games(month).as_bytes(),
+            ruzstd::encoding::CompressionLevel::Fastest,
+        )
+    };
+    if name == "list.txt" {
+        let list: String = STANDARD_MONTHS
+            .iter()
+            .map(|month| format!("https://database.lichess.org/standard/{}\n", file(month)))
+            .collect();
+        return Some(list.into_bytes());
+    }
+    if name == "sha256sums.txt" {
+        let sums: String = STANDARD_MONTHS
+            .iter()
+            .map(|month| {
+                let digest = kchess_delta::hex(&sha2::Sha256::digest(packed(month)));
+                format!("{digest}  {}\n", file(month))
+            })
+            .collect();
+        return Some(sums.into_bytes());
+    }
+    STANDARD_MONTHS
+        .iter()
+        .find(|month| name == file(month))
+        .map(|month| packed(month))
 }
 
 fn not_found(out: &mut TcpStream) -> std::io::Result<()> {

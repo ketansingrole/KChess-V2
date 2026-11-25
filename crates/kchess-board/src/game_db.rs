@@ -10,8 +10,8 @@ use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{DatabaseId, PgnFilePath};
 use kchess_contracts::types::{
-    DatabaseInfo, GameDbImported, GameDbPhase, GameDbProgress, GameDbStatus, PlayerGames,
-    ProfileArea,
+    DatabaseInfo, GameDbImported, GameDbPhase, GameDbProgress, GameDbStatus, LichessGames,
+    PlayerGames, ProfileArea,
 };
 
 use crate::core::{AppCore, ClientEvent, CoreEvent};
@@ -38,7 +38,12 @@ const MASTER: &str = "master";
 pub enum GameDbEvent {
     /// A player's games are in their database, `database`.
     PlayerInstalled { database: String, username: String },
+    /// A month of strong Lichess games is in its floor's database, `database`.
+    LichessInstalled { database: String },
 }
+
+/// The databases of strong Lichess games, as the core names them: `lichess-2400`.
+const LICHESS: &str = "lichess-";
 
 impl EventEmitter<GameDbEvent> for GameDb {}
 
@@ -164,6 +169,27 @@ impl GameDb {
                 cx.emit(GameDbEvent::PlayerInstalled {
                     database: imported.database.id,
                     username,
+                });
+            },
+            cx,
+        );
+    }
+
+    /// Downloads the month of Lichess's rated games `request` names (the newest its floor's
+    /// database lacks, when none), keeping its strong games there; `GameDbEvent::LichessInstalled`
+    /// follows once they are in.
+    pub fn install_lichess(&mut self, request: LichessGames, cx: &mut Context<Self>) {
+        let database = format!("{LICHESS}{}", request.min_rating);
+        let install = cx
+            .global::<AppCore>()
+            .request(calls::GameDbLichessInstall { request });
+        self.run(
+            GameDbPhase::Downloading,
+            &database,
+            install,
+            move |imported: GameDbImported, cx| {
+                cx.emit(GameDbEvent::LichessInstalled {
+                    database: imported.database.id,
                 });
             },
             cx,
@@ -303,6 +329,11 @@ pub fn import_card(cx: &App, palette: &Palette) -> impl IntoElement + use<> {
                     .filter(|total| *total > 0)
                     .map(|total| (progress.bytes as f64 / total as f64).min(1.) as f32),
                 match &progress.message {
+                    // Strong games, counted as the month is read.
+                    Some(month) if progress.database.starts_with(LICHESS) => format!(
+                        "Downloading Lichess games · {month} · {}",
+                        widgets::format_counted(progress.games as f64, "game", "games")
+                    ),
                     Some(month) => format!("Downloading master games · {month}"),
                     None if progress.database == MASTER => "Downloading master games…".to_string(),
                     // A player's games, counted as they arrive.

@@ -8,6 +8,7 @@ union!(#[doc = "Where a database's games came from."] DatabaseSource {
     Own = "own",
     Master = "master",
     Player = "player",
+    Lichess = "lichess",
 });
 
 union!(#[doc = "Where a player's games are downloaded from."] GameSite {
@@ -32,6 +33,37 @@ pub struct PlayerGames {
     /// Only rated games.
     #[serde(default)]
     pub rated: bool,
+}
+
+/// A month of Lichess's rated games to keep the strong games of (`gameDbLichessInstall`): those
+/// whose players were both rated at least `min_rating`, bullet and bots' games left out. Each
+/// floor has a database of its own, which gathers months.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LichessGames {
+    /// `YYYY-MM`; the newest month the database lacks when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub month: Option<String>,
+    pub min_rating: u32,
+}
+
+/// Lichess's months of rated games (`gameDbLichessMonths`), and which of them each database of
+/// strong Lichess games holds.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LichessArchive {
+    /// `YYYY-MM`, newest first.
+    pub months: Vec<String>,
+    pub held: Vec<LichessHeld>,
+}
+
+/// The months a database of strong Lichess games holds.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LichessHeld {
+    pub min_rating: u32,
+    /// `YYYY-MM`, newest first.
+    pub months: Vec<String>,
 }
 
 union!(#[doc = "Progress stage of a game database import; `downloading` while a month of the \
@@ -74,6 +106,10 @@ pub struct DatabaseInfo {
     /// repeats.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player: Option<PlayerGames>,
+    /// The rating both players of its games had at least (`source` `lichess`), which adding a
+    /// month keeps to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lichess_rating: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]

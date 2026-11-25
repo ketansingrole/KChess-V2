@@ -267,6 +267,7 @@ pub fn source_text(source: DatabaseSource) -> &'static str {
         DatabaseSource::Own => "own",
         DatabaseSource::Master => "master",
         DatabaseSource::Player => "player",
+        DatabaseSource::Lichess => "lichess",
     }
 }
 
@@ -275,6 +276,7 @@ fn source_of(text: &str) -> DatabaseSource {
         "own" => DatabaseSource::Own,
         "master" => DatabaseSource::Master,
         "player" => DatabaseSource::Player,
+        "lichess" => DatabaseSource::Lichess,
         _ => DatabaseSource::Imported,
     }
 }
@@ -340,16 +342,23 @@ pub fn info(db: &Connection, id: &str, bytes: u64) -> Result<Option<DatabaseInfo
         )
         .sql()?;
     let games = u64::try_from(games).unwrap_or(0);
+    let source = source_of(&source);
+    // The floor is the database's id (`lichess-2400`): what it was made for.
+    let lichess_rating = match source {
+        DatabaseSource::Lichess => super::lichess::rating_of(id),
+        _ => None,
+    };
     Ok(Some(DatabaseInfo {
         id: id.to_string(),
         name,
-        source: source_of(&source),
+        source,
         games,
         bytes,
         updated_at,
         index_depth,
         attribution,
         player,
+        lichess_rating,
     }))
 }
 

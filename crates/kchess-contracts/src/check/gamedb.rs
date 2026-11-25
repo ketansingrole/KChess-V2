@@ -6,7 +6,8 @@ use kchess_domain::misc::value::J;
 
 use super::*;
 use crate::types::{
-    ExplorerSpeed, GameDbQuery, GameDbResult, GameDbSide, GameDbSort, GameSite, PlayerGames,
+    ExplorerSpeed, GameDbQuery, GameDbResult, GameDbSide, GameDbSort, GameSite, LichessGames,
+    PlayerGames,
 };
 
 const DATABASE: &str = "Invalid database.";
@@ -184,6 +185,73 @@ impl Validate for PlayerGames {
             rated: sent.rated.unwrap_or(false),
         })
     }
+}
+
+/// A month of Lichess's archive, `YYYY-MM`, from its first (2013-01).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[serde(transparent)]
+pub struct LichessMonth(pub String);
+
+const MONTH: &str = "Invalid month.";
+
+fn lichess_month(month: &str) -> Result<String, Refusal> {
+    let month = month.trim();
+    let (year, number) = month.split_once('-').unwrap_or_default();
+    let digits =
+        |text: &str, len: usize| text.len() == len && text.bytes().all(|b| b.is_ascii_digit());
+    let year_ok = digits(year, 4)
+        && year
+            .parse::<u32>()
+            .is_ok_and(|y| (2013..=2200).contains(&y));
+    let number_ok = digits(number, 2) && number.parse::<u32>().is_ok_and(|m| (1..=12).contains(&m));
+    ensure(year_ok && number_ok, Some(MONTH), "", String::new)?;
+    Ok(month.to_string())
+}
+
+impl Validate for LichessMonth {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        let month: String = decode(value, |_| Some(MONTH))?;
+        Ok(LichessMonth(lichess_month(&month)?))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(expecting = "an object", rename_all = "camelCase", deny_unknown_fields)]
+struct SentLichess {
+    month: Option<String>,
+    min_rating: u64,
+}
+
+/// Strong Lichess games to download: a month of the archive, and a rating floor of 1000 to 3000
+/// in hundreds.
+impl Validate for LichessGames {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const RATING: &str = "Invalid rating.";
+        let sent: SentLichess = decode(value, |keys| match keys {
+            ["month"] => Some(MONTH),
+            ["minRating"] => Some(RATING),
+            _ => Some("Invalid Lichess download."),
+        })?;
+        within(sent.min_rating, 1000, 3000, Some(RATING), "")?;
+        ensure(
+            sent.min_rating.is_multiple_of(100),
+            Some(RATING),
+            "",
+            String::new,
+        )?;
+        let month = sent.month.as_deref().map(lichess_month).transpose()?;
+        Ok(LichessGames {
+            month,
+            min_rating: u32::try_from(sent.min_rating).unwrap_or(3000),
+        })
+    }
+}
+
+/// A Lichess download a frontend's form made, checked as the core will check it.
+pub fn lichess_games(request: &LichessGames) -> Result<LichessGames, Refusal> {
+    let value =
+        serde_json::to_value(request).map_err(|_| Refusal::from("Invalid Lichess download."))?;
+    check::<LichessGames>(J::from(&value))
 }
 
 /// A download a frontend's form made, checked as the core will check it: the form says what is

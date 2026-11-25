@@ -38,7 +38,7 @@ pub const ATTRIBUTION: &str = "Lichess broadcast games, database.lichess.org, CC
 pub const ARCHIVE: &str = "https://database.lichess.org/broadcast/";
 
 /// How long a download may go without a byte before it fails.
-const SILENCE: Duration = Duration::from_secs(60);
+pub(super) const SILENCE: Duration = Duration::from_secs(60);
 /// The most one month may bring: the largest was some 31 MB (2026-08).
 const MAX_MONTH: u64 = 1024 * 1024 * 1024;
 /// The most `list.txt` or `sha256sums.txt` may bring: some 8 KB each (2026-11).
@@ -49,20 +49,21 @@ const INDEX_TIMEOUT: Duration = Duration::from_secs(60);
 const PREFIX: &str = "lichess_db_broadcast_";
 const SUFFIX: &str = ".pgn.zst";
 
-/// One month of the archive.
+/// One month of an archive.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Month {
     /// `YYYY-MM`.
     pub month: String,
-    /// The file's name, `lichess_db_broadcast_YYYY-MM.pgn.zst`, as its import records it.
+    /// The file's name (`lichess_db_broadcast_YYYY-MM.pgn.zst`), as its import records it.
     pub file: String,
     /// Its SHA-256, lowercase hex.
     pub sha256: String,
 }
 
-/// The month a file of the archive holds (`2026-10`), when `file` names one.
-fn month_of(file: &str) -> Option<&str> {
-    let month = file.strip_prefix(PREFIX)?.strip_suffix(SUFFIX)?;
+/// The month a file of an archive of Lichess's (`database.lichess.org`) holds (`2026-10`),
+/// when `file` is one of its files: `prefix`, the month, then `.pgn.zst`.
+pub(super) fn month_of<'a>(file: &'a str, prefix: &str) -> Option<&'a str> {
+    let month = file.strip_prefix(prefix)?.strip_suffix(SUFFIX)?;
     let bytes = month.as_bytes();
     let valid = bytes.len() == 7
         && bytes[4] == b'-'
@@ -74,10 +75,16 @@ fn month_of(file: &str) -> Option<&str> {
     valid.then_some(month)
 }
 
-/// The months `list` names that `sums` gives a digest for, oldest first, and how many it names
-/// without one. Only a file's name is taken from `list`: every month is fetched from the archive
-/// itself, never from a link the list gives.
+/// The months of the master games `list` names that `sums` gives a digest for, oldest first,
+/// and how many it names without one.
 pub fn months(list: &str, sums: &str) -> (Vec<Month>, usize) {
+    archive_months(list, sums, PREFIX)
+}
+
+/// The months `list` names (files of `prefix`) that `sums` gives a digest for, oldest first, and
+/// how many it names without one. Only a file's name is taken from `list`: every month is fetched
+/// from the archive itself, never from a link the list gives.
+pub(super) fn archive_months(list: &str, sums: &str, prefix: &str) -> (Vec<Month>, usize) {
     let digests: HashMap<&str, &str> = sums
         .lines()
         .filter_map(|line| {
@@ -92,7 +99,7 @@ pub fn months(list: &str, sums: &str) -> (Vec<Month>, usize) {
     let mut unchecked = HashSet::new();
     for line in list.lines() {
         let file = line.trim().rsplit('/').next().unwrap_or_default();
-        let Some(month) = month_of(file) else {
+        let Some(month) = month_of(file, prefix) else {
             continue;
         };
         let Some(digest) = digests.get(file) else {
@@ -112,7 +119,7 @@ pub fn months(list: &str, sums: &str) -> (Vec<Month>, usize) {
 }
 
 /// The archive files the database holds: the file each finished import read.
-fn installed(db: &Connection) -> Result<HashSet<String>> {
+pub(super) fn installed(db: &Connection) -> Result<HashSet<String>> {
     let mut statement = db
         .prepare("SELECT file FROM imports WHERE finished_at IS NOT NULL AND file IS NOT NULL")
         .sql()?;
@@ -147,23 +154,24 @@ impl Drop for Partial {
     }
 }
 
-/// One of the archive's index files, as text.
-async fn fetch_text(
+/// One of an archive's index files (`list.txt`, `sha256sums.txt`), as text.
+pub(super) async fn fetch_text(
     client: &reqwest::Client,
     url: &str,
     cancel: &CancellationToken,
     usage: download::Usage<'_>,
+    wording: &download::Wording,
 ) -> Result<String> {
     let limits = download::Limits {
         max_bytes: MAX_INDEX,
         deadline: Some(Instant::now() + INDEX_TIMEOUT),
     };
-    let body = download::open(client, || client.get(url), limits, cancel, usage, &WORDING)
+    let body = download::open(client, || client.get(url), limits, cancel, usage, wording)
         .await?
         .bytes()
         .await?;
     String::from_utf8(body)
-        .map_err(|_| CoreError::new("Lichess's list of master games could not be read."))
+        .map_err(|_| CoreError::new("Lichess's list of games could not be read."))
 }
 
 /// Downloads `month` from `url` into `path`, reporting its bytes, and checks its digest.
@@ -272,8 +280,10 @@ impl GameDbService {
             meter,
             kind: UsageKind::Database,
         };
-        let list = fetch_text(&client, &format!("{archive}list.txt"), cancel, usage).await?;
-        let sums = fetch_text(&client, &format!("{archive}sha256sums.txt"), cancel, usage).await?;
+        let list = format!("{archive}list.txt");
+        let list = fetch_text(&client, &list, cancel, usage, &WORDING).await?;
+        let sums = format!("{archive}sha256sums.txt");
+        let sums = fetch_text(&client, &sums, cancel, usage, &WORDING).await?;
         let (mut months, unchecked) = months(&list, &sums);
         if unchecked > 0 {
             inner.host.log(
