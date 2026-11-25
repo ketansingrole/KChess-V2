@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use kchess_domain::misc::value::J;
 
 use super::*;
-use crate::types::{GameDbQuery, GameDbResult, GameDbSide, GameDbSort};
+use crate::types::{
+    ExplorerSpeed, GameDbQuery, GameDbResult, GameDbSide, GameDbSort, GameSite, PlayerGames,
+};
 
 const DATABASE: &str = "Invalid database.";
 const QUERY: &str = "Invalid game search.";
@@ -109,6 +111,54 @@ impl Validate for MasterMonths {
         let months: u64 = decode(value, |_| Some(MONTHS))?;
         within(months, 1, 600, Some(MONTHS), "")?;
         Ok(MasterMonths(u32::try_from(months).unwrap_or(600)))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(expecting = "an object", rename_all = "camelCase", deny_unknown_fields)]
+struct SentPlayer {
+    site: GameSite,
+    username: String,
+    months: Option<u64>,
+    speeds: Option<Vec<ExplorerSpeed>>,
+    rated: Option<bool>,
+}
+
+/// A player's games to download: a username as its site allows them, 1 to 600 months, and at
+/// least one speed when speeds are given (each kept once).
+impl Validate for PlayerGames {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const PLAYER: &str = "Invalid player download.";
+        const MONTHS: &str = "Invalid number of months.";
+        let sent: SentPlayer = decode(value, |keys| match keys {
+            ["months"] => Some(MONTHS),
+            _ => Some(PLAYER),
+        })?;
+        let username = match sent.site {
+            GameSite::Lichess => username(&sent.username)?,
+            GameSite::Chesscom => ChesscomUsername::validate(J::Str(sent.username))?.0,
+        };
+        if let Some(months) = sent.months {
+            within(months, 1, 600, Some(MONTHS), "")?;
+        }
+        let speeds = match sent.speeds {
+            Some(mut speeds) => {
+                ensure(!speeds.is_empty(), Some(PLAYER), "", String::new)?;
+                speeds.sort();
+                speeds.dedup();
+                Some(speeds)
+            }
+            None => None,
+        };
+        Ok(PlayerGames {
+            site: sent.site,
+            username,
+            months: sent
+                .months
+                .map(|months| u32::try_from(months).unwrap_or(600)),
+            speeds,
+            rated: sent.rated.unwrap_or(false),
+        })
     }
 }
 
@@ -243,6 +293,46 @@ mod tests {
                 "Invalid number of months.",
                 "{bad}"
             );
+        }
+    }
+
+    #[test]
+    fn a_player_download_names_a_player_of_its_site() {
+        let player = check::<PlayerGames>(sent(json!({
+            "site": "lichess", "username": " Some_Player ", "months": 12,
+            "speeds": ["rapid", "blitz", "rapid"], "rated": true
+        })))
+        .unwrap();
+        assert_eq!(player.username, "Some_Player");
+        assert_eq!(player.months, Some(12));
+        assert_eq!(
+            player.speeds,
+            Some(vec![ExplorerSpeed::Blitz, ExplorerSpeed::Rapid])
+        );
+        assert!(player.rated);
+        let plain = check::<PlayerGames>(sent(json!({ "site": "chesscom", "username": "hikaru" })))
+            .unwrap();
+        assert_eq!((plain.months, plain.speeds, plain.rated), (None, None, false));
+        let refused = |value| check::<PlayerGames>(sent(value)).unwrap_err();
+        assert_eq!(
+            refused(json!({ "site": "lichess", "username": "no spaces" })),
+            "Enter a valid Lichess username."
+        );
+        assert_eq!(
+            refused(json!({ "site": "chesscom", "username": "x" })),
+            "Enter a valid Chess.com username."
+        );
+        assert_eq!(
+            refused(json!({ "site": "lichess", "username": "ab", "months": 0 })),
+            "Invalid number of months."
+        );
+        for bad in [
+            json!({ "site": "lichess", "username": "ab", "speeds": [] }),
+            json!({ "site": "lichess", "username": "ab", "speeds": ["fast"] }),
+            json!({ "site": "fics", "username": "ab" }),
+            json!({ "site": "lichess", "username": "ab", "max": 3 }),
+        ] {
+            assert_eq!(refused(bad.clone()), "Invalid player download.", "{bad}");
         }
     }
 

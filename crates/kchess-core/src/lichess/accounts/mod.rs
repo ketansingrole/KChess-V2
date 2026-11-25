@@ -1036,6 +1036,45 @@ impl Lichess {
         .await
     }
 
+    /// A player's games as PGN (`/api/games/user/{name}` asked `query`), each piece of the text
+    /// given to `on_text` as it arrives, read with a connected account's login when there is
+    /// one (Lichess then sends them faster). `cancel` stops the download. A player Lichess does
+    /// not know is refused by name.
+    pub async fn export_pgn(
+        &self,
+        username: &str,
+        query: &[(&str, String)],
+        cancel: &CancellationToken,
+        on_text: &mut (dyn FnMut(&str) -> CoreResult<()> + Send),
+    ) -> CoreResult<()> {
+        let on_text = Mutex::new(on_text);
+        let path = format!("/api/games/user/{}", path_segment(username));
+        let result = self
+            .as_any_account(None, UsageKind::Games, |auth| {
+                let (on_text, path) = (&on_text, &path);
+                async move {
+                    self.client
+                        .get(path, &auth)
+                        .query(query)
+                        .accept("application/x-chess-pgn")
+                        .lane(Lane::Export)
+                        .cancel(cancel)
+                        .chunks(|text| {
+                            let mut on_text = lock(on_text);
+                            (*on_text)(text)
+                        })
+                        .await
+                }
+            })
+            .await;
+        match result {
+            Err(error) if error.kind == Some(ErrorKind::NotFound) => Err(CoreError::new(format!(
+                "No Lichess player is called {username}."
+            ))),
+            other => other,
+        }
+    }
+
     /// A private message from `account`. A login made before messaging was
     /// requested answers "reconnect".
     pub async fn send_message(

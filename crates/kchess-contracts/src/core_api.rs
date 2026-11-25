@@ -663,6 +663,15 @@ core_api! {
         GameDbMasterInstall = "gameDbMasterInstall" fn game_db_master_install(;
             months: Option<MasterMonths>
         ) -> GameDbImported;
+        /// Downloads one player's games from Lichess or Chess.com into a database of their own,
+        /// which the request names and keeps: a later call for the same player replaces its games
+        /// with those the new request brings. Progress arrives as `gamedb:progress`
+        /// (`downloading`, then the import); `gameDbCancel` stops it and leaves the database as
+        /// it was.
+        #[writes(GameDb)]
+        GameDbPlayerInstall = "gameDbPlayerInstall" fn game_db_player_install(
+            request: PlayerGames
+        ) -> GameDbImported;
     }
 
     /// Network usage and the user's themes.

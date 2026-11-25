@@ -498,6 +498,79 @@ impl Chesscom {
         Ok(fetched)
     }
 
+    /// Every game of `name`'s monthly archives, from the month `from` (`YYYY/MM`) on when given,
+    /// oldest first, each given to `on_game` as Chess.com sent it; nothing is stored. The
+    /// requests wait their turn with the sync's. `cancel` stops it at once.
+    pub async fn player_games(
+        &self,
+        name: &str,
+        from: Option<&str>,
+        cancel: &CancellationToken,
+        on_game: &mut (dyn FnMut(&Value) -> Result<()> + Send),
+    ) -> Result<()> {
+        let stopped = || CoreError::new("Download cancelled.");
+        let current = || !cancel.is_cancelled() && !self.lifetime.is_cancelled();
+        let player = name.to_lowercase();
+        let read = async {
+            let list = self
+                .get(
+                    &format!("/pub/player/{player}/games/archives"),
+                    (None, None),
+                    &current,
+                )
+                .await?;
+            match list.status {
+                StatusCode::OK => {}
+                StatusCode::NOT_FOUND | StatusCode::GONE => return Err(no_such_player(name)),
+                _ => return Err(unreachable()),
+            }
+            let index = Self::json(&list)?;
+            let listed = index
+                .get("archives")
+                .and_then(Value::as_array)
+                .ok_or_else(|| CoreError::new("Chess.com sent an answer KChess cannot read."))?;
+            let mut months: Vec<String> = listed
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(archive_month)
+                .filter(|month| from.is_none_or(|from| month.as_str() >= from))
+                .collect();
+            months.sort();
+            months.dedup();
+            for month in &months {
+                let answer = self
+                    .get(
+                        &format!("/pub/player/{player}/games/{month}"),
+                        (None, None),
+                        &current,
+                    )
+                    .await?;
+                match answer.status {
+                    StatusCode::OK => {}
+                    // A month listed but gone has no games to give.
+                    StatusCode::NOT_FOUND | StatusCode::GONE => continue,
+                    _ => return Err(unreachable()),
+                }
+                let body = Self::json(&answer)?;
+                let games = body.get("games").and_then(Value::as_array).ok_or_else(|| {
+                    CoreError::new("Chess.com sent an answer KChess cannot read.")
+                })?;
+                for game in games {
+                    on_game(game)?;
+                }
+            }
+            Ok(())
+        };
+        tokio::select! {
+            () = cancel.cancelled() => Err(stopped()),
+            result = read => match result {
+                // A request turned away because the download stopped says so.
+                Err(_) if cancel.is_cancelled() => Err(stopped()),
+                other => other,
+            },
+        }
+    }
+
     async fn save(
         &self,
         name: &str,

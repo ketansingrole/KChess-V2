@@ -14,7 +14,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension as _};
 use super::deep;
 use crate::store::sql::{Sql as _, transaction};
 use kchess_contracts::error::{CoreError, Result};
-use kchess_contracts::types::{DatabaseInfo, DatabaseSource};
+use kchess_contracts::types::{DatabaseInfo, DatabaseSource, PlayerGames};
 
 /// A database file's name: its id and this extension.
 pub const EXTENSION: &str = "kdb";
@@ -129,6 +129,9 @@ const MIGRATIONS: &[&str] = &[
     // sets `deep_built`; until then a lookup past the tree replays every game.
     "CREATE TABLE deep (bucket INTEGER PRIMARY KEY, entries BLOB NOT NULL);
      ALTER TABLE meta ADD COLUMN deep_built INTEGER NOT NULL DEFAULT 0;",
+    // The download a player's database was made from, as JSON (`PlayerGames`), which an
+    // update repeats.
+    "ALTER TABLE meta ADD COLUMN player TEXT;",
 ];
 
 /// The games' indexes, built after a new database's games are in: building them once is much
@@ -263,6 +266,7 @@ pub fn source_text(source: DatabaseSource) -> &'static str {
         DatabaseSource::Imported => "imported",
         DatabaseSource::Own => "own",
         DatabaseSource::Master => "master",
+        DatabaseSource::Player => "player",
     }
 }
 
@@ -270,15 +274,43 @@ fn source_of(text: &str) -> DatabaseSource {
     match text {
         "own" => DatabaseSource::Own,
         "master" => DatabaseSource::Master,
+        "player" => DatabaseSource::Player,
         _ => DatabaseSource::Imported,
     }
+}
+
+/// `meta.player`, or NULL in a file an older release wrote that could not be upgraded: it is
+/// still read (`GameDbService::reader`).
+fn player_column(db: &Connection) -> Result<&'static str> {
+    let present: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('meta') WHERE name = 'player'",
+            [],
+            |row| row.get(0),
+        )
+        .sql()?;
+    Ok(if present > 0 { "player" } else { "NULL" })
+}
+
+/// Records the download a player's database was made from, which `info` lists and an update
+/// repeats.
+pub fn set_player(db: &Connection, player: &PlayerGames) -> Result<()> {
+    let text = serde_json::to_string(player)
+        .map_err(|e| CoreError::wrap("Could not record the player's download", e))?;
+    db.execute("UPDATE meta SET player = ?1 WHERE id = 1", [text])
+        .sql()?;
+    Ok(())
 }
 
 /// The database `id` as `gameDbStatus` lists it; None when the file holds no database.
 pub fn info(db: &Connection, id: &str, bytes: u64) -> Result<Option<DatabaseInfo>> {
     let meta = db
         .query_row(
-            "SELECT name, source, updated_at, index_depth, attribution FROM meta WHERE id = 1",
+            &format!(
+                "SELECT name, source, updated_at, index_depth, attribution, {player}
+                 FROM meta WHERE id = 1",
+                player = player_column(db)?
+            ),
             [],
             |row| {
                 Ok((
@@ -287,14 +319,17 @@ pub fn info(db: &Connection, id: &str, bytes: u64) -> Result<Option<DatabaseInfo
                     row.get::<_, i64>(2)?,
                     row.get::<_, u32>(3)?,
                     row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             },
         )
         .optional()
         .sql()?;
-    let Some((name, source, updated_at, index_depth, attribution)) = meta else {
+    let Some((name, source, updated_at, index_depth, attribution, player)) = meta else {
         return Ok(None);
     };
+    // A request this release cannot read (a newer one's) only loses its update.
+    let player = player.and_then(|text| serde_json::from_str::<PlayerGames>(&text).ok());
     // Each finished import records how many games it kept; counting the games table would read
     // millions of rows.
     let games: i64 = db
@@ -314,6 +349,7 @@ pub fn info(db: &Connection, id: &str, bytes: u64) -> Result<Option<DatabaseInfo
         updated_at,
         index_depth,
         attribution,
+        player,
     }))
 }
 
