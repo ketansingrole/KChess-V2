@@ -20,13 +20,16 @@ fn game(white: &str, black: &str, result: &str, moves: &str) -> String {
     )
 }
 
+/// A Chess.com player's months, each its `YYYY/MM` and the games it answers.
+type Months = Vec<(String, Value)>;
+
 /// What the stand-ins answer: Lichess's export of each player (its body, or a stream a test
 /// feeds), and each Chess.com player's months.
 #[derive(Clone, Default)]
 struct Sites {
     lichess: Arc<Mutex<HashMap<String, String>>>,
     streams: Arc<Mutex<HashMap<String, mpsc::UnboundedReceiver<String>>>>,
-    chesscom: Arc<Mutex<HashMap<String, Vec<(String, Value)>>>>,
+    chesscom: Arc<Mutex<HashMap<String, Months>>>,
 }
 
 impl Sites {
