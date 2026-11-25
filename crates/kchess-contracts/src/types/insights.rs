@@ -56,6 +56,9 @@ pub struct InsightsReport {
     pub accuracy: Option<AccuracyReport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_use: Option<TimeUseReport>,
+    /// How the endgames the tablebases decide went; none for a variant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endgames: Option<EndgameReport>,
     /// The variants other than standard the account has finished games in.
     pub variants: Vec<Variant>,
 }
@@ -79,6 +82,32 @@ pub struct OpeningRecord {
     pub record: GameRecord,
     /// Of those games, the ones played as White.
     pub as_white: i64,
+}
+
+/// The endgames of the games, by the first position at the player's move that the endgame
+/// tablebases decide: won ones, and drawn ones.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EndgameReport {
+    /// Whether the tablebases are on this computer; without them nothing is decided.
+    pub tables: bool,
+    /// The games read, the newest first.
+    pub games: i64,
+    /// Won positions by their pieces, most games first.
+    pub won: Vec<EndgameRecord>,
+    /// Drawn positions by their pieces, most games first.
+    pub drawn: Vec<EndgameRecord>,
+}
+
+/// One kind of endgame, "KR vs K" (the player's pieces first), and how its games ended.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EndgameRecord {
+    pub material: String,
+    pub record: GameRecord,
+    /// The positions (FEN) where a move of the player's then let the win or the draw go, as
+    /// Your endgames lists them.
+    pub let_go: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

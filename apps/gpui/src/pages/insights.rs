@@ -1,6 +1,7 @@
 //! Insights: an account's synced games (Lichess or Chess.com) broken down by colour,
 //! speed, opponent, length, clock, day, time of day, ending and opening, with time use from the
-//! games' clocks, filtered by speed, period and rated or casual.
+//! games' clocks and the endgames the tablebases decide, filtered by speed, period and rated or
+//! casual.
 
 use crate::loading::Loading;
 use crate::pages::PageView;
@@ -11,8 +12,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::types::{
-    Blunders, ExplorerSpeed, GameRecord, InsightsQuery, InsightsReport, OpeningRecord,
-    TimeUseReport,
+    Blunders, EndgameRecord, EndgameReport, ExplorerSpeed, GameRecord, InsightsQuery,
+    InsightsReport, OpeningRecord, TimeUseReport,
 };
 use kchess_domain::perf::Speed;
 use kchess_domain::variant::Variant;
@@ -22,6 +23,8 @@ use crate::core::AppCore;
 use crate::pages::Page;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::theme::Palette;
+use crate::widgets::KeyboardFocus as _;
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice};
 use kchess_domain::time_use::Phase;
 
@@ -635,16 +638,87 @@ fn balance(heights: &[f32], columns: usize) -> Vec<usize> {
 /// A breakdown's entries: each label with its wins, draws and losses.
 type Rows = Vec<(String, (f64, f64, f64))>;
 
-/// One breakdown: its title and a result row per entry.
-fn section(title: &'static str, rows: Rows, palette: &Palette) -> Div {
+/// A breakdown's entries as result rows.
+fn result_rows(rows: Rows, palette: &Palette) -> Vec<AnyElement> {
+    rows.into_iter()
+        .map(|(label, record)| widgets::result_row(label, None, record, palette).into_any_element())
+        .collect()
+}
+
+/// One breakdown: its title and its rows.
+fn section(title: &'static str, rows: Vec<AnyElement>, palette: &Palette) -> Div {
     v_flex()
         .w_full()
         .gap(px(8.))
         .child(div().mb(px(4.)).child(widgets::heading(title, palette)))
-        .children(
-            rows.into_iter()
-                .map(|(label, record)| widgets::result_row(label, None, record, palette)),
-        )
+        .children(rows)
+}
+
+/// The endgames the tablebases decide, won ones and drawn ones, each kind of endgame a result
+/// row; one whose win or draw a move of yours let go opens those positions in Your endgames.
+/// Without the tablebases, the way to them.
+fn endgame_parts(
+    endgames: Option<&EndgameReport>,
+    palette: &Palette,
+) -> Vec<(&'static str, Vec<AnyElement>)> {
+    let Some(endgames) = endgames else {
+        return Vec::new();
+    };
+    if !endgames.tables {
+        let get = Button::new("insights-endgame-tablebases")
+            .small()
+            .outline()
+            .label("Get the tablebases")
+            .on_click(|_, window, cx| {
+                kchess_nav::shell::open_settings(kchess_nav::sections::Section::Storage, window, cx)
+            });
+        return vec![("Endgames", vec![h_flex().child(get).into_any_element()])];
+    }
+    let rows = |lines: &[EndgameRecord], id: &'static str| -> Vec<AnyElement> {
+        lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| {
+                let let_go = line.let_go.len();
+                let row = widgets::result_row(
+                    line.material.clone(),
+                    (let_go > 0).then(|| format!("{let_go} let go")),
+                    record(&line.record),
+                    palette,
+                );
+                if let_go == 0 {
+                    return div().child(row).into_any_element();
+                }
+                let positions = line.let_go.clone();
+                div()
+                    .id((id, index))
+                    .test_support()
+                    .role(Role::Button)
+                    .keyboard_focus(palette.primary)
+                    .aria_label(format!("{}: {let_go} let go", line.material))
+                    .px(px(6.))
+                    .mx(px(-6.))
+                    .rounded(crate::theme::radii::BOX)
+                    .cursor_pointer()
+                    .pressable(palette)
+                    .child(row)
+                    .on_click(move |_, window, cx| {
+                        kchess_practice::your_endgames(positions.clone(), window, cx)
+                    })
+                    .into_any_element()
+            })
+            .collect()
+    };
+    [
+        ("Won endgames", rows(&endgames.won, "insights-endgame-won")),
+        (
+            "Drawn endgames",
+            rows(&endgames.drawn, "insights-endgame-drawn"),
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, rows)| !rows.is_empty())
+    .collect()
 }
 
 impl Render for InsightsPage {
@@ -787,7 +861,7 @@ impl Render for InsightsPage {
                 )
                 .into_any_element()
         } else if let Some(report) = self.report.clone() {
-            self.breakdowns(&report, self.area.size().width, &palette)
+            self.breakdowns(&report, self.area.size_in(window).width, &palette)
                 .into_any_element()
         } else {
             div().into_any_element()
@@ -865,9 +939,11 @@ impl InsightsPage {
             ),
         ];
         // Without clocked games there is nothing to break down by clock.
-        let parts: Vec<(&'static str, Rows)> = parts
+        let parts: Vec<(&'static str, Vec<AnyElement>)> = parts
             .into_iter()
             .filter(|(title, rows)| *title != "By clock" || !rows.is_empty())
+            .map(|(title, rows)| (title, result_rows(rows, palette)))
+            .chain(endgame_parts(report.endgames.as_ref(), palette))
             .collect();
         let openings = &report.by_opening;
         let best = best_and_weakest(openings);
