@@ -83,8 +83,13 @@ can add them as a friend, challenge them or watch their current game.
   games_ downloads any Lichess or Chess.com player's standard games (every game or the newest
   months, some speeds, rated only) into a database of their own to prepare against them, opened
   with their name as the filter; _Update games_ downloads them again as asked before, replacing
-  the old ones. `kchess-cli db` lists, imports, downloads the master games
-  (`masters [--months n]`) or a player's games (`player lichess|chesscom <name>`), searches
+  the old ones. _Lichess games_ reads a month of Lichess's rated games
+  (`database.lichess.org/standard`, CC0, some 30 GB a month) as it downloads, checked against its
+  digest and never saved whole, and keeps only the games of two players rated at least 2000,
+  2200, 2400 or 2500, without bullet or bots (about one in a hundred at 2400), in a database of
+  that floor's own; _Add a month_ brings in another month. `kchess-cli db` lists, imports, downloads the master games
+  (`masters [--months n]`), a player's games (`player lichess|chesscom <name>`) or a month of
+  strong Lichess games (`lichess [--rating n] [--month YYYY-MM]`, `lichess months`), searches
   (`--position <fen>` among the rest), prints, renames and deletes them.
 - **Lichess cloud evaluation**: Lichess's stored deep evaluation of the position, shown beside
   the local engine, or in its place when Stockfish is off. It is off by default because every

@@ -91,6 +91,9 @@ pub struct Core {
     /// Where `gameDbMasterInstall` finds the master games archive: Lichess's, or the test
     /// origin's `/database/broadcast/` in its place.
     pub(crate) master_games_url: String,
+    /// Where the `gameDbLichess*` methods find Lichess's monthly rated games: Lichess's, or the
+    /// test origin's `/database/standard/` in its place.
+    pub(crate) lichess_games_url: String,
     /// Managed engine installs and deletes in progress, by request id.
     installs: Mutex<HashMap<u64, CancellationToken>>,
     /// Counts the changes to each tournament's memberships, each made in the write that makes
@@ -205,6 +208,10 @@ impl Core {
             || crate::gamedb::master::ARCHIVE.to_string(),
             |origin| format!("{origin}/database/broadcast/"),
         );
+        let lichess_games_url = test.lichess_origin.as_deref().map_or_else(
+            || crate::gamedb::lichess::ARCHIVE.to_string(),
+            |origin| format!("{origin}/database/standard/"),
+        );
         let services = Services::new(
             Arc::clone(&host),
             Arc::clone(&database),
@@ -267,6 +274,7 @@ impl Core {
             usage,
             puzzle_db_url,
             master_games_url,
+            lichess_games_url,
             installs: Mutex::new(HashMap::new()),
             memberships: Arc::default(),
             busy,

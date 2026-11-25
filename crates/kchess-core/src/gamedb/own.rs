@@ -344,6 +344,7 @@ async fn build(
         total_bytes: pgn.len() as u64,
         packing: PgnPacking::Plain,
         label: Some(fingerprint.to_string()),
+        keep: None,
     };
     let dir = inner.dir.clone();
     let host = Arc::clone(&inner.host);

@@ -1,10 +1,13 @@
 //! The local game databases.
 
-use kchess_contracts::check::{DatabaseId, DatabaseName, GameDbGameId, MasterMonths, PgnFilePath};
+use kchess_contracts::check::{
+    DatabaseId, DatabaseName, GameDbGameId, LichessMonth, MasterMonths, PgnFilePath,
+};
 use kchess_contracts::core_api::GameDbApi;
 use kchess_contracts::error::Result;
 use kchess_contracts::types::{
-    DatabaseSource, GameDbImported, GameDbPage, GameDbQuery, GameDbStatus, GameSite, PlayerGames,
+    DatabaseSource, GameDbImported, GameDbPage, GameDbQuery, GameDbStatus, GameSite,
+    LichessArchive, LichessGames, PlayerGames,
 };
 
 use crate::core::Core;
@@ -65,6 +68,24 @@ impl GameDbApi for Core {
                 months.map(|months| months.0),
                 &*self.usage,
             )
+            .await
+    }
+
+    async fn game_db_lichess_months(&self) -> Result<LichessArchive> {
+        self.gamedb
+            .lichess_months(&self.lichess_games_url, &*self.usage)
+            .await
+    }
+
+    async fn game_db_lichess_size(&self, month: LichessMonth) -> Result<Option<u64>> {
+        self.gamedb
+            .lichess_size(&self.lichess_games_url, &month.0, &*self.usage)
+            .await
+    }
+
+    async fn game_db_lichess_install(&self, request: LichessGames) -> Result<GameDbImported> {
+        self.gamedb
+            .lichess_install(&self.lichess_games_url, request, &*self.usage)
             .await
     }
 

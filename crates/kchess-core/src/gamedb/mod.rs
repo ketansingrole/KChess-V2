@@ -10,6 +10,7 @@
 pub mod deep;
 pub mod explore;
 pub mod import;
+pub mod lichess;
 pub mod master;
 pub mod own;
 pub mod player;

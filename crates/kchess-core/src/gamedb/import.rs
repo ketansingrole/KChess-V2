@@ -48,12 +48,134 @@ pub enum Target {
 }
 
 /// What an import reads: a PGN text, held as `packing` says, of `total_bytes` bytes, recorded
-/// in the database as `label` (a file's name).
+/// in the database as `label` (a file's name). With `keep`, only the games whose header lines it
+/// keeps are read at all (`HeaderFilter`).
 pub struct Input<R> {
     pub reader: R,
     pub total_bytes: u64,
     pub packing: PgnPacking,
     pub label: Option<String>,
+    pub keep: Option<Keep>,
+}
+
+/// Which games of a text an import reads, by their header lines (`[White "…"]` and the rest,
+/// each with its line ending), before their moves are read.
+pub type Keep = Box<dyn FnMut(&[u8]) -> bool + Send>;
+
+/// The most header text one game may have: past it, the game is left out.
+const MAX_HEADERS: usize = 64 * 1024;
+
+/// A PGN text with only the games `keep` keeps, by their header lines: the others' lines are
+/// passed over unread, so a huge text of mostly unwanted games costs a scan of its lines, not a
+/// parse of every game. A game starts at a header line (`[`) after moves; text before the first
+/// game is left out.
+pub struct HeaderFilter<R> {
+    inner: R,
+    keep: Keep,
+    line: Vec<u8>,
+    headers: Vec<u8>,
+    /// Text kept, waiting to be read.
+    out: Vec<u8>,
+    at: usize,
+    state: Filtering,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Filtering {
+    /// Reading a game's header lines.
+    Headers,
+    /// Reading a game's moves: kept or passed over.
+    Moves { kept: bool },
+}
+
+impl<R: io::BufRead> HeaderFilter<R> {
+    pub fn new(inner: R, keep: Keep) -> HeaderFilter<R> {
+        HeaderFilter {
+            inner,
+            keep,
+            line: Vec::new(),
+            headers: Vec::new(),
+            out: Vec::new(),
+            at: 0,
+            state: Filtering::Moves { kept: false },
+        }
+    }
+
+    /// Whether the game whose header lines are held is kept: given to `keep`, unless they ran
+    /// past `MAX_HEADERS`.
+    fn decide(&mut self) -> bool {
+        let kept = self.headers.len() <= MAX_HEADERS && (self.keep)(&self.headers);
+        if kept {
+            self.out.extend_from_slice(&self.headers);
+        }
+        self.headers.clear();
+        kept
+    }
+
+    /// Reads lines until some text is kept, or the text ends.
+    fn fill(&mut self) -> io::Result<()> {
+        self.out.clear();
+        self.at = 0;
+        while self.out.len() < 64 * 1024 {
+            self.line.clear();
+            if self.inner.read_until(b'\n', &mut self.line)? == 0 {
+                // A last game with no moves.
+                if self.state == Filtering::Headers {
+                    self.decide();
+                    self.state = Filtering::Moves { kept: false };
+                }
+                break;
+            }
+            let header = self.line.first() == Some(&b'[');
+            match self.state {
+                Filtering::Headers if header => {
+                    if self.headers.len() <= MAX_HEADERS {
+                        self.headers.extend_from_slice(&self.line);
+                    }
+                }
+                Filtering::Headers => {
+                    let kept = self.decide();
+                    if kept {
+                        self.out.extend_from_slice(&self.line);
+                    }
+                    self.state = Filtering::Moves { kept };
+                }
+                Filtering::Moves { .. } if header => {
+                    self.state = Filtering::Headers;
+                    self.headers.extend_from_slice(&self.line);
+                }
+                Filtering::Moves { kept } => {
+                    if kept {
+                        self.out.extend_from_slice(&self.line);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<R: io::BufRead> Read for HeaderFilter<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.at == self.out.len() {
+            self.fill()?;
+        }
+        let n = buf.len().min(self.out.len() - self.at);
+        buf[..n].copy_from_slice(&self.out[self.at..self.at + n]);
+        self.at += n;
+        Ok(n)
+    }
+}
+
+/// The text `input` reads, through `keep` when given.
+fn kept(input: impl io::BufRead + 'static, keep: Option<Keep>) -> Box<dyn io::BufRead> {
+    match keep {
+        Some(keep) => Box::new(BufReader::with_capacity(
+            1 << 20,
+            HeaderFilter::new(input, keep),
+        )),
+        None => Box::new(input),
+    }
 }
 
 /// How far an import has come.
@@ -448,6 +570,7 @@ pub fn run(
         total_bytes,
         packing,
         label: file_name,
+        keep: None,
     };
     read_into(input, target, dir, capacity, watch)
 }
@@ -466,6 +589,7 @@ pub fn read_into<R: Read + Seek + Send + 'static>(
         total_bytes,
         packing,
         label,
+        keep,
     } = input;
     let read = Arc::new(AtomicU64::new(0));
     let counted = Counted {
@@ -528,7 +652,10 @@ pub fn read_into<R: Read + Seek + Send + 'static>(
                     }
                 })
                 .map_err(|e| CoreError::wrap("Could not start the import", e))?;
-            let input = BufReader::with_capacity(1 << 20, crate::zst::ChannelReader::new(receive));
+            let input = kept(
+                BufReader::with_capacity(1 << 20, crate::zst::ChannelReader::new(receive)),
+                keep,
+            );
             let games = read_games(
                 &db,
                 import,
@@ -550,7 +677,7 @@ pub fn read_into<R: Read + Seek + Send + 'static>(
                 (Err(error), _) | (Ok(_), Err(error)) => Err(error),
             }?
         } else {
-            let input = BufReader::with_capacity(1 << 20, counted);
+            let input = kept(BufReader::with_capacity(1 << 20, counted), keep);
             read_games(
                 &db,
                 import,

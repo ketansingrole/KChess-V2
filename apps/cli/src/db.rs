@@ -1,11 +1,12 @@
 //! `db`: the game databases on this computer — list them, import a PGN file, download the master
-//! games or a player's games, search one's games, print a game, rename and delete.
+//! games, a player's games or a month of strong Lichess games, search one's games, print a game,
+//! rename and delete.
 
 use kchess_contracts::calls;
 use kchess_contracts::check::{DatabaseId, DatabaseName, GameDbGameId, MasterMonths, PgnFilePath};
 use kchess_contracts::types::{
     ExplorerSpeed, GameDbImported, GameDbPhase, GameDbProgress, GameDbQuery, GameDbResult,
-    GameDbSide, GameDbSort, GameSite, PlayerGames,
+    GameDbSide, GameDbSort, GameSite, LichessGames, PlayerGames,
 };
 use serde_json::json;
 
@@ -31,6 +32,10 @@ pub enum Db {
     /// Download a player's games into their database, replacing those an earlier download
     /// brought.
     Player(PlayerGames),
+    /// Download a month of Lichess's rated games, keeping the strong ones.
+    Lichess(LichessGames),
+    /// List Lichess's months of rated games, and those each database of them holds.
+    LichessMonths,
     Games(GameDbQuery),
     Game {
         database: String,
@@ -144,6 +149,28 @@ pub fn parse(words: &[String]) -> Result<Db, String> {
             }
             Ok(Db::Player(request))
         }
+        "lichess" => {
+            if rest.first().map(String::as_str) == Some("months") {
+                return match rest.get(1) {
+                    None => Ok(Db::LichessMonths),
+                    Some(other) => Err(format!("db lichess months does not take {other}.")),
+                };
+            }
+            let mut words = rest.iter();
+            let mut request = LichessGames {
+                month: None,
+                min_rating: DEFAULT_RATING,
+            };
+            while let Some(word) = words.next() {
+                let flag = word.as_str();
+                match flag {
+                    "--month" => request.month = Some(value(&mut words, flag)?),
+                    "--rating" => request.min_rating = number(&value(&mut words, flag)?, flag)?,
+                    other => return Err(format!("db lichess does not take {other}.")),
+                }
+            }
+            Ok(Db::Lichess(request))
+        }
         "games" => {
             let mut query = GameDbQuery {
                 database: database(rest)?,
@@ -223,11 +250,14 @@ pub fn parse(words: &[String]) -> Result<Db, String> {
             database: database(rest)?,
         }),
         other => Err(format!(
-            "Unknown db command {other}: list, import, masters, player, games, game, rename or \
-             delete."
+            "Unknown db command {other}: list, import, masters, player, lichess, games, game, \
+             rename or delete."
         )),
     }
 }
+
+/// The rating both players of a strong Lichess game had at least, unless `--rating` says.
+const DEFAULT_RATING: u32 = 2400;
 
 /// An import's progress, as one line.
 fn progress_line(progress: &GameDbProgress) -> String {
@@ -303,6 +333,11 @@ pub async fn run(core: &CoreClient, events: &mut ClientEvents, db: Db) -> Result
             let install = core.request(calls::GameDbPlayerInstall { request });
             print(json!(follow(core, events, install).await?));
         }
+        Db::Lichess(request) => {
+            let install = core.request(calls::GameDbLichessInstall { request });
+            print(json!(follow(core, events, install).await?));
+        }
+        Db::LichessMonths => print(json!(core.request(calls::GameDbLichessMonths {}).await?)),
         Db::Games(query) => {
             // Games are withheld during a live game: the core checks there is none first.
             core.request(calls::ResumeOnline {}).await?;
@@ -420,6 +455,21 @@ mod tests {
             })
         );
         assert_eq!(
+            parse(&words("lichess")).unwrap(),
+            Db::Lichess(LichessGames {
+                month: None,
+                min_rating: 2400
+            })
+        );
+        assert_eq!(
+            parse(&words("lichess --rating 2200 --month 2026-10")).unwrap(),
+            Db::Lichess(LichessGames {
+                month: Some("2026-10".into()),
+                min_rating: 2200
+            })
+        );
+        assert_eq!(parse(&words("lichess months")).unwrap(), Db::LichessMonths);
+        assert_eq!(
             parse(&words("delete abc")).unwrap(),
             Db::Delete {
                 database: "abc".into()
@@ -444,6 +494,10 @@ mod tests {
             ("player lichess", "needs the player's username"),
             ("player lichess someone --speed fast", "--speed takes"),
             ("player lichess someone --max 3", "does not take --max"),
+            ("lichess --rating high", "takes a number"),
+            ("lichess --month", "needs a value"),
+            ("lichess months 3", "does not take 3"),
+            ("lichess --speed blitz", "does not take --speed"),
             ("frobnicate", "Unknown db command"),
         ] {
             let error = parse(&words(text)).unwrap_err();
