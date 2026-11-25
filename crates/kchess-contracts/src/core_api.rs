@@ -773,6 +773,13 @@ core_api! {
             database: Option<DatabaseId>,
             game: Option<GameDbGameId>
         ) -> crate::types::GameDbNovelty;
+        /// Each of a repertoire's positions through every database but Your games: the games
+        /// that went on from it, how each of the repertoire's moves there did, with its verdict
+        /// for the side to move, and the most played others. One answer a step, in order.
+        #[assist(Lookups)]
+        GameDbRepertoire = "gameDbRepertoire" fn game_db_repertoire(
+            steps: RepertoireSteps
+        ) -> Vec<crate::types::GameDbRepertoireCheck>;
         #[writes(GameDb)]
         GameDbMasterInstall = "gameDbMasterInstall" fn game_db_master_install(;
             months: Option<MasterMonths>

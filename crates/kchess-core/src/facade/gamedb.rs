@@ -180,6 +180,13 @@ impl GameDbApi for Core {
         self.gamedb.export(&database.0, selection, path.0).await
     }
 
+    async fn game_db_repertoire(
+        &self,
+        steps: kchess_contracts::check::RepertoireSteps,
+    ) -> Result<Vec<kchess_contracts::types::GameDbRepertoireCheck>> {
+        self.gamedb.repertoire(steps.0).await
+    }
+
     async fn game_db_novelty(
         &self,
         fen: Fen,

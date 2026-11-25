@@ -11,6 +11,7 @@ pub mod guess;
 pub mod lessons;
 pub mod openings;
 pub mod puzzle;
+pub mod repertoire_check;
 pub mod repetition;
 pub mod rush;
 pub mod uci_info;

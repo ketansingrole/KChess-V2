@@ -1553,6 +1553,107 @@ fn whats_new() {
     }
 }
 
+/// Practice → Repertoire → Check against databases on a Sicilian repertoire, in both
+/// appearances: `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::repertoire_check
+/// -- --ignored` writes `<dir>/repertoire-check-<appearance>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn repertoire_check() {
+    use kchess_contracts::calls;
+    use kchess_contracts::check::{DatabaseName, PgnFilePath};
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).to_path_buf();
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    // Each line with its games' results, White's wins, draws and Black's wins.
+    let lines: [(&str, [usize; 3]); 8] = [
+        (
+            "1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6",
+            [11, 10, 9],
+        ),
+        (
+            "1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 g6",
+            [4, 2, 2],
+        ),
+        ("1. e4 c5 2. Nf3 Nc6", [8, 7, 5]),
+        ("1. e4 c5 2. Nc3 Nc6", [9, 9, 7]),
+        ("1. e4 c5 2. Nc3 e6", [1, 0, 0]),
+        ("1. e4 c5 2. c3 Nf6", [8, 2, 2]),
+        ("1. e4 c5 2. c3 d5", [8, 9, 8]),
+        ("1. e4 e5", [15, 15, 10]),
+    ];
+    let mut pgn = String::new();
+    for (moves, results) in lines {
+        for (result, count) in ["1-0", "1/2-1/2", "0-1"].into_iter().zip(results) {
+            pgn += &format!(
+                "[WhiteElo \"2400\"]\n[BlackElo \"2300\"]\n[Result \"{result}\"]\n\n{moves} {result}\n\n"
+            )
+            .repeat(count);
+        }
+    }
+    let files = tempfile::tempdir().expect("a folder for the file");
+    let path = files.path().join("club.pgn");
+    std::fs::write(&path, pgn).expect("the file");
+    let repertoire = "1. e4 c5 2. Nf3 (2. Nc3 e6) (2. c3 Nf6) (2. d4 cxd4) d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 (5. Bd3 Nc6) a6 *";
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), 1100., 820.);
+        cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
+        let imported = cx.update(|cx| {
+            cx.global::<crate::core::AppCore>()
+                .request(calls::GameDbImport {
+                    path: PgnFilePath(path.to_string_lossy().into_owned()),
+                    into: None,
+                    name: Some(DatabaseName("Club".into())),
+                })
+        });
+        cx.foreground_executor()
+            .block_test(imported)
+            .expect("the games are imported");
+        let saved = cx.update(|cx| {
+            cx.global::<crate::studies::StudyHandle>()
+                .0
+                .read(cx)
+                .command(kchess_contracts::types::StudyCommand::Save {
+                    name: "Sicilian".into(),
+                    pgn: repertoire.into(),
+                    id: None,
+                    chapter_id: None,
+                })
+        });
+        let id = cx
+            .foreground_executor()
+            .block_test(saved)
+            .expect("the study is saved")
+            .id
+            .expect("its id");
+        cx.update_window(window, |_, window, cx| {
+            crate::prefs::set(cx, "kchess:repertoire-color", "black");
+            kchess_practice::repertoire::train_study(id, window, cx)
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            let trainer = crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+                .and_then(|page| page.read(cx).repertoire())
+                .expect("the repertoire trainer");
+            trainer.update(cx, |trainer, cx| {
+                trainer.check_against_databases(window, cx)
+            })
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("repertoire-check-{name}.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::quit::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
 /// An event's table, a ten-player round robin with its crosstable, in both appearances:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::event_table -- --ignored`
 /// writes `<dir>/event-table-<appearance>.png`.

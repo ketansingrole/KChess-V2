@@ -323,6 +323,52 @@ pub struct NoveltyMove {
     pub games: u64,
 }
 
+/// A position of a repertoire where it is the repertoire's side to move, and the moves it
+/// plays there (`gameDbRepertoire`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RepertoireStep {
+    pub fen: String,
+    /// In UCI.
+    pub moves: Vec<String>,
+}
+
+union!(#[doc = "What the databases' games say of a repertoire's move."] GameDbVerdict {
+    Played = "played",
+    Unplayed = "unplayed",
+    Rare = "rare",
+    Weaker = "weaker",
+});
+
+/// A repertoire's position through the databases: the games that went on from it, and its
+/// moves with the most played others.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbRepertoireCheck {
+    pub fen: String,
+    pub games: u64,
+    /// The repertoire's moves first, as it gave them, then the others most played first.
+    pub moves: Vec<GameDbRepertoireMove>,
+}
+
+/// A move from a repertoire's position, with its games and how they ended.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbRepertoireMove {
+    pub uci: String,
+    pub san: String,
+    pub games: u64,
+    pub white: u64,
+    pub draws: u64,
+    pub black: u64,
+    /// The average rating of its rated games' players.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<u32>,
+    /// The verdict on a repertoire's move; none for the others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<GameDbVerdict>,
+}
+
 /// A game saved into a database: the database as it is now, and the game's id in it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
