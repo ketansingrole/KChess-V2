@@ -351,10 +351,15 @@ impl Tablebases {
         let mut fetches = futures_util::stream::iter(missing)
             .map(|file| self.fetch(&client, file, token, &tell))
             .buffer_unordered(PARALLEL);
+        // One file failing lets the others finish, so the next download fetches only it; a
+        // cancelled download ends each fetch at its next chunk.
+        let mut first = None;
         while let Some(fetched) = fetches.next().await {
-            fetched?;
+            if let Err(cause) = fetched {
+                first.get_or_insert(cause);
+            }
         }
-        Ok(())
+        first.map_or(Ok(()), Err)
     }
 
     /// Downloads `file`, keeps it only when it matches its size and SHA-256.

@@ -179,6 +179,56 @@ async fn a_file_that_fails_its_checksum_is_not_kept_and_the_next_download_fetche
     drop(open);
 }
 
+/// A file the mirror does not have fails the download with the server's answer, but the files
+/// still downloading finish and are kept, so the next download fetches only the one it lacks.
+#[tokio::test]
+async fn a_file_the_mirror_refuses_fails_the_download_and_the_others_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("tablebases");
+    // `KRvK.rtbz` is held back until `KQvK.rtbw`'s refusal has had time to come in: a download
+    // that gave up at the first failure dropped it.
+    let (open, gate) = watch::channel(false);
+    let mirror = Mirror::new(gate);
+    mirror.files.lock().unwrap().remove("KQvK.rtbw");
+    let fixture = mirror.serve().await;
+    let (tables, _host) = tablebases(&folder, &fixture.base);
+
+    let (seen, report) = reports();
+    let install = tokio::spawn({
+        let tables = tables.clone();
+        async move { tables.install(report).await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    open.send(true).unwrap();
+    let failed = install.await.unwrap().expect_err("one file is missing");
+    assert_eq!(failed.message, "The tablebase download failed: HTTP 404.");
+    assert_eq!(last_phase(&seen), json!("failed"));
+    let status = tables.status().await;
+    assert_eq!((status.files, status.total_files), (3, 4));
+    assert!(folder.join("KRvK.rtbz").exists());
+    assert!(!status.installed && !status.busy);
+    assert!(leftovers(&folder).is_empty(), "{:?}", leftovers(&folder));
+}
+
+/// With no mirror to reach, the download says the network failed, so the person checks their
+/// connection rather than trying again blindly.
+#[tokio::test]
+async fn an_unreachable_mirror_fails_the_download_as_a_network_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("tablebases");
+    // A port nothing listens on: the connection is refused at once.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", closed.local_addr().unwrap());
+    drop(closed);
+    let (tables, _host) = tablebases(&folder, &base);
+    let failed = tables.install(|_| {}).await.expect_err("nothing answers");
+    assert_eq!(
+        failed.message,
+        "The tablebase download failed (network error)."
+    );
+    assert!(!tables.status().await.busy);
+}
+
 #[tokio::test]
 async fn a_cancelled_download_keeps_the_files_it_finished() {
     let dir = tempfile::tempdir().unwrap();
