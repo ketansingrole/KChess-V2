@@ -1,22 +1,46 @@
 # What's new in KChess
 
-The app shows these notes once after an update, and keeps them under Settings → Updates →
-What's new; the GitHub release and the App Store use them too. They are for players, not
-developers: see "What's new" in AGENTS.md. Add a short line (280 characters at most) under
-Unreleased below; `cargo xtask release-version` turns it into the new version and its date, and
-refuses to release with nothing there.
+The app shows these notes before an update installs and once after it, and keeps them under
+Settings → Updates → What's new; the GitHub release and the App Store use them too. They are for
+players, not developers: see "What's new" in AGENTS.md. Under Unreleased below, keep the summary
+up to date and add one plain sentence (280 characters at most) under Added, Changed or Fixed;
+`cargo xtask release-version` turns it into the new version and its date, and refuses to release
+with nothing there.
 
 ## Unreleased
 
-- **Your own game database**: import a PGN file, or a .zip, .7z or .bz2 of them, as large as you like, then pick Database in the explorer to see the moves played from any position, offline. Narrow it to a player, their colour, a rating or a year to prepare for an opponent.
-- **Your games in the database**: your Lichess and Chess.com games and the games you finish here make a Your games database that keeps itself up to date. Pick it in the explorer's Database tab to see how your own games went from any position.
-- **Fair play on every account**: a game you start on any connected Lichess account, on the website or your phone, now turns engine help off until it ends, as a game on the account you play from does.
-- **Database page**: browse the games in your game databases, search them by player, event, year, rating or result, and open any one. Drop a PGN file on the page to import it. On the analysis board, More → Games with this position lists every game that reached it.
-- **Master games**: on the Database page, download over a million games from top over-the-board events since 2020, then add each new month's games with Update master games.
-- **Engine games**: on the Database page, download every game of the Top Chess Engine Championship's competitions, the strongest chess ever played, and see which openings the best engines choose. Update engine games brings in each new season.
-- **Strong Lichess games**: on the Database page, Lichess games downloads a month of Lichess's rated games and keeps only those between two strong players, 2400 and up or a level you pick, without bullet or bots. Add a month brings in more.
-- **Prepare against a player**: on the Database page, Player's games downloads anyone's Lichess or Chess.com games, from the months, speeds and rated games you pick. See how they play as White and as Black, and bring in their latest games with Update games.
-- **Fixes**: closing the window on Windows and Linux keeps KChess in the tray if you chose Keep running. Updates download on their own again after an offline start. Settings → Updates shows “Update available” again. Voice input no longer freezes KChess. Plus many smaller fixes.
+KChess is now a chess database too. Keep millions of games on your computer, from your own files, top events, engines, strong Lichess players or the opponent you are preparing for, and study them with no connection.
+
+### Added
+
+- The Database page lists the games in your databases. Search them by player, event, year, rating or result, and open any one on the analysis board.
+- You can import a PGN file, or a .zip, .7z or .bz2 of them, however large: drop it on the Database page.
+- The Database page downloads master games from top events since 2020, every game of the Top Chess Engine Championship, or a month of games between strong Lichess players, and brings in the new ones when you update.
+- Player's games downloads anyone's Lichess or Chess.com games, so you can see how they play as White and as Black before you face them.
+- Your Lichess and Chess.com games, and the games you finish here, make a Your games database that keeps itself up to date.
+- The explorer's Database tab shows the moves played from any position in your databases, offline.
+- More → Games with this position, on the analysis board, lists every game that reached it.
+- More → Opening report shows how games went from the position, its main lines and its strongest games.
+- The analysis board marks N on the first move of your game that no game in your databases played, and shows what was played there instead.
+- A game's menu → About opens a report on either player: how they score with each colour, their openings, their rating over time and their best wins.
+- More filters on the Database page finds games by length and time control, by an ending they reach, like rook against bishop (R vs B), or by a pawn structure, like an isolated queen pawn.
+- You can copy games into another database, save them as a PGN file or delete them, one at a time or every game a search finds, and save a game from the analysis board into any database.
+- Tidy up removes games that came in twice and merges the spellings of one player's name, like "Carlsen, M" and "Carlsen, Magnus".
+- The endgame tablebases download in Settings → Storage, so the analysis board shows how any position with up to five pieces ends, with no connection.
+
+### Changed
+
+- A game you start on any connected Lichess account, even on the website or your phone, now turns engine help off until it ends.
+- Settings → Storage shows everything KChess takes, the app included, and what your disk has left, with every download in one place. KChess asks first when a download would almost fill your disk.
+- What's new opens with a summary and lists each release's changes as Added, Changed and Fixed. Before an update installs, it shows what the update brings, including updates you skipped, and only once. You can turn it off in the same window.
+
+### Fixed
+
+- Closing the window on Windows and Linux keeps KChess in the tray when you chose Keep running.
+- Updates download on their own again after an offline start.
+- Settings → Updates shows “Update available” again.
+- Voice input no longer freezes KChess.
+- Many smaller fixes.
 
 ## 2026.11.9 (2026-11-22)
 

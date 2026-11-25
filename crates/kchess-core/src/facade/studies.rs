@@ -4,9 +4,10 @@ use kchess_contracts::check::{
     Bounded, ChapterName, Fen, GameId, LichessId, Moves, PgnText, Position, StudyId, Username,
 };
 use kchess_contracts::core_api::{Assist, StudiesApi};
+use kchess_contracts::events::CoreEvent;
 use kchess_contracts::types::{
     ChapterInput, CloudEval, LichessStudy, LookupOptions, OpeningDescription, PopularityMonth,
-    PositionLookup, PositionLookupKind, Reply, StudyExport, StudySyncRequest,
+    PositionLookup, PositionLookupKind, Reply, StudyExport, StudySyncRequest, TablebaseStatus,
 };
 
 use crate::core::Core;
@@ -24,8 +25,34 @@ impl StudiesApi for Core {
         if kind == PositionLookupKind::Database {
             return self.gamedb.lookup(fen.0, options.unwrap_or_default()).await;
         }
+        // The tablebases on this computer answer what they cover; Lichess's the rest.
+        if kind == PositionLookupKind::Tablebase
+            && let Some(found) = self.tablebases.lookup(&fen.0, crate::time::now_ms()).await
+        {
+            return Ok(found);
+        }
         let lookups = self.services.lookups();
         lookups.lookup(kind, &fen.0, options.as_ref()).await
+    }
+
+    async fn tablebase_status(&self) -> Result<TablebaseStatus> {
+        Ok(self.tablebases.status().await)
+    }
+
+    async fn tablebase_install(&self) -> Result<TablebaseStatus> {
+        let host = std::sync::Arc::clone(&self.host);
+        self.tablebases
+            .install(move |progress| host.emit(CoreEvent::TablebaseProgress(progress)))
+            .await
+    }
+
+    async fn tablebase_cancel(&self) -> Result<()> {
+        self.tablebases.cancel();
+        Ok(())
+    }
+
+    async fn tablebase_delete(&self) -> Result<TablebaseStatus> {
+        self.tablebases.delete().await
     }
 
     async fn lichess_studies(&self, account: Username) -> Result<Reply<Vec<LichessStudy>>> {

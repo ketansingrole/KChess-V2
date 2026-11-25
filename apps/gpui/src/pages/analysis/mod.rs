@@ -7,6 +7,8 @@ mod engine;
 mod import;
 mod load;
 mod notes;
+mod novelty;
+mod opening_report;
 mod page;
 mod practice;
 mod review;
@@ -111,7 +113,7 @@ use crate::engine_view::EVAL_BAR;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
 use crate::export::Exporter;
 use crate::game::STANDARD_FEN;
-use crate::game::played::PlayedGame;
+use crate::game::played::{DatabaseGame, PlayedGame};
 use crate::game::session::{Resumes, SAVE_DELAY, SessionSaver};
 use crate::game::surface::Steps;
 use crate::game::tree::{
@@ -119,6 +121,7 @@ use crate::game::tree::{
     moves_of, path_of, pv_san,
 };
 use crate::game::view::Way;
+use crate::game_db::GameDbHandle;
 use crate::online::OnlineHandle;
 use crate::pages::study_bar::{STUDY_BAR, StudyBar};
 use crate::part::Part;
@@ -335,6 +338,8 @@ pub struct AnalysisPage {
     cloud_error: Option<String>,
     cloud_request: u64,
     cloud_task: Option<Task<()>>,
+    /// The main line's novelty in the game databases.
+    novelty: novelty::Novelty,
     saver: SessionSaver<AnalysisPage>,
     wheel: crate::game::view::Wheel,
     focus: FocusHandle,
@@ -517,7 +522,12 @@ impl AnalysisPage {
                 if assisted != this.assisted {
                     this.assisted = assisted;
                     this.follow_review(cx);
+                    this.find_novelty(cx);
                 }
+            }),
+            // A database imported, changed or deleted: the novelty is looked up again.
+            cx.observe(&cx.global::<GameDbHandle>().0.clone(), |this, _, cx| {
+                this.find_novelty(cx)
             }),
             // Reviews streaming in, and the review queue: labels follow, and the engine makes way
             // while this game is reviewed.
@@ -598,6 +608,7 @@ impl AnalysisPage {
             cloud_error: None,
             cloud_request: 0,
             cloud_task: None,
+            novelty: Default::default(),
             saver: SessionSaver::start(SessionKind::Analysis, &[], window, cx),
             wheel: Default::default(),
             focus: cx.focus_handle(),
@@ -626,6 +637,11 @@ impl AnalysisPage {
 
     fn node(&self) -> &TreeNode {
         self.root.node_at(&self.path)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn board_badge(&self, cx: &App) -> Option<Badge> {
+        self.board.read(cx).state().badge.clone()
     }
 
     #[cfg(test)]
@@ -994,6 +1010,21 @@ impl AnalysisPage {
         (!white.is_empty() && !black.is_empty()).then(|| format!("{white} – {black}"))
     }
 
+    /// The game database game the board's game was opened from, or last saved as.
+    pub fn database_game(&self) -> Option<&DatabaseGame> {
+        self.review.origin.as_ref()?.database.as_ref()
+    }
+
+    /// The board's game is now `game` of a game database: Save changes replaces that one.
+    pub fn saved_to_database(&mut self, game: DatabaseGame, cx: &mut Context<Self>) {
+        self.review
+            .origin
+            .get_or_insert_with(Default::default)
+            .database = Some(game);
+        self.find_novelty(cx);
+        cx.notify();
+    }
+
     pub fn navigation(&self) -> u64 {
         self.navigation
     }
@@ -1045,6 +1076,7 @@ impl AnalysisPage {
         self.redraw(cx);
         self.analyse(cx);
         self.ask_cloud(cx);
+        self.find_novelty(cx);
     }
 
     /// Save the session, and the open study's chapter, shortly after the last change.
@@ -1138,9 +1170,11 @@ impl AnalysisPage {
             Some(position.turn()),
             last_move,
         );
-        // The review's label on the move just played; without one, checkmate's "#".
+        // The review's label on the move just played; without one, checkmate's "#", then the
+        // game's novelty.
         let marks = self.review_marks(cx);
         let mate = state.badge.take();
+        let novelty = self.novelty_badge(last_move);
         state.badge = marks
             .get(&self.path)
             .and_then(|mark| mark.classification)
@@ -1156,7 +1190,8 @@ impl AnalysisPage {
                     color,
                 }
             })
-            .or(mate);
+            .or(mate)
+            .or(novelty);
         // Practising: the game's move in red, to find a better one, and the piece to move once
         // hinted.
         if let Some(practice::PracticeShapes { played, hint }) = self.practice_shapes() {

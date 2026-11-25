@@ -25,6 +25,17 @@ use sha2::{Digest, Sha256};
 use crate::log::{IoResultExt as _, ResultExt as _};
 use crate::settings::{SettingsChanged, SettingsHandle};
 
+/// Where the running KChess is installed (its bundle, its folder or its AppImage), when it was
+/// installed from a KChess package, for Settings → Storage to measure.
+pub fn install_path() -> Option<PathBuf> {
+    let install = install::installed()?;
+    match install.package {
+        // The .deb's executable sits in `/opt/KChess` with everything it installed.
+        Package::Deb => install.path.parent().map(Path::to_path_buf),
+        Package::MacZip | Package::WindowsInstaller | Package::AppImage => Some(install.path),
+    }
+}
+
 mod download;
 mod install;
 mod patch;
@@ -120,8 +131,15 @@ pub struct Release {
     published_at: Option<String>,
     #[serde(default)]
     html_url: Option<String>,
+    /// Its notes: its `WHATS_NEW.md` section's Markdown.
+    #[serde(default)]
+    body: Option<String>,
     #[serde(default)]
     assets: Vec<Asset>,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
 }
 
 pub struct Updates {
@@ -135,6 +153,10 @@ pub struct Updates {
     pub progress: Option<(u64, u64)>,
     pub error: Option<String>,
     release: Option<Release>,
+    /// The releases between this app and the update, newest first, for their notes: fetched once
+    /// the update is downloaded, for the update's version.
+    skipped: Option<(String, Vec<Release>)>,
+    skipped_work: Option<Task<()>>,
     /// The checked update, ready to take this app's place: the new bundle on macOS, else the
     /// downloaded package.
     staged: Option<PathBuf>,
@@ -218,6 +240,22 @@ pub fn offer(release: &Release, current: &str, package: Option<Package>) -> Opti
     (newer && release.assets.iter().any(|asset| asset.name == name)).then(|| version.to_string())
 }
 
+/// The published releases of `releases` after `current` and before `update`, newest first.
+pub fn skipped(releases: Vec<Release>, current: &str, update: &str) -> Vec<Release> {
+    let (Some(current), Some(update)) = (parse_version(current), parse_version(update)) else {
+        return Vec::new();
+    };
+    let mut skipped: Vec<(Version, Release)> = releases
+        .into_iter()
+        .filter(|release| !release.draft && !release.prerelease)
+        .filter_map(|release| Some((parse_version(&release.tag_name)?, release)))
+        .filter(|(version, _)| current < *version && *version < update)
+        .collect();
+    skipped.sort_by_key(|(version, _)| std::cmp::Reverse(*version));
+    skipped.dedup_by(|a, b| a.0 == b.0);
+    skipped.into_iter().map(|(_, release)| release).collect()
+}
+
 fn log(message: &str) {
     crate::log::write(Level::Info, "updates", message);
 }
@@ -276,6 +314,8 @@ pub fn init(cx: &mut App) {
             progress: None,
             error: failed,
             release: None,
+            skipped: None,
+            skipped_work: None,
             staged: None,
             staged_hold: None,
             restart: false,
@@ -422,6 +462,7 @@ impl Updates {
                 self.phase = Phase::Downloaded;
                 self.released = release.published_at.clone();
                 self.release = Some(release);
+                self.fetch_skipped(cx);
                 return;
             }
             self.stage(None);
@@ -526,6 +567,7 @@ impl Updates {
                         log(&format!("staged {}", staged.path.display()));
                         this.stage(Some(staged));
                         this.phase = Phase::Downloaded;
+                        this.fetch_skipped(cx);
                     }
                     Err(cause) => {
                         log(&format!("download failed: {cause}"));
@@ -627,6 +669,60 @@ impl Updates {
                 }
             });
         }));
+    }
+
+    /// The releases between this app and the downloaded update, for what they bring
+    /// (`notes`): the update's own release names only its own notes. Once for each update; a
+    /// failure leaves the update's own notes.
+    fn fetch_skipped(&mut self, cx: &mut Context<Self>) {
+        let (Some(feed), Some(version)) = (self.feed.clone(), self.version.clone()) else {
+            return;
+        };
+        if self.skipped.as_ref().is_some_and(|(of, _)| *of == version) {
+            return;
+        }
+        let answer = on_runtime(recent(feed));
+        self.skipped_work = Some(cx.spawn(async move |this, cx| {
+            let answer = answer
+                .await
+                .unwrap_or_else(|_| Err("The check stopped".into()));
+            this.update(cx, |this, _| match answer {
+                Ok(releases) => {
+                    let skipped = skipped(releases, &this.current, &version);
+                    this.skipped = Some((version, skipped));
+                }
+                Err(cause) => log(&format!(
+                    "no notes of the releases before {version}: {cause}"
+                )),
+            })
+            .ok();
+        }));
+    }
+
+    /// What the update brings, newest first: its own release's notes, then those of the
+    /// releases since this app's (`fetch_skipped`); empty when none has notes.
+    pub fn notes(&self) -> Vec<crate::whats_new::Release> {
+        let (Some(release), Some(version)) = (self.release.as_ref(), self.version.as_deref())
+        else {
+            return Vec::new();
+        };
+        let skipped = self
+            .skipped
+            .as_ref()
+            .filter(|(of, _)| of == version)
+            .map(|(_, skipped)| skipped.as_slice())
+            .unwrap_or_default();
+        std::iter::once(release)
+            .chain(skipped)
+            .filter_map(|release| {
+                let version = release.tag_name.trim_start_matches('v');
+                // `2026-11-25` of `2026-11-25T10:00:00Z`.
+                let date = release.published_at.as_deref().and_then(|at| at.get(..10));
+                let notes =
+                    crate::whats_new::Release::from_body(version, date, release.body.as_deref()?);
+                (!notes.is_empty()).then_some(notes)
+            })
+            .collect()
     }
 
     /// The release's page, for its notes or a manual download.

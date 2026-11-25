@@ -485,6 +485,38 @@ fn take_headers(stored: &Stored, input: &mut In) -> Option<Vec<(String, String)>
     Some(headers)
 }
 
+/// The value of the header `name` that is not a column's (`TimeControl`, say), read from packed
+/// notes without unpacking the game; None when it has none.
+pub(super) fn header(notes: &[u8], name: &str) -> Option<String> {
+    let mut input = In(notes);
+    if input.byte()? != FORMAT {
+        return None;
+    }
+    let count = input.count()?;
+    // A column's value is not read here: only a header sharing its start with one is lost.
+    let mut values: Vec<Option<String>> = Vec::with_capacity(count);
+    for _ in 0..count {
+        let header = match input.uint()? {
+            0 => input.text()?,
+            at => NAMES.get(usize::try_from(at - 1).ok()?)?.to_string(),
+        };
+        let value = match input.uint()? {
+            0 => None,
+            1 => Some(input.text()?),
+            at => {
+                let other = values.get(usize::try_from(at - 2).ok()?)?.as_deref()?;
+                let length = usize::try_from(input.uint()?).ok()?;
+                Some(format!("{}{}", other.get(..length)?, input.text()?))
+            }
+        };
+        if header == name {
+            return value;
+        }
+        values.push(value);
+    }
+    None
+}
+
 fn option_list(list: &Option<Vec<String>>) -> &[String] {
     list.as_deref().unwrap_or_default()
 }

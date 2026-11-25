@@ -1465,3 +1465,90 @@ fn voice_on() {
         crate::profile::TEST_DATA_DIR.set(None);
     }
 }
+
+/// Every state of What's new, in both appearances: after an update, before installing (with and
+/// without what restarting would cost), the plain question once the notes are off, and the switch
+/// in Settings → Updates. `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui
+/// e2e::screens::whats_new -- --ignored` writes `<dir>/whats-new/<state>-<appearance>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn whats_new() {
+    use gpui_kit::component::WindowExt as _;
+    let out =
+        kchess_host::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("whats-new");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    type Open = fn(&mut gpui_kit::Window, &mut gpui_kit::App);
+    let states: [(&str, Open); 6] = [
+        ("after-update", |window, cx| {
+            let releases = crate::whats_new::releases().into_iter().take(2).collect();
+            crate::whats_new::open_after_update(releases, window, cx)
+        }),
+        ("before-install", |window, cx| {
+            let releases = crate::whats_new::releases().into_iter().take(2).collect();
+            crate::whats_new::open_before_update(
+                "2026.11.10".into(),
+                releases,
+                None,
+                |_| {},
+                window,
+                cx,
+            )
+        }),
+        ("before-install-live-game", |window, cx| {
+            let releases = crate::whats_new::releases().into_iter().take(1).collect();
+            let cost =
+                "Your Lichess game is still on, and its clock keeps running while KChess restarts";
+            crate::whats_new::open_before_update(
+                "2026.11.10".into(),
+                releases,
+                Some(cost),
+                |_| {},
+                window,
+                cx,
+            )
+        }),
+        ("before-install-puzzle-run", |window, cx| {
+            let releases = crate::whats_new::releases().into_iter().take(1).collect();
+            crate::whats_new::open_before_update(
+                "2026.11.10".into(),
+                releases,
+                Some("Your puzzle run ends"),
+                |_| {},
+                window,
+                cx,
+            )
+        }),
+        ("notes-off", |window, cx| {
+            crate::settings::change(cx, |s| s.frontend.update_show_notes = false);
+            let updates = cx.global::<crate::updates::UpdatesHandle>().0.clone();
+            updates.update(cx, |updates, _| updates.version = Some("2026.11.10".into()));
+            crate::pages::settings::updates::ask_restart(window, cx)
+        }),
+        ("settings", |window, cx| {
+            crate::settings::change(cx, |s| s.frontend.update_show_notes = true);
+            crate::shell::open_settings(crate::pages::settings::Section::Updates, window, cx)
+        }),
+    ];
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), 1100., 760.);
+        cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
+        for (state, open) in states {
+            cx.update_window(window, |_, window, cx| {
+                window.close_dialog(cx);
+                open(window, cx)
+            })
+            .expect("the window");
+            settle(&mut cx, window);
+            cx.capture_screenshot(window)
+                .expect("a screenshot")
+                .save(out.join(format!("{state}-{name}.png")))
+                .expect("the screenshot saves");
+        }
+        let quit = cx.update(crate::quit::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}

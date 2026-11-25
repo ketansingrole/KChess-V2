@@ -130,6 +130,32 @@ pub(super) async fn latest(feed: String) -> Result<Release, String> {
     .await
 }
 
+/// The releases most recently published, newest first: enough to cover the updates a player
+/// skipped, whose notes the latest release leaves out.
+pub(super) async fn recent(feed: String) -> Result<Vec<Release>, String> {
+    let url = format!("{feed}/repos/{REPOSITORY}/releases?per_page={RECENT}");
+    let client = http()?;
+    retried("notes", || async {
+        let response = client
+            .get(&url)
+            .header("Accept", "application/vnd.github+json")
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await;
+        answered(response, "Could not reach the update server", |status| {
+            format!("The update server answered {status}.")
+        })?
+        .json::<Vec<Release>>()
+        .await
+        .map_err(failed("The update server's answer could not be read"))
+        .map_err(Answer::Retry)
+    })
+    .await
+}
+
+/// The releases `recent` asks for: about a month of them.
+pub(super) const RECENT: usize = 10;
+
 /// How many times a download that stops part way picks up again before it fails.
 pub(super) const RESUMES: u32 = 4;
 /// The wait before the first resume; each later one waits twice as long.

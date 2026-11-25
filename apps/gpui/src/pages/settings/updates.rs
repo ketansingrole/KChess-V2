@@ -33,10 +33,32 @@ pub fn restart_cost(cx: &App) -> Option<&'static str> {
 
 /// Ask, then restart into the downloaded update (the Updates section and the top bar's button).
 /// The question names what a restart would cost now; unfinished games here are resumed.
+/// With `updateShowNotes` on and any notes known, the question is the notes of what it brings,
+/// the releases it skips included (`whats_new::open_before_update`).
 pub fn ask_restart(window: &mut Window, cx: &mut App) {
     let handle = cx.global::<UpdatesHandle>().0.clone();
     let version = handle.read(cx).version.clone().unwrap_or_default();
     let cost = restart_cost(cx);
+    let notes = if crate::settings::frontend(cx).update_show_notes {
+        handle.read(cx).notes()
+    } else {
+        Vec::new()
+    };
+    if !notes.is_empty() {
+        let handle = handle.downgrade();
+        crate::whats_new::open_before_update(
+            version,
+            notes,
+            cost,
+            move |cx| {
+                // Unsaved work reaches the profile first, as on any quit (`Updates::install`).
+                handle.update(cx, |updates, cx| updates.install(cx)).ok();
+            },
+            window,
+            cx,
+        );
+        return;
+    }
     crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
         let handle = handle.clone();
         dialog
@@ -438,15 +460,19 @@ impl SettingsPage {
                     .child(error)
             }))
             .child(about);
-        let can_check = updates.can_check();
-        v_flex().gap(px(16.)).child(status).when(can_check, |page| {
-            page.child(
-                self.rows()
-                    .switch("update-auto-check", settings, true, palette)
-                    .switch("update-auto-download", settings, true, palette)
-                    .switch("update-install-on-quit", settings, true, palette)
-                    .card(palette),
-            )
-        })
+        let mut rows = self.rows();
+        if updates.can_check() {
+            rows = rows
+                .switch("update-auto-check", settings, true, palette)
+                .switch("update-auto-download", settings, true, palette)
+                .switch("update-install-on-quit", settings, true, palette);
+        }
+        // Every installation shows what an update brought, however it was updated, so the
+        // switch stays where the updater's own are hidden.
+        let rows = rows.switch("update-show-notes", settings, true, palette);
+        v_flex()
+            .gap(px(16.))
+            .child(status)
+            .child(rows.card(palette))
     }
 }

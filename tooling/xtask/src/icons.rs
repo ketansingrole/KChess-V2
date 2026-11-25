@@ -71,6 +71,7 @@ const ICONS: &[(&str, Option<&str>)] = &[
     ("circle-check", Some("checkmark_circle")),
     ("circle-dot", Some("record")),
     ("circle-help", Some("question_circle")),
+    ("circle-plus", Some("add_circle")),
     ("circle-x", Some("dismiss_circle")),
     ("cloud", Some("cloud")),
     ("cloud-download", Some("cloud_arrow_down")),

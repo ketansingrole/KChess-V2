@@ -8,12 +8,18 @@
 //! (`own`), rebuilt when no import or download runs.
 
 pub mod deep;
+pub mod edit;
 pub mod explore;
 pub mod import;
 pub mod lichess;
 pub mod master;
+pub mod names;
+pub mod novelty;
+pub mod opening;
 pub mod own;
 pub mod player;
+pub mod report;
+pub mod scan;
 pub mod schema;
 pub mod search;
 pub mod tcec;
@@ -35,14 +41,20 @@ use kchess_contracts::CoreEvent;
 use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    DatabaseInfo, DatabaseSource, GameDbImported, GameDbPage, GameDbPhase as Phase, GameDbProgress,
-    GameDbQuery, GameDbStatus, LookupOptions, PositionLookup,
+    DatabaseInfo, DatabaseSource, GameDbImported, GameDbNameGroup, GameDbNovelty,
+    GameDbOpeningReport, GameDbPage, GameDbPhase as Phase, GameDbPlayerReport, GameDbProgress,
+    GameDbQuery, GameDbSaved, GameDbStatus, LookupOptions, PositionLookup,
 };
 use kchess_domain::gamedb;
 
 /// Tree rows an import holds in memory before it writes a run file: 7/8 of a 2^21-slot table,
 /// the most it holds without growing, at 64 bytes a slot some 130 MB.
 const TREE_ROWS: usize = 1_835_008;
+/// Tree rows held for a few games saved from the board: its full table would take 130 MB for
+/// one game's forty rows.
+const FEW_ROWS: usize = 4_096;
+/// The files a copy writes its games to before it imports them, swept as the run files are.
+const COPY_PREFIX: &str = ".copy-";
 /// How often an import reports its progress.
 const REPORT_EVERY: Duration = Duration::from_millis(250);
 
@@ -309,6 +321,8 @@ impl Inner {
             // The run files of the opening tree and of the position index.
             if name.starts_with(".tree-") || name.starts_with(".deep-") {
                 std::fs::remove_dir_all(&path).ok();
+            } else if name.starts_with(COPY_PREFIX) {
+                std::fs::remove_file(&path).ok();
             } else if name.ends_with(".partial") {
                 import::remove_files(&path);
             }
@@ -385,6 +399,15 @@ impl Inner {
 }
 
 /// The last report of a run that ended in `error`: cancelled when it was asked to stop.
+/// The databases `files` names, open to read; one being written for the first time is left out,
+/// having nothing to read yet.
+fn open_references(files: Vec<(String, PathBuf)>) -> Vec<(String, rusqlite::Connection)> {
+    files
+        .into_iter()
+        .filter_map(|(id, file)| Some((id, schema::open_read(&file).ok()?)))
+        .collect()
+}
+
 fn failed(running: &Running, database: &str, error: &CoreError) -> GameDbProgress {
     let phase = if running.cancel.is_cancelled() {
         Phase::Cancelled
@@ -605,13 +628,366 @@ impl GameDbService {
         self.status().await
     }
 
+    /// The ids of the games `selection` names in database `id`, read through its reader.
+    async fn selected(&self, id: &str, selection: edit::Selection) -> Result<Vec<i64>> {
+        if let edit::Selection::Search(query) = &selection
+            && query.database != id
+        {
+            return Err(CoreError::new("That search is of another database."));
+        }
+        let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
+        let stopped = Arc::clone(&stop.0);
+        let lane = self.inner.reader(id)?;
+        lane.run(move |db| edit::selected(db, &selection, &stopped))
+            .await
+    }
+
+    /// Adds the games of `pgn` to database `id`; with `replacing`, then removes that game.
+    async fn save_inner(
+        &self,
+        into: edit::Into,
+        pgn: String,
+        replacing: Option<u64>,
+    ) -> Result<GameDbSaved> {
+        let (id, target) = match into {
+            edit::Into::Existing(id) => {
+                own::refuse(&id, "Your games holds only your own games.")?;
+                let file = self.inner.file(&id);
+                if !file.is_file() {
+                    return Err(CoreError::new("That database is not on this computer."));
+                }
+                (id, import::Target::Existing { file })
+            }
+            edit::Into::New(name) => {
+                let id = new_id(&name);
+                std::fs::create_dir_all(&self.inner.dir)
+                    .map_err(|e| CoreError::wrap("Could not create the databases folder", e))?;
+                let target = self
+                    .inner
+                    .new_target(&id, name, DatabaseSource::Imported, None);
+                (id, target)
+            }
+        };
+        let id = id.as_str();
+        let file = self.inner.file(id);
+        let mut guard = self.claim(id)?;
+        let running = Arc::clone(&guard.running);
+        let mut reporter = Reporter::new(&self.inner.host, id, &running.cancel);
+        let dir = self.inner.dir.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            let total_bytes = pgn.len() as u64;
+            let input = import::Input {
+                reader: std::io::Cursor::new(pgn.into_bytes()),
+                total_bytes,
+                packing: PgnPacking::Plain,
+                label: None,
+                keep: None,
+                entry: None,
+            };
+            let count = import::read_into(input, &target, &dir, FEW_ROWS, &mut reporter)?;
+            if count.games == 0 {
+                return Err(CoreError::new("No game could be read from that PGN."));
+            }
+            if let import::Target::New { file, .. } = &target {
+                crate::store::restrict_database(file, reporter.host.as_ref(), "gamedb");
+            }
+            let game: i64 = schema::open_read(&file)?
+                .query_row("SELECT MAX(id) FROM games", [], |row| row.get(0))
+                .sql()?;
+            // Added first, the old game goes after: a failure here leaves both, never neither.
+            if let Some(old) = replacing {
+                let old = i64::try_from(old).unwrap_or(i64::MAX);
+                edit::remove(&file, &dir, &[old], TREE_ROWS, &mut reporter)?;
+            }
+            Ok((count, game as u64))
+        })
+        .await
+        .map_err(|_| CoreError::new("The game could not be saved. Try again."))
+        .and_then(|outcome| outcome);
+        let (count, game) = match outcome {
+            Ok(saved) => saved,
+            Err(error) => {
+                guard.end = Some(failed(&running, id, &error));
+                return Err(error);
+            }
+        };
+        self.inner.listed.forget();
+        let database = self
+            .inner
+            .info(id)
+            .await?
+            .ok_or_else(|| CoreError::new("The database could not be read after saving."))?;
+        guard.end = Some(progress(Phase::Done, id, count, None));
+        Ok(GameDbSaved { database, game })
+    }
+
+    /// Adds the games of `pgn` (a game from the board) to database `id`.
+    pub async fn add_games(&self, into: edit::Into, pgn: String) -> Result<GameDbSaved> {
+        let result = self.save_inner(into, pgn, None).await;
+        self.inner.logged("add", result)
+    }
+
+    /// Puts `pgn` in the place of the game `game` of database `id`.
+    pub async fn replace_game(&self, id: &str, game: u64, pgn: String) -> Result<GameDbSaved> {
+        let into = edit::Into::Existing(id.to_string());
+        let result = self.save_inner(into, pgn, Some(game)).await;
+        self.inner.logged("replace", result)
+    }
+
+    /// Removes the games `selection` names from database `id`; answers how many.
+    pub async fn delete_games(&self, id: &str, selection: edit::Selection) -> Result<u64> {
+        let result = self.delete_games_inner(id, selection).await;
+        self.inner.logged("delete games", result)
+    }
+
+    async fn delete_games_inner(&self, id: &str, selection: edit::Selection) -> Result<u64> {
+        own::refuse(id, "Your games follows the games you sync and play.")?;
+        let mut guard = self.claim(id)?;
+        let running = Arc::clone(&guard.running);
+        let ids = match self.selected(id, selection).await {
+            Ok(ids) => ids,
+            Err(error) => {
+                guard.end = Some(failed(&running, id, &error));
+                return Err(error);
+            }
+        };
+        if ids.is_empty() {
+            guard.end = Some(progress(Phase::Done, id, import::Count::default(), None));
+            return Ok(0);
+        }
+        let mut reporter = Reporter::new(&self.inner.host, id, &running.cancel);
+        reporter.send(Phase::Indexing, import::Count::default(), true);
+        let (file, dir) = (self.inner.file(id), self.inner.dir.clone());
+        let outcome = tokio::task::spawn_blocking(move || {
+            edit::remove(&file, &dir, &ids, TREE_ROWS, &mut reporter)
+        })
+        .await
+        .map_err(|_| CoreError::new("The games could not be deleted. Try again."))
+        .and_then(|outcome| outcome);
+        match outcome {
+            Ok(removed) => {
+                self.inner.listed.forget();
+                guard.end = Some(progress(Phase::Done, id, import::Count::default(), None));
+                Ok(removed)
+            }
+            Err(error) => {
+                guard.end = Some(failed(&running, id, &error));
+                Err(error)
+            }
+        }
+    }
+
+    /// How many games of database `id` copy an earlier one.
+    pub async fn duplicates(&self, id: &str) -> Result<u64> {
+        let result = self
+            .selected(id, edit::Selection::Duplicates)
+            .await
+            .map(|ids| ids.len() as u64);
+        self.inner.logged("duplicates", result)
+    }
+
+    /// The player named `name` in database `id`, at a glance.
+    pub async fn player_report(&self, id: &str, name: String) -> Result<GameDbPlayerReport> {
+        let lane = self.inner.reader(id)?;
+        let result = lane.run(move |db| report::player(db, &name)).await;
+        self.inner.logged("player report", result)
+    }
+
+    /// The names of database `id` that are likely one player's.
+    pub async fn name_groups(&self, id: &str) -> Result<Vec<GameDbNameGroup>> {
+        let lane = self.inner.reader(id)?;
+        let result = lane.run(names::groups).await;
+        self.inner.logged("name groups", result)
+    }
+
+    /// Gives the games of each of `names` in database `id` the name `into`.
+    pub async fn merge_names(&self, id: &str, into: String, names: Vec<String>) -> Result<u64> {
+        own::refuse(id, "Your games names the players as their accounts do.")?;
+        let file = self.inner.file(id);
+        if !file.is_file() {
+            return Err(CoreError::new("That database is not on this computer."));
+        }
+        let mut guard = self.claim(id)?;
+        let result = tokio::task::spawn_blocking(move || names::merge(&file, &into, &names))
+            .await
+            .map_err(|_| CoreError::new("The names could not be merged. Try again."))
+            .and_then(|result| result);
+        guard.end = Some(match &result {
+            Ok(_) => progress(Phase::Done, id, import::Count::default(), None),
+            Err(error) => failed(&guard.running, id, error),
+        });
+        if result.is_ok() {
+            self.inner.listed.forget();
+        }
+        self.inner.logged("merge names", result)
+    }
+
+    /// Copies the games `selection` names from database `from` into `into`, or a new database
+    /// named `name`.
+    pub async fn copy_games(
+        &self,
+        from: &str,
+        selection: edit::Selection,
+        into: Option<String>,
+        name: Option<String>,
+    ) -> Result<GameDbImported> {
+        let result = self.copy_games_inner(from, selection, into, name).await;
+        self.inner.logged("copy games", result)
+    }
+
+    async fn copy_games_inner(
+        &self,
+        from: &str,
+        selection: edit::Selection,
+        into: Option<String>,
+        name: Option<String>,
+    ) -> Result<GameDbImported> {
+        let source = self
+            .inner
+            .info(from)
+            .await?
+            .ok_or_else(|| CoreError::new("That database is not on this computer."))?;
+        let id = match &into {
+            Some(into) if into == from => {
+                return Err(CoreError::new("Choose another database to copy them into."));
+            }
+            Some(into) => {
+                own::refuse(into, "Your games holds only your own games.")?;
+                if !self.inner.file(into).is_file() {
+                    return Err(CoreError::new("That database is not on this computer."));
+                }
+                into.clone()
+            }
+            None => new_id(name.as_deref().unwrap_or(&source.name)),
+        };
+        let mut guard = self.claim(&id)?;
+        let running = Arc::clone(&guard.running);
+        let ids = match self.selected(from, selection).await {
+            Ok(ids) => ids,
+            Err(error) => {
+                guard.end = Some(failed(&running, &id, &error));
+                return Err(error);
+            }
+        };
+        let target = match into {
+            Some(_) => import::Target::Existing {
+                file: self.inner.file(&id),
+            },
+            None => self.inner.new_target(
+                &id,
+                name.unwrap_or_else(|| source.name.clone()),
+                DatabaseSource::Imported,
+                None,
+            ),
+        };
+        let mut reporter = Reporter::new(&self.inner.host, &id, &running.cancel);
+        reporter.send(Phase::Reading, import::Count::default(), true);
+        let (from_file, dir) = (self.inner.file(from), self.inner.dir.clone());
+        let label = source.name.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            let mut copy = tempfile::Builder::new()
+                .prefix(COPY_PREFIX)
+                .suffix(".pgn")
+                .tempfile_in(&dir)
+                .map_err(|cause| CoreError::wrap("Could not copy the games", cause))?;
+            {
+                let db = schema::open_read(&from_file)?;
+                let cancelled = || reporter.cancel.is_cancelled();
+                let mut out = std::io::BufWriter::new(copy.as_file_mut());
+                edit::write_pgn(&db, &ids, &mut out, &cancelled)?;
+            }
+            let file = copy
+                .reopen()
+                .map_err(|cause| CoreError::wrap("Could not copy the games", cause))?;
+            let total_bytes = file.metadata().map_or(0, |meta| meta.len());
+            let input = import::Input {
+                reader: file,
+                total_bytes,
+                packing: PgnPacking::Plain,
+                label: Some(label),
+                keep: None,
+                entry: None,
+            };
+            let count = import::read_into(input, &target, &dir, TREE_ROWS, &mut reporter)?;
+            if let import::Target::New { file, .. } = &target {
+                crate::store::restrict_database(file, reporter.host.as_ref(), "gamedb");
+            }
+            Ok(count)
+        })
+        .await
+        .map_err(|_| CoreError::new("The games could not be copied. Try again."))
+        .and_then(|outcome| outcome);
+        let count = match outcome {
+            Ok(count) => count,
+            Err(error) => {
+                guard.end = Some(failed(&running, &id, &error));
+                return Err(error);
+            }
+        };
+        let database = self
+            .inner
+            .info(&id)
+            .await?
+            .ok_or_else(|| CoreError::new("The database could not be read after the copy."))?;
+        guard.end = Some(progress(Phase::Done, &id, count, None));
+        Ok(GameDbImported {
+            database,
+            added: count.games,
+            skipped: count.skipped,
+        })
+    }
+
+    /// Writes the games `selection` names from database `id` as a PGN file at `path`, outside
+    /// the profile; answers how many. The file appears whole or not at all.
+    pub async fn export(&self, id: &str, selection: edit::Selection, path: String) -> Result<u64> {
+        let result = self.export_inner(id, selection, path).await;
+        self.inner.logged("export", result)
+    }
+
+    async fn export_inner(
+        &self,
+        id: &str,
+        selection: edit::Selection,
+        path: String,
+    ) -> Result<u64> {
+        let ids = self.selected(id, selection).await?;
+        let (file, profile) = (self.inner.file(id), self.inner.profile.clone());
+        tokio::task::spawn_blocking(move || {
+            let path = PathBuf::from(path);
+            let unwritable = |cause| CoreError::wrap("Could not save the games there", cause);
+            let folder = path
+                .parent()
+                .ok_or_else(|| CoreError::new("Could not save the games there"))?;
+            let real = std::fs::canonicalize(folder).map_err(unwritable)?;
+            if let Ok(profile) = std::fs::canonicalize(&profile)
+                && real.starts_with(&profile)
+            {
+                return Err(CoreError::new("Save them outside KChess's own folder."));
+            }
+            let mut out = tempfile::Builder::new()
+                .prefix(".kchess-export-")
+                .tempfile_in(&real)
+                .map_err(unwritable)?;
+            let db = schema::open_read(&file)?;
+            let written = {
+                let mut writer = std::io::BufWriter::new(out.as_file_mut());
+                edit::write_pgn(&db, &ids, &mut writer, &|| false)?
+            };
+            out.persist(&path)
+                .map_err(|cause| CoreError::wrap("Could not save the games there", cause.error))?;
+            Ok(written)
+        })
+        .await
+        .map_err(|_| CoreError::new("The games could not be saved. Try again."))?
+    }
+
     pub async fn games(&self, query: GameDbQuery) -> Result<GameDbPage> {
         // A search the caller dropped (a newer one replaced it) stops replaying games for nobody.
         let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
         let stopped = Arc::clone(&stop.0);
         let listed = Arc::clone(&self.inner.listed);
         let result = match self.inner.reader(&query.database) {
-            Ok(lane) if query.position.is_some() => {
+            Ok(lane) if query.position.is_some() || scan::deep(&query) => {
                 lane.run(move |db| explore::games_at(db, &query, &listed, &stopped))
                     .await
             }
@@ -665,6 +1041,53 @@ impl GameDbService {
             stale: false,
             message: None,
         })
+    }
+
+    /// Every database but Your games, which follows the games you play: the games the board's
+    /// lookups compare with.
+    fn reference_files(&self) -> Vec<(String, PathBuf)> {
+        self.inner
+            .ids()
+            .into_iter()
+            .filter(|id| id != own::OWN_ID)
+            .map(|id| {
+                let file = self.inner.file(&id);
+                (id, file)
+            })
+            .collect()
+    }
+
+    /// The position `fen` through every database but Your games.
+    pub async fn opening_report(&self, fen: String) -> Result<GameDbOpeningReport> {
+        let files = self.reference_files();
+        // Dropped by its caller (the dialog closed), the walk stops at its next lookup.
+        let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
+        let stopped = Arc::clone(&stop.0);
+        let result = tokio::task::spawn_blocking(move || {
+            opening::report(&open_references(files), &fen, &stopped)
+        })
+        .await
+        .map_err(|_| CoreError::new("Game database stopped. Retry the operation."))
+        .and_then(|result| result);
+        drop(stop);
+        self.inner.logged("opening report", result)
+    }
+
+    /// The line's first move no game of the databases played (Your games aside, which follows
+    /// the games you play).
+    pub async fn novelty(&self, line: novelty::Line) -> Result<GameDbNovelty> {
+        let files = self.reference_files();
+        // Dropped by its caller (the board moved on), the walk stops at its next lookup.
+        let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
+        let stopped = Arc::clone(&stop.0);
+        let result = tokio::task::spawn_blocking(move || {
+            novelty::find(&open_references(files), &line, &stopped)
+        })
+        .await
+        .map_err(|_| CoreError::new("The databases could not be read. Try again."))
+        .and_then(|found| found);
+        drop(stop);
+        self.inner.logged("novelty", result)
     }
 
     /// Stops the import and the rebuild of "Your games"; `close` waits for them to end.

@@ -31,6 +31,17 @@ core_api! {
             fen: Fen;
             options: Option<LookupOptions>
         ) -> crate::types::PositionLookup;
+        /// The offline endgame tablebases, which answer `positionLookup`'s tablebase on this
+        /// computer for the positions they cover.
+        TablebaseStatus = "tablebaseStatus" fn tablebase_status() -> crate::types::TablebaseStatus;
+        /// Downloads and verifies the tables not yet on disk, reporting `tablebase:progress`.
+        #[writes(Tablebases)]
+        TablebaseInstall = "tablebaseInstall" fn tablebase_install(
+        ) -> crate::types::TablebaseStatus;
+        TablebaseCancel = "tablebaseCancel" fn tablebase_cancel() -> ();
+        /// Refused while they download.
+        #[writes(Tablebases)]
+        TablebaseDelete = "tablebaseDelete" fn tablebase_delete() -> crate::types::TablebaseStatus;
         /// Studies an account owns or belongs to on Lichess.
         LichessStudies = "lichessStudies" fn lichess_studies(
             account: Username
@@ -516,6 +527,9 @@ core_api! {
         VoiceModelStatus = "voiceModelStatus" fn voice_model_status() -> crate::voice::Status;
         /// Downloads, verifies and unpacks the speech model, reporting `voicemodel:progress`.
         VoiceModelInstall = "voiceModelInstall" fn voice_model_install() -> ();
+        /// Deletes the downloaded speech model, refused while it downloads or voice input
+        /// listens; `voiceModelInstall` brings it back.
+        VoiceModelDelete = "voiceModelDelete" fn voice_model_delete() -> ();
     }
 
     /// The local library: studies, played games, drills, sessions and repertoire notes.
@@ -659,6 +673,99 @@ core_api! {
         /// keeps to the archive's newest that many months. Progress arrives as `gamedb:progress`
         /// (`downloading`, then each month's import); `gameDbCancel` stops it and keeps the
         /// months already in.
+        /// Adds the games of `pgn` (a game from the board, usually) to the database `into`, or a
+        /// new one named `name`; answers the database and the last game's id. Refused for "Your
+        /// games", which follows the games you play.
+        #[writes(GameDb)]
+        GameDbAddGames = "gameDbAddGames" fn game_db_add_games(
+            pgn: PgnText;
+            into: Option<DatabaseId>,
+            name: Option<DatabaseName>
+        ) -> GameDbSaved;
+        /// Puts `pgn` in the place of the game `game`: the new game is added first and the old one
+        /// removed after, so a failure never loses it.
+        #[writes(GameDb)]
+        GameDbReplaceGame = "gameDbReplaceGame" fn game_db_replace_game(
+            database: DatabaseId,
+            game: GameDbGameId,
+            pgn: PgnText
+        ) -> GameDbSaved;
+        /// Removes from `database` the games `games` lists, or every game `search` (a search of
+        /// this database) finds; answers how many. The opening tree and the position index are
+        /// built again from the games left (`gamedb:progress`, `indexing`); a failure or a cancel
+        /// leaves the database as it was.
+        #[writes(GameDb)]
+        GameDbDeleteGames = "gameDbDeleteGames" fn game_db_delete_games(
+            database: DatabaseId;
+            games: Option<GameDbGameIds>,
+            search: Option<GameDbQuery>
+        ) -> u64;
+        /// Copies the games `games` lists, or that `search` finds, from `database` into the
+        /// database `into`, or a new one named `name`, as an import adds them.
+        #[writes(GameDb)]
+        GameDbCopyGames = "gameDbCopyGames" fn game_db_copy_games(
+            database: DatabaseId;
+            games: Option<GameDbGameIds>,
+            search: Option<GameDbQuery>,
+            into: Option<DatabaseId>,
+            name: Option<DatabaseName>
+        ) -> GameDbImported;
+        /// Writes the games `games` lists, or that `search` finds, from `database` as one PGN
+        /// file at `path`; answers how many.
+        GameDbExport = "gameDbExport" fn game_db_export(
+            database: DatabaseId,
+            path: PgnSavePath;
+            games: Option<GameDbGameIds>,
+            search: Option<GameDbQuery>
+        ) -> u64;
+        /// The position `fen` through every game database (Your games aside): how its games
+        /// ended, its main lines (the most played move after move) and its strongest games.
+        #[assist(Lookups)]
+        GameDbOpeningReport = "gameDbOpeningReport" fn game_db_opening_report(
+            fen: Fen
+        ) -> crate::types::GameDbOpeningReport;
+        /// The player named `name` in `database`: their results and openings with each colour,
+        /// their rating by month and their best wins.
+        #[assist(Lookups)]
+        GameDbPlayer = "gameDbPlayer" fn game_db_player(
+            database: DatabaseId,
+            name: PlayerName
+        ) -> GameDbPlayerReport;
+        /// How many games of `database` are copies of an earlier one: the same players, date,
+        /// result, start and moves.
+        GameDbDuplicates = "gameDbDuplicates" fn game_db_duplicates(database: DatabaseId) -> u64;
+        /// Removes those copies, keeping the first of each game; answers how many went. The
+        /// indexes are built again as `gameDbDeleteGames` builds them.
+        #[writes(GameDb)]
+        GameDbRemoveDuplicates = "gameDbRemoveDuplicates" fn game_db_remove_duplicates(
+            database: DatabaseId
+        ) -> u64;
+        /// The names in `database` that are likely one player's spellings ("Carlsen, M" and
+        /// "Carlsen, Magnus"), the groups with the most games first.
+        GameDbNameGroups = "gameDbNameGroups" fn game_db_name_groups(
+            database: DatabaseId
+        ) -> Vec<GameDbNameGroup>;
+        /// Gives the games of each of `names` in `database` the name `into`, which it must have;
+        /// answers how many games changed.
+        #[writes(GameDb)]
+        GameDbMergeNames = "gameDbMergeNames" fn game_db_merge_names(
+            database: DatabaseId,
+            into: PlayerName,
+            names: PlayerNames
+        ) -> u64;
+        /// The first move of the line `moves` from `fen` that no game of the game databases
+        /// (Your games aside) played from its position, with the games that reached that position
+        /// and what they played. The line's own game does not count: game `game` of `database`
+        /// (where it was opened from), nor a game of `white` against `black` with its moves.
+        #[assist(Lookups)]
+        GameDbNovelty = "gameDbNovelty" fn game_db_novelty(
+            fen: Fen,
+            moves: Moves;
+            white: Option<PlayerName>,
+            black: Option<PlayerName>,
+            database: Option<DatabaseId>,
+            game: Option<GameDbGameId>
+        ) -> crate::types::GameDbNovelty;
         #[writes(GameDb)]
         GameDbMasterInstall = "gameDbMasterInstall" fn game_db_master_install(;
             months: Option<MasterMonths>
@@ -703,6 +810,12 @@ core_api! {
     trait SystemApi {
         /// Data downloaded from Lichess per account, and what is stored locally.
         Usage = "usage" fn usage() -> UsageReport;
+        /// The bytes free on the disk the profile is on, read now; none when the system does not
+        /// say. A frontend asks before a download, to warn when it would fill the disk.
+        FreeSpace = "freeSpace" fn free_space() -> Option<u64>;
+        /// The bytes of every file in the profile's folder: its databases, downloads, logs,
+        /// themes and working files, so what it takes in all is never less than shown.
+        ProfileSize = "profileSize" fn profile_size() -> u64;
         #[writes(Usage)]
         ResetUsage = "resetUsage" fn reset_usage() -> ();
         /// The user's own app themes from the profile's themes folder, with a line per file that

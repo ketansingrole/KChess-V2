@@ -178,6 +178,15 @@ fn install_model(
     }
 }
 
+/// Have the core delete the downloaded model (`voiceModelDelete`); voice input downloads it
+/// again when it is next turned on.
+pub fn delete_model(
+    cx: &App,
+) -> impl Future<Output = Result<(), kchess_contracts::CoreError>> + 'static + use<> {
+    let delete = cx.global::<AppCore>().request(calls::VoiceModelDelete {});
+    async move { delete.await.map(|_| ()) }
+}
+
 /// The model's progress, when `event` reports it.
 fn progress_of(event: &crate::core::CoreEvent) -> Option<model::Progress> {
     match event {

@@ -12,8 +12,8 @@ use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{MessageText, PresenceUsers, Username};
 use kchess_contracts::types::{
-    ActivityDay, Crosstable, LeaderboardEntry, LichessGame, LichessRelation, PerfResult, PerfStats,
-    PerfType, RelationAction, Reply, UserPresence,
+    ActivityDay, Crosstable, GameSite, LeaderboardEntry, LichessGame, LichessRelation, PerfResult,
+    PerfStats, PerfType, RelationAction, Reply, UserPresence,
 };
 use std::rc::Rc;
 
@@ -31,7 +31,7 @@ use crate::assets::icon;
 use crate::core::AppCore;
 use crate::pages::history::lichess::{RowDetail, game_row};
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
-use crate::player_search::{self, NameMatches, SUGGESTED, chip_row, name_chip};
+use crate::player_search::{self, NameGroup, NameMatches};
 use crate::rating_history::{Retry, has_points};
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, Look};
@@ -73,26 +73,6 @@ fn perf_type(key: &str) -> PerfType {
 /// The speeds a player has games in, most played first.
 fn played_perfs(profile: &LichessUser) -> Vec<(&'static str, &'static str)> {
     profile.played(perfs())
-}
-
-/// Recent lookups, then followed players not among them, each name once and at most
-/// `SUGGESTED` in all.
-fn suggestions(recent: &[String], followed: &[String]) -> (Vec<String>, Vec<String>) {
-    let mut seen = std::collections::HashSet::new();
-    let mut once = |name: &&String| seen.insert(name.to_lowercase());
-    let recent: Vec<String> = recent
-        .iter()
-        .filter(&mut once)
-        .take(SUGGESTED)
-        .cloned()
-        .collect();
-    let followed = followed
-        .iter()
-        .filter(&mut once)
-        .take(SUGGESTED - recent.len())
-        .cloned()
-        .collect();
-    (recent, followed)
 }
 
 /// "12 h" or "40 min" of play.
@@ -409,7 +389,7 @@ impl PlayersPage {
         self.input.update(cx, |input, cx| {
             input.set_value(username.clone(), window, cx)
         });
-        player_search::remember(&username, cx);
+        player_search::remember(GameSite::Lichess, &username, cx);
         let current = found.perfs.clone();
         self.history
             .update(cx, |history, cx| history.set_current(current, cx));
@@ -963,7 +943,7 @@ pub fn open_player(username: &str, window: &mut Window, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{hours, played_perfs, suggestions, title_choices, title_shown};
+    use super::{hours, played_perfs, title_choices, title_shown};
     use crate::game::is_username;
     use serde_json::json;
 
@@ -1011,15 +991,6 @@ mod tests {
             .map(|(key, _)| key)
             .collect();
         assert_eq!(keys, ["rapid", "blitz"]);
-    }
-
-    #[test]
-    fn suggestions_name_each_player_once() {
-        let recent = vec!["Alice".to_string(), "bob".to_string()];
-        let followed = vec!["Bob".to_string(), "Carol".to_string()];
-        let (recent, followed) = suggestions(&recent, &followed);
-        assert_eq!(recent, ["Alice", "bob"]);
-        assert_eq!(followed, ["Carol"]);
     }
 
     #[test]

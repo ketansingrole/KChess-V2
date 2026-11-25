@@ -83,6 +83,8 @@ pub struct Core {
     pub(crate) voice_owner: Arc<AsyncMutex<Option<u64>>>,
     /// The offline speech model `voice` loads: downloaded and verified once per profile.
     pub(crate) voice_model: crate::voice::VoiceModelCache,
+    /// The offline endgame tablebases, which answer tablebase lookups they cover.
+    pub(crate) tablebases: crate::tablebase::Tablebases,
     /// Network accounting counters, batched before they reach the database.
     pub(crate) usage: Arc<UsageBatch>,
     /// Where `puzzleDbInstall` downloads the puzzle database from: Lichess's, or the test
@@ -229,6 +231,16 @@ impl Core {
                 )
             },
         );
+        let tablebases = crate::tablebase::Tablebases::new(
+            Arc::clone(&host),
+            usage.clone(),
+            crate::tablebase::folder(&config.data_dir),
+            test.lichess_origin.as_deref().map_or_else(
+                || crate::tablebase::ORIGIN.to_string(),
+                |origin| format!("{origin}/tablebase/tables/standard"),
+            ),
+            crate::tablebase::parse_files(crate::tablebase::FILES)?,
+        );
         let services = Services::new(
             Arc::clone(&host),
             Arc::clone(&database),
@@ -272,6 +284,7 @@ impl Core {
             voice,
             voice_owner: Arc::new(AsyncMutex::new(None)),
             voice_model,
+            tablebases,
             host,
             capabilities,
             database,

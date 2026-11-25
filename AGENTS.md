@@ -106,28 +106,33 @@ versions, tagging, verification and assets.
 
 ## What's new
 
-`apps/gpui/WHATS_NEW.md` is what people see after an update, in the app, on the GitHub release
-and in the App Store. Its readers play chess; they are not developers.
+`apps/gpui/WHATS_NEW.md` is what people see before an update installs and after it, in the app,
+on the GitHub release and in the App Store. Its readers play chess; they are not developers.
 
-- A change a player would notice adds one line under `## Unreleased`, in the same pull request:
-  `- **Short name**: what they can now do, or what no longer goes wrong.`
-- Write as you would tell a friend who plays chess: everyday words, one or two short sentences,
-  "you" and what it does for them. Name things as the app's own screens and buttons name them.
+- Each section opens with a summary: two or three sentences on what the release is about, 400
+  characters at most. Update the `## Unreleased` summary when a change shifts what the release
+  is about.
+- Then its items, each under `### Added` (something you can do now), `### Changed` (something
+  that works differently or better) or `### Fixed` (something that went wrong and no longer
+  does). A change a player would notice adds one `- ` line in the same pull request.
+- Each item is one plain sentence, two at most, saying what the app or a screen now does:
+  "The Database page lists the games in your databases." "Voice input no longer freezes
+  KChess." Write as you would tell a friend who plays chess: everyday words, "you" for the
+  player, the app's own names for its screens and buttons. No bold titles.
 - Never mention code, crates, modules, files, APIs, PRs, refactors, tests, CI, tooling, builds,
   benchmarks, audits or formats a player has no reason to know. Explain a chess term only when
   the feature is that term (Crazyhouse: "captured pieces join your side").
   - Not: "Spaced repetition for the repertoire trainer (SM-2 scheduling)."
-  - But: "**Smarter opening practice**: the opening trainer brings back the moves you got wrong
-    until you remember them."
+  - But: "The opening trainer brings back the moves you got wrong until you remember them."
   - Not: "Fix memory leaks found by retention benchmarks."
-  - But: "**Fixes**: KChess uses less memory over long sessions."
-- Keep each line to 280 characters at most (the app's tests refuse longer): a player skims the
-  bold names and a sentence, so a longer line goes unread. The `**Fixes**` line names only the
-  few fixes a player notices most and ends "Plus many smaller fixes."; leave the rest out.
-- Only what is in the build and works. Fold small fixes into one `**Fixes**` line. Changes with
-  nothing a player would see (internal, tests, docs, tooling) add nothing.
-- Extend an existing line when a later change grows the same feature. Never edit a dated
-  section: a published release's notes are permanent too.
+  - But: "KChess uses less memory over long sessions."
+- Keep each item to 280 characters at most (the app's tests refuse longer). Fixed lists only the
+  few fixes a player notices most and ends with "Many smaller fixes."
+- Only what is in the build and works. Changes with nothing a player would see (internal,
+  tests, docs, tooling) add nothing.
+- Extend an existing item when a later change grows the same feature. Never edit a dated
+  section: a published release's notes are permanent too. Sections released before the groups
+  keep their `- **Title**: text` lines.
 
 ## Reuse existing UI and behavior
 

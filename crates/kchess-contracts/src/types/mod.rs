@@ -63,6 +63,7 @@ mod review;
 mod runs;
 mod settings;
 mod studies;
+mod tablebase;
 mod tournaments;
 mod voice;
 mod watch;
@@ -83,6 +84,7 @@ pub use review::*;
 pub use runs::*;
 pub use settings::*;
 pub use studies::*;
+pub use tablebase::*;
 pub use tournaments::*;
 pub use voice::*;
 pub use watch::*;
@@ -155,6 +157,8 @@ pub enum ProfileArea {
     /// The broadcast alerts (`broadcastAlerts`).
     Broadcasts,
     Notifications,
+    /// The offline endgame tablebases (`tablebase*`).
+    Tablebases,
 }
 
 /// `alerts:owner`: the connection whose window raises system notifications now (the window

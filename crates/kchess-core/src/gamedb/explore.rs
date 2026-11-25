@@ -424,6 +424,7 @@ impl Filters {
             narrow.push(format!("eco LIKE ?{}", args.len()));
         }
         kept.extend(search::result(query).map(str::to_string));
+        kept.extend(search::length(query, &mut args));
         for (year, test) in [(query.year_from, ">="), (query.year_to, "<=")] {
             if let Some(year) = year {
                 args.push(SqlValue::Integer(i64::from(year)));
@@ -695,9 +696,29 @@ fn found(
     Ok(moves)
 }
 
+/// The moves played from `pos` in every game of the database, at any depth.
+pub fn moves_from(
+    db: &Connection,
+    pos: &VariantPosition,
+    stop: &AtomicBool,
+) -> Result<Vec<TreeMove>> {
+    found(db, None, pos, stop)
+}
+
+/// The games `query` matches, in id order: those that reached its position, if it has one, and
+/// that its deep filters keep (`scan`), if it has them.
+fn reached(db: &Connection, query: &GameDbQuery, stop: &AtomicBool) -> Result<Vec<Reached>> {
+    let games = if query.position.is_some() {
+        reached_at(db, query, stop)?
+    } else {
+        super::scan::candidates(db, query)?
+    };
+    super::scan::kept(db, query, games, stop)
+}
+
 /// The games `query` matches that reached its position (`query.position`) at any depth, with a
 /// move played from it: those the explorer counts there, each once, in id order.
-fn reached(db: &Connection, query: &GameDbQuery, stop: &AtomicBool) -> Result<Vec<Reached>> {
+fn reached_at(db: &Connection, query: &GameDbQuery, stop: &AtomicBool) -> Result<Vec<Reached>> {
     let Some(pos) = query.position.as_deref().and_then(rules::standard_from_fen) else {
         return Err(CoreError::new("That position is not legal."));
     };
@@ -732,7 +753,19 @@ impl Listed {
     }
 }
 
-/// One page of the games `query` matches that reached its position, in its order.
+/// The id of every game `query` matches that reached its position or that its deep filters
+/// keep, in id order.
+pub fn ids_at(db: &Connection, query: &GameDbQuery, stop: &AtomicBool) -> Result<Vec<i64>> {
+    let mut ids: Vec<i64> = reached(db, query, stop)?
+        .into_iter()
+        .map(|game| game.id)
+        .collect();
+    ids.sort_unstable();
+    Ok(ids)
+}
+
+/// One page of the games `query` matches that reached its position or that its deep filters
+/// keep, in its order.
 pub fn games_at(
     db: &Connection,
     query: &GameDbQuery,

@@ -985,6 +985,7 @@ pub(super) fn open_review(game: LichessGame, ply: usize, window: &mut Window, cx
         account: Some(account),
         white: Some(white),
         black: Some(black),
+        database: None,
     };
     kchess_board::analysis::open(
         kchess_board::analysis::Open::Pgn {

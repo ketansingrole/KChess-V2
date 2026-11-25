@@ -64,7 +64,7 @@ const fn quick(id: &'static str, icon: &'static str, keywords: &'static str) -> 
     })
 }
 
-pub(crate) static TOGGLES: [Toggle; 31] = [
+pub(crate) static TOGGLES: [Toggle; 32] = [
     Toggle {
         id: "legal-moves",
         title: "Show possible moves",
@@ -369,6 +369,15 @@ pub(crate) static TOGGLES: [Toggle; 31] = [
         section: Section::Updates,
         on: |s| s.frontend.update_install_on_quit,
         set: |s, on| s.frontend.update_install_on_quit = on,
+        quick: None,
+    },
+    Toggle {
+        id: "update-show-notes",
+        title: "Show what's new with updates",
+        hint: None,
+        section: Section::Updates,
+        on: |s| s.frontend.update_show_notes,
+        set: |s, on| s.frontend.update_show_notes = on,
         quick: None,
     },
 ];

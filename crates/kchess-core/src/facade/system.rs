@@ -13,6 +13,23 @@ impl SystemApi for Core {
         self.usage.report().await
     }
 
+    async fn free_space(&self) -> Result<Option<u64>> {
+        let data_dir = self.data_dir();
+        Ok(
+            tokio::task::spawn_blocking(move || crate::disk::free_bytes(&data_dir))
+                .await
+                .ok()
+                .flatten(),
+        )
+    }
+
+    async fn profile_size(&self) -> Result<u64> {
+        let data_dir = self.data_dir();
+        tokio::task::spawn_blocking(move || kchess_host::disk::folder_bytes(&data_dir))
+            .await
+            .map_err(|cause| CoreError::wrap("The profile's size could not be read", cause))
+    }
+
     async fn reset_usage(&self) -> Result<()> {
         self.usage.reset().await
     }

@@ -35,6 +35,7 @@ impl EventPayload for OnlineConnection {}
 impl EventPayload for Assistance {}
 impl EventPayload for PuzzleDbProgress {}
 impl EventPayload for GameDbProgress {}
+impl EventPayload for TablebaseProgress {}
 impl EventPayload for crate::voice::Progress {}
 impl EventPayload for AnalysisUpdate {}
 impl EventPayload for Box<ReviewUpdate> {}
@@ -106,6 +107,7 @@ core_events! {
     PuzzleDbProgress = "puzzledb:progress" (PuzzleDbProgress),
     GameDbProgress = "gamedb:progress" (GameDbProgress),
     VoiceModelProgress = "voicemodel:progress" (crate::voice::Progress),
+    TablebaseProgress = "tablebase:progress" (TablebaseProgress),
     /// To the window that started the analysis.
     Analysis = "engine:analysis" (AnalysisUpdate),
     ReviewUpdate = "review:update" (Box<ReviewUpdate>),
@@ -141,6 +143,7 @@ impl CoreEvent {
                 | CoreEvent::PuzzleDbProgress(_)
                 | CoreEvent::GameDbProgress(_)
                 | CoreEvent::VoiceModelProgress(_)
+                | CoreEvent::TablebaseProgress(_)
         ) && !self.is_terminal()
     }
 
@@ -151,6 +154,7 @@ impl CoreEvent {
             CoreEvent::Analysis(update) => update.done,
             CoreEvent::PuzzleDbProgress(progress) => progress.phase.is_terminal(),
             CoreEvent::GameDbProgress(progress) => progress.phase.is_terminal(),
+            CoreEvent::TablebaseProgress(progress) => progress.phase.is_terminal(),
             _ => false,
         }
     }

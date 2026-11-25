@@ -17,12 +17,15 @@ use serde_json::json;
 use super::Page;
 use super::analysis::AnalysisPage;
 use crate::assets::icon;
+use crate::game::played::DatabaseGame;
+use crate::game_db::GameDbHandle;
 use crate::name_dialog::NameDialog;
+use crate::pages::database;
 use crate::studies::{MAX_CHAPTERS, StudyHandle, chapter_items};
 use crate::theme::Palette;
 use crate::widgets::Choice;
 use crate::widgets::time_ago;
-use kchess_contracts::types::{Study, StudyChapter, StudyCommand};
+use kchess_contracts::types::{DatabaseSource, Study, StudyChapter, StudyCommand};
 use kchess_games::now_ms;
 
 /// The bar's height and its gap to the board, which the board's size leaves room for.
@@ -35,6 +38,10 @@ const RESULTS: [&str; 4] = ["*", "1-0", "0-1", "1/2-1/2"];
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum StudyAction {
     SaveAsStudy,
+    /// Save the board's game in a game database.
+    SaveToDatabase,
+    /// Save the board's game in the place of the database game it was opened from.
+    SaveChanges,
     Details,
     SaveCopy,
     Close,
@@ -64,12 +71,20 @@ pub struct StudyBar {
 impl StudyBar {
     /// What the bar's menus allow now: with a study open, its own and its chapters' actions.
     pub(crate) fn actions(&self, cx: &App) -> Vec<StudyAction> {
+        let mut saves = vec![StudyAction::SaveToDatabase];
+        if self.source(cx).is_some() {
+            saves.insert(0, StudyAction::SaveChanges);
+        }
         let Some((study, _)) = self.open(cx) else {
-            return vec![StudyAction::SaveAsStudy, StudyAction::Details];
+            return [StudyAction::SaveAsStudy, StudyAction::Details]
+                .into_iter()
+                .chain(saves)
+                .collect();
         };
         let count = study.chapters.len();
         let mut actions = vec![
             StudyAction::Details,
+            saves[0],
             StudyAction::SaveCopy,
             StudyAction::Close,
             StudyAction::Remove,
@@ -77,6 +92,7 @@ impl StudyBar {
         if count < MAX_CHAPTERS {
             actions.push(StudyAction::AddChapter);
         }
+        actions.extend(saves.into_iter().skip(1));
         actions.push(StudyAction::RenameChapter);
         if count < MAX_CHAPTERS {
             actions.push(StudyAction::DuplicateChapter);
@@ -133,6 +149,8 @@ impl StudyBar {
         }
         match action {
             StudyAction::SaveAsStudy => self.save_new(window, cx),
+            StudyAction::SaveToDatabase => self.save_to_database(window, cx),
+            StudyAction::SaveChanges => self.save_changes(window, cx),
             StudyAction::Details => self.open_details(window, cx),
             StudyAction::SaveCopy => self.save_copy(window, cx),
             StudyAction::Close => self.close(cx),
@@ -597,6 +615,56 @@ impl StudyBar {
         );
     }
 
+    /// The database game the board's game came from, while that database is listed and takes
+    /// changes, with the database's name.
+    fn source(&self, cx: &App) -> Option<(DatabaseGame, String)> {
+        let analysis = self.analysis.upgrade()?;
+        let game = analysis.read(cx).database_game()?.clone();
+        let db = cx.global::<GameDbHandle>().0.read(cx);
+        let info = db
+            .databases()
+            .iter()
+            .find(|info| info.id == game.database && info.source != DatabaseSource::Own)?;
+        Some((game, info.name.clone()))
+    }
+
+    /// Asks which database, then saves the board's game in it.
+    fn save_to_database(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(analysis) = self.analysis.upgrade() else {
+            return;
+        };
+        let first = analysis
+            .read(cx)
+            .database_game()
+            .map(|game| game.database.clone());
+        let ask = database::target::Ask {
+            title: "Save to a database",
+            except: None,
+            first,
+            name: "Saved games".to_string(),
+            confirm: "Save".to_string(),
+            glyph: "save",
+        };
+        database::target::open(ask, window, cx, move |into, name, window, cx| {
+            save_game(&analysis, into, name, None, window, cx)
+        });
+    }
+
+    /// Saves the board's game in the place of the database game it was opened from.
+    fn save_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(analysis), Some((game, _))) = (self.analysis.upgrade(), self.source(cx)) else {
+            return;
+        };
+        save_game(
+            &analysis,
+            Some(game.database),
+            None,
+            Some(game.game),
+            window,
+            cx,
+        );
+    }
+
     fn save_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(analysis) = self.analysis.upgrade() else {
             return;
@@ -774,6 +842,44 @@ fn restore(
         .detach();
 }
 
+/// Saves the board's game in the database `into`, or a new one named `name`, in the place of
+/// game `replacing` when given; the board's game is then that database's game.
+fn save_game(
+    analysis: &Entity<AnalysisPage>,
+    into: Option<String>,
+    name: Option<String>,
+    replacing: Option<u64>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let pgn = analysis.read(cx).pgn();
+    let save = crate::game_db::save_game(into, name, replacing, pgn, cx);
+    let analysis = analysis.downgrade();
+    window
+        .spawn(cx, async move |cx| {
+            let saved = save.await;
+            cx.update(|window, cx| {
+                let notification = match saved {
+                    Ok(saved) => {
+                        let game = DatabaseGame {
+                            database: saved.database.id.clone(),
+                            game: saved.game,
+                        };
+                        analysis
+                            .update(cx, |analysis, cx| analysis.saved_to_database(game, cx))
+                            .ok();
+                        Notification::success(format!("Saved to {}", saved.database.name))
+                    }
+                    Err(cause) => Notification::error(crate::loading::failure("game-db", &cause))
+                        .title("Could not save the game"),
+                };
+                window.push_notification(notification, cx);
+            })
+            .ok();
+        })
+        .detach();
+}
+
 impl Render for StudyBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync(window, cx);
@@ -787,6 +893,7 @@ impl Render for StudyBar {
         let menu_bar = bar.clone();
         let has_study = open.is_some();
         let cloud = self.cloud(cx);
+        let changes = self.source(cx).map(|(_, name)| name);
         let menu = Button::new("study-actions")
             .ghost()
             .small()
@@ -799,11 +906,25 @@ impl Render for StudyBar {
                         let _ = bar.update(cx, |bar, cx| run(bar, window, cx));
                     }
                 };
-                let menu = menu.item(
-                    PopupMenuItem::new("Game details…")
-                        .icon(icon("file-pen-line"))
-                        .on_click(action(StudyBar::open_details)),
-                );
+                let menu = menu
+                    .item(
+                        PopupMenuItem::new("Game details…")
+                            .icon(icon("file-pen-line"))
+                            .on_click(action(StudyBar::open_details)),
+                    )
+                    .separator()
+                    .when_some(changes.clone(), |menu, name| {
+                        menu.item(
+                            PopupMenuItem::new(format!("Save changes to {name}"))
+                                .icon(icon("save"))
+                                .on_click(action(StudyBar::save_changes)),
+                        )
+                    })
+                    .item(
+                        PopupMenuItem::new("Save to database…")
+                            .icon(icon("database"))
+                            .on_click(action(StudyBar::save_to_database)),
+                    );
                 if !has_study {
                     return menu;
                 }

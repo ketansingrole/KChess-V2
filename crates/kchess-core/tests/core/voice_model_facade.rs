@@ -94,6 +94,31 @@ async fn the_core_downloads_the_model_and_reports_its_progress() {
             .is_file()
     );
 
+    // Deleting it gives its space back; installing brings it back.
+    core.call("voiceModelDelete", vec![]).await.expect("delete");
+    assert_eq!(
+        core.call("voiceModelStatus", vec![]).await.expect("status"),
+        json!({ "installed": false, "bytes": 0, "busy": false })
+    );
+    assert!(!kchess_core::voice::model_dir(profile.path()).exists());
+    core.call("voiceModelInstall", vec![]).await.expect("again");
+    assert_eq!(
+        core.call("voiceModelStatus", vec![]).await.expect("status")["installed"],
+        json!(true)
+    );
+    // Deleting what is not there is no error.
+    let other_profile = tempfile::tempdir().expect("profile");
+    let empty = Core::open(
+        with_model(other_profile.path(), &archive, &digest),
+        TestHost::new(),
+    )
+    .expect("core");
+    empty
+        .call("voiceModelDelete", vec![])
+        .await
+        .expect("nothing to delete");
+    empty.close().await;
+
     // A model that cannot be had is the install's error, and nothing is published.
     let other = tempfile::tempdir().expect("profile");
     let missing = fixtures.path().join("missing.zip");

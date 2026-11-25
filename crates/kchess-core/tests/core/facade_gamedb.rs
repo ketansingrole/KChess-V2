@@ -146,6 +146,19 @@ async fn a_file_is_imported_searched_and_read_through_the_core() {
     );
     let status = core.call("gameDbStatus", vec![]).await.expect("status");
     assert_eq!(status["databases"][0]["games"], 2);
+    // The disk's free space, read when asked.
+    let free = core.call("freeSpace", vec![]).await.expect("free space");
+    assert!(free.as_u64().is_some_and(|free| free > 0), "{free}");
+    // The whole profile, the database just made among it.
+    let profile = core
+        .call("profileSize", vec![])
+        .await
+        .expect("profile size");
+    let database = status["databases"][0]["bytes"].as_u64().expect("its size");
+    assert!(
+        profile.as_u64().is_some_and(|profile| profile >= database),
+        "{profile} holds {database}"
+    );
     let changed: Vec<Value> = host.named("profile:changed");
     assert!(
         changed

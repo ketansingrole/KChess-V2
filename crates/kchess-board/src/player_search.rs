@@ -1,13 +1,13 @@
-//! Finding a Lichess player by name, wherever a page asks for one (Players, the guess trainer's
-//! game finder): the players whose names start with what is typed, the players looked up lately,
-//! and the chips that offer them. Also a name that opens the player's profile (`player_link`),
+//! Finding a player by name, wherever a page asks for one (Players, the guess trainer's game
+//! finder, the game database's player download): the Lichess players whose names start with what
+//! is typed, the players looked up lately on each site, and the chips that offer them. Also a name that opens the player's profile (`player_link`),
 //! which the Players page answers (`OpenPlayer`).
 
 use gpui_kit::*;
 use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::Username;
-use kchess_contracts::types::PlayerSuggestion;
+use kchess_contracts::types::{GameSite, PlayerSuggestion};
 
 use crate::core::AppCore;
 use crate::loading::Epoch;
@@ -46,30 +46,35 @@ pub fn player_link(id: impl Into<ElementId>, name: String, ring: Hsla) -> Statef
         })
 }
 
-/// The players looked up lately, newest first, shared by every name search.
-const RECENT_KEY: &str = "kchess:players-recent";
+/// The players looked up lately on each site, newest first, shared by every name search.
+fn recent_key(site: GameSite) -> &'static str {
+    match site {
+        GameSite::Lichess => "kchess:players-recent",
+        GameSite::Chesscom => "kchess:chesscom-players-recent",
+    }
+}
 const RECENT_KEPT: usize = 8;
 /// Names offered under a search.
 pub const SUGGESTED: usize = 12;
 /// How long typing settles before names are searched.
 const SEARCH_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
 
-/// Put a player looked up first among the recent ones, wherever players are searched.
-pub fn remember(username: &str, cx: &mut App) {
-    let mut recent = recent(cx);
+/// Put a player looked up on `site` first among its recent ones, wherever players are searched.
+pub fn remember(site: GameSite, username: &str, cx: &mut App) {
+    let mut recent = recent(site, cx);
     recent.retain(|name| !name.eq_ignore_ascii_case(username));
     recent.insert(0, username.to_string());
     recent.truncate(RECENT_KEPT);
-    crate::prefs::set(cx, RECENT_KEY, recent);
+    crate::prefs::set(cx, recent_key(site), recent);
 }
 
-/// The players looked up lately, newest first.
-pub fn recent(cx: &App) -> Vec<String> {
-    crate::prefs::get(cx, RECENT_KEY, Vec::new())
+/// The players looked up lately on `site`, newest first.
+pub fn recent(site: GameSite, cx: &App) -> Vec<String> {
+    crate::prefs::get(cx, recent_key(site), Vec::new())
 }
 
-pub fn clear_recent(cx: &mut App) {
-    crate::prefs::set(cx, RECENT_KEY, Vec::<String>::new());
+pub fn clear_recent(site: GameSite, cx: &mut App) {
+    crate::prefs::set(cx, recent_key(site), Vec::<String>::new());
 }
 
 /// The players whose names start with what is typed, once typing settles.
@@ -250,6 +255,91 @@ pub fn match_chips(
         .collect()
 }
 
+/// Names offered under a search until what is typed matches a player: a row's label, the id of
+/// its chips, its names, and an action at its end (Clear).
+pub struct NameGroup {
+    pub label: &'static str,
+    pub id: &'static str,
+    pub names: Vec<String>,
+    pub action: Option<AnyElement>,
+}
+
+impl NameGroup {
+    pub fn new(label: &'static str, id: &'static str, names: Vec<String>) -> NameGroup {
+        NameGroup {
+            label,
+            id,
+            names,
+            action: None,
+        }
+    }
+}
+
+/// Each name once, in the first group that has it, at most `SUGGESTED` in all, leaving out
+/// `shown` (the player already in the field).
+fn once_each(groups: Vec<Vec<String>>, shown: Option<&str>) -> Vec<Vec<String>> {
+    let mut seen: std::collections::HashSet<String> =
+        shown.map(str::to_lowercase).into_iter().collect();
+    let mut left = SUGGESTED;
+    groups
+        .into_iter()
+        .map(|names| {
+            let kept: Vec<String> = names
+                .into_iter()
+                .filter(|name| seen.insert(name.to_lowercase()))
+                .take(left)
+                .collect();
+            left -= kept.len();
+            kept
+        })
+        .collect()
+}
+
+/// The rows of names under a search, each running `pick` with its name: the players `matches`
+/// found once there are some, under `match_id`; until then the `known` groups, each name once and
+/// leaving out `shown`. A group left with no names is left out, its action with it.
+pub fn name_rows(
+    match_id: &'static str,
+    matches: &NameMatches,
+    known: Vec<NameGroup>,
+    shown: Option<&str>,
+    palette: &Palette,
+    pick: impl Fn(String) -> Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
+) -> Vec<AnyElement> {
+    if !matches.found.is_empty() {
+        let found = match_chips(match_id, matches, palette, pick);
+        return vec![chip_row("Matches", found, None, palette).into_any_element()];
+    }
+    let names = once_each(
+        known.iter().map(|group| group.names.clone()).collect(),
+        shown,
+    );
+    known
+        .into_iter()
+        .zip(names)
+        .filter(|(_, names)| !names.is_empty())
+        .map(|(group, names)| {
+            let chips = names
+                .into_iter()
+                .enumerate()
+                .map(|(index, name)| {
+                    let on_click = pick(name.clone());
+                    name_chip(
+                        (group.id, index),
+                        &name,
+                        None,
+                        false,
+                        palette,
+                        move |event, window, cx| on_click(event, window, cx),
+                    )
+                    .into_any_element()
+                })
+                .collect();
+            chip_row(group.label, chips, group.action, palette).into_any_element()
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     thread_local! {
@@ -268,5 +358,21 @@ mod tests {
             super::open_player("alice", window, cx);
         });
         assert_eq!(OPENED.with(|opened| opened.take()), ["alice"]);
+    }
+
+    /// A name offered in two groups shows in the first, the player in the field in neither, and
+    /// no more than `SUGGESTED` in all.
+    #[test]
+    fn known_names_are_offered_once_each() {
+        let names = |names: &[&str]| names.iter().map(|name| name.to_string()).collect();
+        let groups = super::once_each(
+            vec![names(&["Alice", "bob", "Dave"]), names(&["Bob", "Carol"])],
+            Some("dave"),
+        );
+        assert_eq!(groups, [vec!["Alice", "bob"], vec!["Carol"]]);
+        let many = (0..20).map(|n| format!("p{n}")).collect();
+        let groups = super::once_each(vec![many, names(&["late"])], None);
+        assert_eq!(groups[0].len(), super::SUGGESTED);
+        assert!(groups[1].is_empty());
     }
 }

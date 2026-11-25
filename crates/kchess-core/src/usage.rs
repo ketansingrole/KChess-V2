@@ -179,10 +179,11 @@ impl UsageBatch {
     }
 }
 
-/// The size of KChess's databases on disk (the report's `dbBytes`): the main and puzzle
-/// databases with their write-ahead logs. A missing file counts as zero.
+/// The size of the profile's own database on disk (the report's `dbBytes`): games, studies and
+/// accounts, with its write-ahead log. The puzzles and game databases report their own sizes.
+/// A missing file counts as zero.
 fn database_bytes(data_dir: &Path) -> u64 {
-    ["kchess.db", "kchess.db-wal", "puzzles.db", "puzzles.db-wal"]
+    ["kchess.db", "kchess.db-wal"]
         .iter()
         .map(|name| {
             std::fs::metadata(data_dir.join(name))

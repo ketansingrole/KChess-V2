@@ -260,7 +260,7 @@ pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
             .iter()
             .any(|extension| name.ends_with(extension))
     {
-        crate::pages::database::import_dropped(path, cx);
+        crate::pages::database::import_dropped(path, window, cx);
         return;
     }
     // Read off the main thread: a file on a stalled network folder froze every window.

@@ -1,6 +1,6 @@
 //! The downloaded puzzle database: its state as the core reports it
 //! (`puzzleDbStatus`, `puzzledb:progress`), downloading, cancelling and deleting it, and the card
-//! that shows it on Puzzles and in Offline downloads.
+//! that shows it on Puzzles, and its row in Settings → Storage.
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
@@ -182,35 +182,9 @@ impl PuzzleDb {
         .detach();
     }
 
-    /// Whether a download runs: the card then shows its progress and Cancel.
-    pub fn busy(&self) -> bool {
-        self.status.busy
-            || self
-                .progress
-                .as_ref()
-                .is_some_and(|progress| !progress.phase.is_terminal())
-    }
-}
-
-/// Download, see and delete the puzzles Downloaded mode plays from; `compact`
-/// leaves out its title and frame, for a page that names it already.
-pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + use<> {
-    let handle = cx.global::<PuzzleDbHandle>().0.clone();
-    let this = handle.read(cx);
-    let act = |run: fn(&mut PuzzleDb, &mut Window, &mut Context<PuzzleDb>)| {
-        let handle = handle.downgrade();
-        move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-            let _ = handle.update(cx, |db, cx| run(db, window, cx));
-        }
-    };
-    let hint = |text: String| {
-        div()
-            .text_size(px(12.))
-            .text_color(palette.text_muted)
-            .child(text)
-    };
-    let body: AnyElement = if this.busy() {
-        let progress = this.progress.clone().unwrap_or(PuzzleDbProgress {
+    /// How far the download has come, as a bar's share and in words.
+    fn progress_line(&self) -> (Option<f32>, String) {
+        let progress = self.progress.clone().unwrap_or(PuzzleDbProgress {
             phase: PuzzleDbPhase::Downloading,
             received: 0,
             kept: 0,
@@ -235,21 +209,144 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
         let kept = progress.kept as f64;
         let share = total
             .filter(|total| *total > 0.)
-            .map(|total| (received / total).min(1.));
+            .map(|total| (received / total).min(1.) as f32);
+        let text = if kept > 0. {
+            format!(
+                "{text} · {} picked so far",
+                widgets::format_counted(kept, "puzzle", "puzzles")
+            )
+        } else {
+            text
+        };
+        (share, text)
+    }
+
+    /// "100,000 puzzles · 96 MB on disk · downloaded 11/2/2026".
+    fn installed_line(&self) -> String {
+        let mut line = format!(
+            "{} · {} on disk",
+            widgets::format_counted(self.status.count as f64, "puzzle", "puzzles"),
+            format_bytes(self.status.bytes as f64)
+        );
+        if let Some(day) = self
+            .status
+            .imported_at
+            .and_then(|at| crate::dates::local(at as f64))
+        {
+            line.push_str(&format!(" · downloaded {}", day.strftime("%-m/%-d/%Y")));
+        }
+        line
+    }
+
+    /// Whether a download runs: the card then shows its progress and Cancel.
+    pub fn busy(&self) -> bool {
+        self.status.busy
+            || self
+                .progress
+                .as_ref()
+                .is_some_and(|progress| !progress.phase.is_terminal())
+    }
+}
+
+/// About what a download takes: a 300 MB sample, and the database it keeps.
+const DOWNLOAD_TAKES: u64 = 400 * 1024 * 1024;
+
+/// Downloads the database, once the disk has room for it (`crate::room`).
+fn install(handle: &Entity<PuzzleDb>) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    let handle = handle.downgrade();
+    move |_, window, cx| {
+        let handle = handle.clone();
+        crate::room::with_room(
+            Some(DOWNLOAD_TAKES),
+            "Download anyway",
+            window,
+            cx,
+            move |_, cx| {
+                handle.update(cx, |db, cx| db.install(cx)).ok();
+            },
+        );
+    }
+}
+
+/// The puzzles as Settings → Storage lists them with every other download: what is kept, or
+/// the download's progress, with Download, Cancel or Update and Delete.
+pub fn row(cx: &App) -> widgets::DownloadRow {
+    let handle = cx.global::<PuzzleDbHandle>().0.clone();
+    let this = handle.read(cx);
+    let act = |run: fn(&mut PuzzleDb, &mut Window, &mut Context<PuzzleDb>)| {
+        let handle = handle.downgrade();
+        move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+            handle.update(cx, |db, cx| run(db, window, cx)).ok();
+        }
+    };
+    let row = |detail: String| {
+        widgets::DownloadRow::new("storage-puzzles", icon("puzzle"), "Puzzles", detail)
+            .error("storage-puzzles-error", this.error.clone().map(Into::into))
+    };
+    if this.busy() {
+        let (share, text) = this.progress_line();
+        return row(text).progress(share).action(
+            Button::new("db-cancel")
+                .ghost()
+                .small()
+                .icon(icon("x"))
+                .label("Cancel")
+                .on_click(act(|db, _, cx| db.cancel(cx))),
+        );
+    }
+    if this.status.installed {
+        return row(this.installed_line())
+            .action(
+                Button::new("db-refresh")
+                    .ghost()
+                    .small()
+                    .icon(icon("refresh-cw"))
+                    .label("Update")
+                    .tooltip("Download a fresh sample (~300 MB)")
+                    .on_click(install(&handle)),
+            )
+            .action(
+                Button::new("db-delete")
+                    .ghost()
+                    .small()
+                    .icon(icon("trash-2"))
+                    .accessibility_label("Delete the puzzles")
+                    .on_click(act(|db, window, cx| db.ask_delete(window, cx))),
+            );
+    }
+    row("About 300 MB · for offline puzzles, Storm, Streak and Rush".into()).action(
+        Button::new("db-install")
+            .outline()
+            .small()
+            .icon(icon("download"))
+            .label("Download")
+            .on_click(install(&handle)),
+    )
+}
+
+/// Download, see and delete the puzzles Downloaded mode plays from; `compact`
+/// leaves out its title and frame, for a page that names it already.
+pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + use<> {
+    let handle = cx.global::<PuzzleDbHandle>().0.clone();
+    let this = handle.read(cx);
+    let act = |run: fn(&mut PuzzleDb, &mut Window, &mut Context<PuzzleDb>)| {
+        let handle = handle.downgrade();
+        move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+            let _ = handle.update(cx, |db, cx| run(db, window, cx));
+        }
+    };
+    let hint = |text: String| {
+        div()
+            .text_size(px(12.))
+            .text_color(palette.text_muted)
+            .child(text)
+    };
+    let body: AnyElement = if this.busy() {
+        let (share, text) = this.progress_line();
         v_flex()
             .gap(px(8.))
-            .child(widgets::progress_bar(
-                share.map(|share| share as f32),
-                palette,
-            ))
-            .child(hint(if kept > 0. {
-                format!(
-                    "{text} · {} picked so far",
-                    widgets::format_counted(kept, "puzzle", "puzzles")
-                )
-            } else {
-                text
-            }))
+            .child(widgets::progress_bar(share, palette))
+            .child(hint(text))
             .child(
                 h_flex().child(
                     Button::new("db-cancel")
@@ -262,18 +359,7 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
             )
             .into_any_element()
     } else if this.status.installed {
-        let mut line = format!(
-            "{} · {} on disk",
-            widgets::format_counted(this.status.count as f64, "puzzle", "puzzles"),
-            format_bytes(this.status.bytes as f64)
-        );
-        if let Some(day) = this
-            .status
-            .imported_at
-            .and_then(|at| crate::dates::local(at as f64))
-        {
-            line.push_str(&format!(" · downloaded {}", day.strftime("%-m/%-d/%Y")));
-        }
+        let line = this.installed_line();
         v_flex()
             .gap(px(8.))
             .child(
@@ -297,7 +383,7 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
                             .small()
                             .icon(icon("refresh-cw"))
                             .label("Download a fresh sample (~300 MB)")
-                            .on_click(act(|db, _, cx| db.install(cx))),
+                            .on_click(install(&handle)),
                     )
                     .child(
                         Button::new("db-delete")
@@ -319,7 +405,7 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
                         .primary()
                         .icon(icon("download"))
                         .label("Download puzzle database")
-                        .on_click(act(|db, _, cx| db.install(cx))),
+                        .on_click(install(&handle)),
                 ),
             )
             .into_any_element()

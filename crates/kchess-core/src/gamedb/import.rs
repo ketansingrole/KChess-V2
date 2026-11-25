@@ -556,18 +556,48 @@ fn index_game(
     stored: &Stored,
     depth: u32,
 ) -> Result<()> {
+    let game = Indexed {
+        id,
+        outcome: stored.outcome,
+        rating: rating(stored),
+        date: date_key(stored),
+        fen: stored.fen.as_deref(),
+        moves: &stored.moves,
+    };
+    index_moves(tree, deep, &game, depth)
+}
+
+/// What the indexes count of a game, as its row in `games` holds it.
+pub struct Indexed<'a> {
+    pub id: i64,
+    pub outcome: Outcome,
+    pub rating: Option<u16>,
+    pub date: u32,
+    pub fen: Option<&'a str>,
+    pub moves: &'a [u8],
+}
+
+/// `index_game` for a game read back from its row, as the indexes are built again after games
+/// are removed (`edit`).
+pub fn index_moves(
+    tree: &mut TreeBuilder,
+    deep: &mut DeepBuilder,
+    game: &Indexed<'_>,
+    depth: u32,
+) -> Result<()> {
     // An unfinished game counts in no result, so the tree leaves it out, as Lichess's does.
-    if stored.outcome == Outcome::Unknown {
+    if game.outcome == Outcome::Unknown {
         return Ok(());
     }
-    let Some(start) = gamedb::start_of(stored.fen.as_deref()) else {
+    let Some(start) = gamedb::start_of(game.fen) else {
         return Ok(());
     };
-    let stats = Stats::of(id, stored.outcome, rating(stored), date_key(stored));
+    let id = game.id;
+    let stats = Stats::of(id, game.outcome, game.rating, game.date);
     let mut ply = 0;
     let mut failed = None;
     let mut structure = None;
-    gamedb::walk_line(&start, &stored.moves, |pos, m| {
+    gamedb::walk_line(&start, game.moves, |pos, m| {
         let added = if ply < depth {
             tree.add(gamedb::position_key(pos), gamedb::pack_move(m), &stats)
         } else {

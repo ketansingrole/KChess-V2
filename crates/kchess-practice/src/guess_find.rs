@@ -8,12 +8,12 @@ use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::{GameId, Username};
-use kchess_contracts::types::LichessGame;
+use kchess_contracts::types::{GameSite, LichessGame};
 use shakmaty::Color;
 
 use super::classics::{CLASSICS, winner};
 use crate::core::AppCore;
-use crate::player_search::{self, NameMatches};
+use crate::player_search::{self, NameGroup, NameMatches};
 use crate::theme::Palette;
 use crate::widgets;
 use kchess_history::lichess::{RowDetail, game_row};
@@ -112,7 +112,7 @@ impl GameFinder {
                             this.player = Some(game.account.clone());
                         }
                         if let Some(player) = this.player.clone() {
-                            player_search::remember(&player, cx);
+                            player_search::remember(GameSite::Lichess, &player, cx);
                         }
                         this.games = Some(games);
                     }
@@ -170,55 +170,25 @@ impl GameFinder {
     fn player_card(&self, cx: &mut Context<Self>, palette: &Palette) -> Div {
         let online = crate::network::online(cx);
         let typed = !self.input.read(cx).value().trim().is_empty();
-        let pick = |name: String| {
-            cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
-                this.pick(name.clone(), window, cx)
-            })
-        };
-        let chips = |id: &'static str, names: Vec<String>| {
-            names
-                .into_iter()
-                .enumerate()
-                .map(|(index, name)| {
-                    player_search::name_chip(
-                        (id, index),
-                        &name,
-                        None,
-                        false,
-                        palette,
-                        pick(name.clone()),
-                    )
-                    .into_any_element()
-                })
-                .collect::<Vec<_>>()
-        };
         // What is typed matches these players; before that, the ones looked up lately.
-        let suggestions = if self.names.found().is_empty() {
-            let shown = self.player.clone().unwrap_or_default().to_lowercase();
-            let recent: Vec<_> = player_search::recent(cx)
-                .into_iter()
-                .filter(|name| name.to_lowercase() != shown)
-                .collect();
-            (!recent.is_empty()).then(|| {
-                player_search::chip_row(
-                    "Recent",
-                    chips("guess-recent-player", recent),
-                    None,
-                    palette,
-                )
-            })
-        } else {
-            let finder = cx.entity().downgrade();
-            let found =
-                player_search::match_chips("guess-player-match", &self.names, palette, |name| {
-                    let finder = finder.clone();
-                    Box::new(move |_, window, cx| {
-                        let _ =
-                            finder.update(cx, |finder, cx| finder.pick(name.clone(), window, cx));
-                    })
-                });
-            Some(player_search::chip_row("Matches", found, None, palette))
-        };
+        let finder = cx.entity().downgrade();
+        let suggestions = player_search::name_rows(
+            "guess-player-match",
+            &self.names,
+            vec![NameGroup::new(
+                "Recent",
+                "guess-recent-player",
+                player_search::recent(GameSite::Lichess, cx),
+            )],
+            self.player.as_deref(),
+            palette,
+            |name| {
+                let finder = finder.clone();
+                Box::new(move |_, window, cx| {
+                    let _ = finder.update(cx, |finder, cx| finder.pick(name.clone(), window, cx));
+                })
+            },
+        );
         let finder = cx.entity().downgrade();
         let games: Option<Div> = self.player.as_ref().map(|player| {
             let list = v_flex().gap(px(2.));

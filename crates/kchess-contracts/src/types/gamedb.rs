@@ -142,6 +142,140 @@ pub struct GameDbProgress {
     pub message: Option<String>,
 }
 
+/// A main line from a position through the game databases: each move the one played most, and
+/// how the games through its first move ended.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbOpeningLine {
+    /// Each with the games that played it there.
+    pub moves: Vec<NoveltyMove>,
+    pub white: u64,
+    pub draws: u64,
+    pub black: u64,
+}
+
+/// A game of a database, as a search lists it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbFoundGame {
+    pub database: String,
+    pub game: GameDbRow,
+}
+
+/// A position through every game database (Your games aside): how its games ended, its main
+/// lines and its strongest games.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbOpeningReport {
+    pub white: u64,
+    pub draws: u64,
+    pub black: u64,
+    /// The most played first.
+    pub lines: Vec<GameDbOpeningLine>,
+    /// The highest rated first.
+    pub best: Vec<GameDbFoundGame>,
+}
+
+/// Games' results from one side: won, drawn and lost; `games` counts those with no result too.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbRecord {
+    pub games: u64,
+    pub wins: u64,
+    pub draws: u64,
+    pub losses: u64,
+}
+
+/// An opening a player played, by its family's name ("Sicilian Defense"), its ECO code or its
+/// first moves, and how it went.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbOpening {
+    pub name: String,
+    pub record: GameDbRecord,
+}
+
+/// What a player did with one colour: their results and their openings, the most played first.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbSideReport {
+    pub record: GameDbRecord,
+    pub openings: Vec<GameDbOpening>,
+}
+
+/// A player's rating in a month: their last rated game's.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbRating {
+    pub year: i32,
+    pub month: u8,
+    pub rating: u32,
+}
+
+/// One player's games in a database at a glance: as White and as Black, their rating over the
+/// months, and their wins over the strongest opponents.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbPlayerReport {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_year: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_year: Option<i32>,
+    pub white: GameDbSideReport,
+    pub black: GameDbSideReport,
+    /// Oldest first.
+    pub ratings: Vec<GameDbRating>,
+    /// The strongest opponent first.
+    pub best: Vec<GameDbRow>,
+}
+
+/// A player's name in a database, with the games it is in.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbName {
+    pub name: String,
+    pub games: u64,
+}
+
+/// Names in a database that are likely one player's, the most played first.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbNameGroup {
+    pub names: Vec<GameDbName>,
+}
+
+/// Where a line leaves the games of the game databases: its first move no game played from
+/// its position.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbNovelty {
+    /// The new move's index in the line; none when every move looked at was played before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ply: Option<u32>,
+    /// The games that went on from the position before it.
+    pub games: u64,
+    /// The moves they played there, most played first: at most three.
+    pub played: Vec<NoveltyMove>,
+}
+
+/// A move games played where a line's novelty was played instead.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NoveltyMove {
+    pub san: String,
+    pub uci: String,
+    pub games: u64,
+}
+
+/// A game saved into a database: the database as it is now, and the game's id in it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbSaved {
+    pub database: DatabaseInfo,
+    pub game: u64,
+}
+
 /// What an import added.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -167,6 +301,14 @@ union!(#[doc = "The order a search lists games in."] GameDbSort {
     Newest = "newest",
     Oldest = "oldest",
     Rating = "rating",
+});
+
+union!(#[doc = "A pawn structure a deep search looks for, of either colour."] GameDbStructure {
+    IsolatedQueenPawn = "isolatedQueenPawn",
+    HangingPawns = "hangingPawns",
+    Carlsbad = "carlsbad",
+    MaroczyBind = "maroczyBind",
+    Stonewall = "stonewall",
 });
 
 /// A search of one database: every filter given must match.
@@ -201,6 +343,21 @@ pub struct GameDbQuery {
     /// Only the games that reached this position (a FEN), with a move played from it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<String>,
+    /// The games of at least, and at most, this many moves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_moves: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_moves: Option<u32>,
+    /// The games played at this speed, as their time control says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<ExplorerSpeed>,
+    /// The games that reach this material balance and keep it ("R vs B", "KRP vs KR"), either
+    /// colour on either side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    /// The games that reach this pawn structure and keep it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structure: Option<GameDbStructure>,
     /// Newest first when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<GameDbSort>,

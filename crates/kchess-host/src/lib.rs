@@ -8,6 +8,7 @@
 use kchess_hack as _;
 
 pub mod config;
+pub mod disk;
 pub mod env;
 pub mod http;
 mod redact;

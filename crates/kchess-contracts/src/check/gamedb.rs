@@ -6,13 +6,14 @@ use kchess_domain::misc::value::J;
 
 use super::*;
 use crate::types::{
-    ExplorerSpeed, GameDbQuery, GameDbResult, GameDbSide, GameDbSort, GameSite, LichessGames,
-    PlayerGames,
+    ExplorerSpeed, GameDbQuery, GameDbResult, GameDbSide, GameDbSort, GameDbStructure, GameSite,
+    LichessGames, PlayerGames,
 };
 
 const DATABASE: &str = "Invalid database.";
 const QUERY: &str = "Invalid game search.";
 const POSITION: &str = "Invalid position.";
+const MATERIAL: &str = "Write the material as each side's pieces, like R vs B.";
 
 /// A database's id, as `gameDbStatus` lists it: 1 to 40 lowercase letters, digits and dashes.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -55,6 +56,57 @@ impl Validate for DatabaseName {
     }
 }
 
+/// A player's name as a game's header gives it: 1 to 200 characters, trimmed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct PlayerName(pub String);
+
+impl Validate for PlayerName {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const NAME: &str = "A player's name is 1 to 200 characters.";
+        let name: String = decode(value, |_| Some(NAME))?;
+        let name = name.trim();
+        ensure(
+            !name.is_empty() && name.chars().count() <= 200 && !name.chars().any(char::is_control),
+            Some(NAME),
+            "",
+            String::new,
+        )?;
+        Ok(PlayerName(name.to_string()))
+    }
+}
+
+/// Names of players to merge into another: 1 to 100 of them, each kept once.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct PlayerNames(pub Vec<String>);
+
+impl Validate for PlayerNames {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const NAMES: &str = "Choose 1 to 100 names, each 1 to 200 characters.";
+        let values: Vec<String> = decode(value, |_| Some(NAMES))?;
+        let mut names: Vec<String> = Vec::with_capacity(values.len());
+        for name in values {
+            let name = name.trim().to_string();
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        ensure(
+            (1..=100).contains(&names.len())
+                && names.iter().all(|name| {
+                    !name.is_empty()
+                        && name.chars().count() <= 200
+                        && !name.chars().any(char::is_control)
+                }),
+            Some(NAMES),
+            "",
+            String::new,
+        )?;
+        Ok(PlayerNames(names))
+    }
+}
+
 /// A game of a database, by the id a search listed.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[serde(transparent)]
@@ -66,6 +118,50 @@ impl Validate for GameDbGameId {
         let id: u64 = decode(value, |_| Some(GAME))?;
         within(id, 1, i64::MAX as u64, Some(GAME), "")?;
         Ok(GameDbGameId(id))
+    }
+}
+
+/// Games of a database by the ids a search listed: 1 to 10,000 of them, each kept once.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct GameDbGameIds(pub Vec<u64>);
+
+impl Validate for GameDbGameIds {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const GAMES: &str = "Choose 1 to 10,000 games.";
+        let mut ids: Vec<u64> = decode(value, |_| Some(GAMES))?;
+        ensure(
+            (1..=10_000).contains(&ids.len())
+                && ids.iter().all(|id| (1..=i64::MAX as u64).contains(id)),
+            Some(GAMES),
+            "",
+            String::new,
+        )?;
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(GameDbGameIds(ids))
+    }
+}
+
+/// Where to write a PGN file the user chose: an absolute path ending in `.pgn`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct PgnSavePath(pub String);
+
+impl Validate for PgnSavePath {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const PATH: &str = "Save the games as a .pgn file.";
+        let path: String = decode(value, |_| Some(PATH))?;
+        ensure(
+            std::path::Path::new(&path).is_absolute()
+                && path.len() <= 4096
+                && !path.contains('\0')
+                && path.to_ascii_lowercase().ends_with(".pgn"),
+            Some(PATH),
+            "",
+            String::new,
+        )?;
+        Ok(PgnSavePath(path))
     }
 }
 
@@ -280,6 +376,11 @@ struct SentQuery {
     result: Option<GameDbResult>,
     eco: Option<String>,
     position: Option<String>,
+    min_moves: Option<u64>,
+    max_moves: Option<u64>,
+    speed: Option<ExplorerSpeed>,
+    material: Option<String>,
+    structure: Option<GameDbStructure>,
     sort: Option<GameDbSort>,
     offset: u64,
     limit: u64,
@@ -302,6 +403,8 @@ impl Validate for GameDbQuery {
             ["yearFrom" | "yearTo"] => Some("Invalid year."),
             ["minElo"] => Some("Invalid rating."),
             ["position"] => Some(POSITION),
+            ["minMoves" | "maxMoves"] => Some("Invalid number of moves."),
+            ["material"] => Some(MATERIAL),
             _ => Some(QUERY),
         })?;
         ensure(
@@ -327,6 +430,18 @@ impl Validate for GameDbQuery {
         if let Some(position) = &sent.position {
             analysis_position(position, None).map_err(|_| Refusal::from(POSITION))?;
         }
+        for moves in sent.min_moves.iter().chain(&sent.max_moves) {
+            within(*moves, 0, 600, Some("Invalid number of moves."), "")?;
+        }
+        let material = search_text(sent.material)?;
+        if let Some(material) = &material {
+            ensure(
+                kchess_domain::gamedb::patterns::Material::parse(material).is_some(),
+                Some(MATERIAL),
+                "",
+                String::new,
+            )?;
+        }
         within(sent.offset, 0, 10_000_000, Some(QUERY), "")?;
         within(sent.limit, 1, 200, Some(QUERY), "")?;
         let year = |year: Option<i64>| year.and_then(|year| i32::try_from(year).ok());
@@ -342,6 +457,11 @@ impl Validate for GameDbQuery {
             result: sent.result,
             eco,
             position: sent.position,
+            min_moves: sent.min_moves.and_then(|moves| u32::try_from(moves).ok()),
+            max_moves: sent.max_moves.and_then(|moves| u32::try_from(moves).ok()),
+            speed: sent.speed,
+            material,
+            structure: sent.structure,
             sort: sent.sort,
             offset: u32::try_from(sent.offset).unwrap_or(u32::MAX),
             limit: u32::try_from(sent.limit).unwrap_or(1),
@@ -513,6 +633,27 @@ mod tests {
             refused(json!({"database": "mine", "x": 1, "offset": 0, "limit": 5})),
             QUERY
         );
+        let deep = check::<GameDbQuery>(sent(json!({
+            "database": "mine", "minMoves": 40, "maxMoves": 80, "speed": "blitz",
+            "material": " R vs B ", "structure": "carlsbad", "offset": 0, "limit": 5
+        })))
+        .unwrap();
+        assert_eq!((deep.min_moves, deep.max_moves), (Some(40), Some(80)));
+        assert_eq!(deep.speed, Some(ExplorerSpeed::Blitz));
+        assert_eq!(deep.material.as_deref(), Some("R vs B"));
+        assert_eq!(deep.structure, Some(GameDbStructure::Carlsbad));
+        assert_eq!(
+            refused(json!({"database": "mine", "material": "rook", "offset": 0, "limit": 5})),
+            MATERIAL
+        );
+        assert_eq!(
+            refused(json!({"database": "mine", "minMoves": 601, "offset": 0, "limit": 5})),
+            "Invalid number of moves."
+        );
+        assert_eq!(
+            refused(json!({"database": "mine", "structure": "x", "offset": 0, "limit": 5})),
+            QUERY
+        );
         let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let at = check::<GameDbQuery>(sent(
             json!({"database": "mine", "position": start, "offset": 0, "limit": 5}),
@@ -529,5 +670,81 @@ mod tests {
                 POSITION
             );
         }
+    }
+
+    /// Each database input sent as the wrong kind of value is refused with its own message, as
+    /// one out of range is.
+    #[test]
+    fn each_database_input_refuses_a_value_of_the_wrong_kind() {
+        let value = || sent(json!(3));
+        assert_eq!(
+            check::<DatabaseName>(value()).unwrap_err(),
+            "A database name is 1 to 80 characters."
+        );
+        assert_eq!(
+            check::<PlayerName>(value()).unwrap_err(),
+            "A player's name is 1 to 200 characters."
+        );
+        assert_eq!(
+            check::<PlayerNames>(value()).unwrap_err(),
+            "Choose 1 to 100 names, each 1 to 200 characters."
+        );
+        assert_eq!(
+            check::<GameDbGameId>(sent(json!("12"))).unwrap_err(),
+            "Invalid game."
+        );
+        assert_eq!(
+            check::<GameDbGameIds>(value()).unwrap_err(),
+            "Choose 1 to 10,000 games."
+        );
+        assert_eq!(
+            check::<PgnSavePath>(value()).unwrap_err(),
+            "Save the games as a .pgn file."
+        );
+        assert_eq!(
+            check::<PgnFilePath>(value()).unwrap_err(),
+            "Choose a .pgn, .pgn.zst, .pgn.bz2, .zip or .7z file."
+        );
+        assert_eq!(check::<LichessMonth>(value()).unwrap_err(), MONTH);
+        let rated = check::<GameDbQuery>(sent(json!({
+            "database": "mine", "minElo": 2500, "offset": 0, "limit": 5
+        })))
+        .unwrap();
+        assert_eq!(rated.min_elo, Some(2500));
+    }
+
+    /// A form's download is checked as the core will check it, before it is sent.
+    #[test]
+    fn a_form_s_download_is_checked_as_the_core_checks_it() {
+        let lichess = LichessGames {
+            month: Some("2024-05".into()),
+            min_rating: 2400,
+        };
+        assert_eq!(lichess_games(&lichess).unwrap(), lichess);
+        assert_eq!(
+            lichess_games(&LichessGames {
+                min_rating: 2450,
+                ..lichess.clone()
+            })
+            .unwrap_err(),
+            "Invalid rating."
+        );
+        let player = PlayerGames {
+            site: GameSite::Lichess,
+            username: "Some_Player".into(),
+            months: Some(12),
+            speeds: None,
+            rated: false,
+        };
+        assert_eq!(player_games(&player).unwrap(), player);
+        assert_eq!(
+            player_games(&PlayerGames {
+                site: GameSite::Chesscom,
+                username: "x".into(),
+                ..player.clone()
+            })
+            .unwrap_err(),
+            "Enter a valid Chess.com username."
+        );
     }
 }

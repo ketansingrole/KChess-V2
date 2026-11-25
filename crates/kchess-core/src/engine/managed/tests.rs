@@ -284,6 +284,7 @@ async fn reports_missing_when_the_directory_or_binary_is_absent() {
             installed: false,
             path: empty.join(executable_name()).to_string_lossy().into_owned(),
             version: None,
+            bytes: 0,
         }
     );
     let nested = dir.path().join("notadir").join("sub");
@@ -339,6 +340,8 @@ async fn reports_the_recorded_version_and_none_when_the_file_is_missing() {
     let state = managed_engine(&host, dir.path()).await;
     assert!(state.installed);
     assert_eq!(state.version, None);
+    // Its size on disk, for Settings → Storage.
+    assert_eq!(state.bytes, "#!/bin/sh\nexit 0\n".len() as u64);
     std::fs::write(dir.path().join(VERSION_FILE), "sf_17.1\n").unwrap();
     let state = managed_engine(&host, dir.path()).await;
     assert_eq!(state.version.as_deref(), Some("sf_17.1"));

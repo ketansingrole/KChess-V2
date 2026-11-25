@@ -1,17 +1,30 @@
 //! The local game databases.
 
 use kchess_contracts::check::{
-    DatabaseId, DatabaseName, GameDbGameId, LichessMonth, MasterMonths, PgnFilePath,
+    DatabaseId, DatabaseName, Fen, GameDbGameId, GameDbGameIds, LichessMonth, MasterMonths, Moves,
+    PgnFilePath, PgnSavePath, PgnText, PlayerName, PlayerNames,
 };
 use kchess_contracts::core_api::GameDbApi;
-use kchess_contracts::error::Result;
+use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    DatabaseSource, GameDbImported, GameDbPage, GameDbQuery, GameDbStatus, GameSite,
+    DatabaseSource, GameDbImported, GameDbNameGroup, GameDbNovelty, GameDbOpeningReport,
+    GameDbPage, GameDbPlayerReport, GameDbQuery, GameDbSaved, GameDbStatus, GameSite,
     LichessArchive, LichessGames, PlayerGames,
 };
 
 use crate::core::Core;
+use crate::gamedb::edit::{self, Selection};
+use crate::gamedb::novelty;
 use crate::gamedb::player;
+
+/// The games an edit acts on: those listed, or those a search finds, never both or neither.
+fn selection(games: Option<GameDbGameIds>, search: Option<GameDbQuery>) -> Result<Selection> {
+    match (games, search) {
+        (Some(games), None) => Ok(Selection::Games(games.0)),
+        (None, Some(search)) => Ok(Selection::Search(search)),
+        _ => Err(CoreError::new("Choose the games, or a search.")),
+    }
+}
 
 impl GameDbApi for Core {
     async fn game_db_status(&self) -> Result<GameDbStatus> {
@@ -59,6 +72,125 @@ impl GameDbApi for Core {
 
     async fn game_db_game(&self, database: DatabaseId, game: GameDbGameId) -> Result<String> {
         self.gamedb.game(&database.0, game.0).await
+    }
+
+    async fn game_db_add_games(
+        &self,
+        pgn: PgnText,
+        into: Option<DatabaseId>,
+        name: Option<DatabaseName>,
+    ) -> Result<GameDbSaved> {
+        let into = match (into, name) {
+            (Some(into), None) => edit::Into::Existing(into.0),
+            (None, Some(name)) => edit::Into::New(name.0),
+            _ => return Err(CoreError::new("Choose a database, or name a new one.")),
+        };
+        self.gamedb.add_games(into, pgn.0).await
+    }
+
+    async fn game_db_replace_game(
+        &self,
+        database: DatabaseId,
+        game: GameDbGameId,
+        pgn: PgnText,
+    ) -> Result<GameDbSaved> {
+        self.gamedb.replace_game(&database.0, game.0, pgn.0).await
+    }
+
+    async fn game_db_delete_games(
+        &self,
+        database: DatabaseId,
+        games: Option<GameDbGameIds>,
+        search: Option<GameDbQuery>,
+    ) -> Result<u64> {
+        let selection = selection(games, search)?;
+        self.gamedb.delete_games(&database.0, selection).await
+    }
+
+    async fn game_db_opening_report(&self, fen: Fen) -> Result<GameDbOpeningReport> {
+        self.gamedb.opening_report(fen.0).await
+    }
+
+    async fn game_db_player(
+        &self,
+        database: DatabaseId,
+        name: PlayerName,
+    ) -> Result<GameDbPlayerReport> {
+        self.gamedb.player_report(&database.0, name.0).await
+    }
+
+    async fn game_db_duplicates(&self, database: DatabaseId) -> Result<u64> {
+        self.gamedb.duplicates(&database.0).await
+    }
+
+    async fn game_db_remove_duplicates(&self, database: DatabaseId) -> Result<u64> {
+        self.gamedb
+            .delete_games(&database.0, edit::Selection::Duplicates)
+            .await
+    }
+
+    async fn game_db_name_groups(&self, database: DatabaseId) -> Result<Vec<GameDbNameGroup>> {
+        self.gamedb.name_groups(&database.0).await
+    }
+
+    async fn game_db_merge_names(
+        &self,
+        database: DatabaseId,
+        into: PlayerName,
+        names: PlayerNames,
+    ) -> Result<u64> {
+        self.gamedb.merge_names(&database.0, into.0, names.0).await
+    }
+
+    async fn game_db_copy_games(
+        &self,
+        database: DatabaseId,
+        games: Option<GameDbGameIds>,
+        search: Option<GameDbQuery>,
+        into: Option<DatabaseId>,
+        name: Option<DatabaseName>,
+    ) -> Result<GameDbImported> {
+        let selection = selection(games, search)?;
+        self.gamedb
+            .copy_games(
+                &database.0,
+                selection,
+                into.map(|id| id.0),
+                name.map(|name| name.0),
+            )
+            .await
+    }
+
+    async fn game_db_export(
+        &self,
+        database: DatabaseId,
+        path: PgnSavePath,
+        games: Option<GameDbGameIds>,
+        search: Option<GameDbQuery>,
+    ) -> Result<u64> {
+        let selection = selection(games, search)?;
+        self.gamedb.export(&database.0, selection, path.0).await
+    }
+
+    async fn game_db_novelty(
+        &self,
+        fen: Fen,
+        moves: Moves,
+        white: Option<PlayerName>,
+        black: Option<PlayerName>,
+        database: Option<DatabaseId>,
+        game: Option<GameDbGameId>,
+    ) -> Result<GameDbNovelty> {
+        let line = novelty::Line {
+            fen: fen.0,
+            moves: moves.0,
+            white: white.map(|name| name.0),
+            black: black.map(|name| name.0),
+            from: database
+                .zip(game)
+                .map(|(database, game)| (database.0, game.0)),
+        };
+        self.gamedb.novelty(line).await
     }
 
     async fn game_db_master_install(&self, months: Option<MasterMonths>) -> Result<GameDbImported> {

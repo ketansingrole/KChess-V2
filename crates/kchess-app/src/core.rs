@@ -318,6 +318,12 @@ impl AppCore {
     }
 }
 
+/// The folder the profile's shared core service runs from: one copy of this release's service,
+/// outside the app so an update can replace the app while it runs (`docs/shared-core.md`).
+pub fn service_folder() -> Option<std::path::PathBuf> {
+    kchess_client::discovery::runtime_dir()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Answer, Reads};
@@ -452,7 +458,9 @@ mod tests {
             ProfileArea::Accounts | ProfileArea::Usage => "accounts.rs",
             ProfileArea::DesktopSettings => "settings.rs: the SettingsSaved event",
             ProfileArea::Puzzles => "puzzle_db.rs",
-            ProfileArea::VoiceHistory | ProfileArea::Engine => "pages/settings",
+            ProfileArea::VoiceHistory | ProfileArea::Engine | ProfileArea::Tablebases => {
+                "pages/settings"
+            }
             ProfileArea::ViewPreferences => "prefs.rs",
             ProfileArea::Broadcasts => "kchess-watch broadcasts.rs: the alerts shown",
             ProfileArea::Notifications => "apps/gpui notifications/centre.rs",

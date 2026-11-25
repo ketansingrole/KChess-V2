@@ -281,6 +281,8 @@ pub const MIGRATIONS: &[&str] = &[
     id INTEGER PRIMARY KEY CHECK (id = 1),
     deferredAt INTEGER NOT NULL
   );"#,
+    // What's new before an update installs: the notes of the release it brings.
+    r#"ALTER TABLE settings ADD COLUMN updateShowNotes INTEGER NOT NULL DEFAULT 1;"#,
 ];
 
 /// Apply every migration newer than the database's `user_version`, each in its own transaction.

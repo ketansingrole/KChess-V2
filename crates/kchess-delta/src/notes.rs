@@ -1,7 +1,11 @@
 //! The release notes (`apps/gpui/WHATS_NEW.md`): what the app shows after an update, the GitHub
 //! release's text and the App Store's What's New. A `## Unreleased` section collects what the next
-//! release brings; `cargo xtask release-version` dates it as `## 2026.11.4 (2026-11-20)`. Each item
-//! is a `- **Title**: text` line, carried on by indented lines.
+//! release brings; `cargo xtask release-version` dates it as `## 2026.11.4 (2026-11-20)`.
+//!
+//! A section opens with a short summary, a paragraph or two, then lists its items under
+//! `### Added`, `### Changed` and `### Fixed`: each a `- ` line, one plain sentence, carried on by
+//! indented lines. Sections released before the groups list `- **Title**: text` items alone, and
+//! read as they were published.
 
 use crate::Version;
 
@@ -12,6 +16,38 @@ pub const UNRELEASED: &str = "Unreleased";
 /// The longest item, title and text together: a player reads a line at a glance, and skips a
 /// longer one however much it holds.
 pub const MAX_ITEM: usize = 280;
+/// The longest summary: a few sentences on what the release is about.
+pub const MAX_SUMMARY: usize = 400;
+
+/// The group an item is listed in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Kind {
+    /// Something a player can do now that they could not before.
+    Added,
+    /// Something that works differently, or better.
+    Changed,
+    /// Something that went wrong and no longer does.
+    Fixed,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 3] = [Kind::Added, Kind::Changed, Kind::Fixed];
+
+    /// Its `### ` heading.
+    pub fn heading(self) -> &'static str {
+        match self {
+            Kind::Added => "Added",
+            Kind::Changed => "Changed",
+            Kind::Fixed => "Fixed",
+        }
+    }
+
+    fn of(heading: &str) -> Option<Kind> {
+        Kind::ALL
+            .into_iter()
+            .find(|kind| kind.heading().eq_ignore_ascii_case(heading.trim()))
+    }
+}
 
 /// One `## ` section: its heading's version (or `Unreleased`) and date, and its lines.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -25,6 +61,8 @@ pub struct Section<'a> {
 /// One item, its Markdown marks dropped.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
+    /// The group it is listed under; none in a section released before the groups.
+    pub kind: Option<Kind>,
     pub title: Option<String>,
     pub text: String,
 }
@@ -75,13 +113,55 @@ impl Section<'_> {
         self.lines.join("\n").trim().to_string()
     }
 
+    /// The summary: the lines before its first item or group, as one paragraph each.
+    pub fn summary(&self) -> Option<String> {
+        let mut paragraphs: Vec<String> = Vec::new();
+        let mut open = false;
+        for line in &self.lines {
+            let trimmed = line.trim();
+            if trimmed.starts_with("- ") || trimmed.starts_with('#') {
+                break;
+            }
+            if trimmed.is_empty() {
+                open = false;
+            } else if open && let Some(last) = paragraphs.last_mut() {
+                last.push(' ');
+                last.push_str(&plain(trimmed));
+            } else {
+                paragraphs.push(plain(trimmed));
+                open = true;
+            }
+        }
+        (!paragraphs.is_empty()).then(|| paragraphs.join("\n\n"))
+    }
+
+    /// Whether its items are listed under `### Added`, `### Changed` and `### Fixed`.
+    pub fn grouped(&self) -> bool {
+        self.lines.iter().any(|line| line.starts_with("### "))
+    }
+
+    /// The `### ` headings that name no group.
+    fn unknown_groups(&self) -> Vec<&str> {
+        self.lines
+            .iter()
+            .filter_map(|line| line.strip_prefix("### "))
+            .filter(|heading| Kind::of(heading).is_none())
+            .collect()
+    }
+
     /// The section's items.
     pub fn items(&self) -> Vec<Item> {
         let mut items: Vec<Item> = Vec::new();
+        let mut kind = None;
         for line in &self.lines {
             let trimmed = line.trim();
-            if let Some(item) = trimmed.strip_prefix("- ") {
-                items.push(item_of(item));
+            if let Some(heading) = line.strip_prefix("### ") {
+                kind = Kind::of(heading);
+            } else if let Some(item) = trimmed.strip_prefix("- ") {
+                items.push(Item {
+                    kind,
+                    ..item_of(item)
+                });
             } else if !trimmed.is_empty()
                 && line.starts_with(' ')
                 && let Some(item) = items.last_mut()
@@ -100,11 +180,13 @@ fn item_of(text: &str) -> Item {
     {
         let text = text.trim_start_matches([':', '.']).trim();
         return Item {
+            kind: None,
             title: Some(plain(title.trim_end_matches(':'))),
             text: plain(text),
         };
     }
     Item {
+        kind: None,
         title: None,
         text: plain(text),
     }
@@ -136,13 +218,37 @@ pub fn plain(text: &str) -> String {
     unlink(text).replace("**", "").replace('`', "")
 }
 
-/// Why `text`'s released sections would read badly: an item over [`MAX_ITEM`], an undated
-/// section, one without items, an item without a title, or versions out of order.
+/// Why `text`'s sections would read badly: an item over [`MAX_ITEM`], a summary over
+/// [`MAX_SUMMARY`], a group that is not Added, Changed or Fixed, an item outside the groups of a
+/// grouped section; and of the released ones, an undated section, one without items, an item of
+/// one before the groups without a title, or versions out of order.
 pub fn problems(text: &str) -> Vec<String> {
     let mut problems = Vec::new();
     let mut previous: Option<Version> = None;
     for section in sections(text) {
+        if let Some(summary) = section.summary()
+            && summary.chars().count() > MAX_SUMMARY
+        {
+            problems.push(format!(
+                "{} has a summary over {MAX_SUMMARY} characters: say in a few sentences what the \
+                 release is about, and leave the rest to its items.",
+                section.version
+            ));
+        }
+        for heading in section.unknown_groups() {
+            problems.push(format!(
+                "{} has a group \"{heading}\": list items under Added, Changed or Fixed.",
+                section.version
+            ));
+        }
+        let grouped = section.grouped();
         for item in section.items() {
+            if grouped && item.kind.is_none() {
+                problems.push(format!(
+                    "{} has an item outside Added, Changed and Fixed: {}",
+                    section.version, item.text
+                ));
+            }
             let length = item.length();
             if length > MAX_ITEM {
                 problems.push(format!(
@@ -164,7 +270,7 @@ pub fn problems(text: &str) -> Vec<String> {
         if items.is_empty() {
             problems.push(format!("{} has no items.", section.version));
         }
-        for item in items.iter().filter(|item| item.title.is_none()) {
+        for item in items.iter().filter(|item| !grouped && item.title.is_none()) {
             problems.push(format!(
                 "{} has an item without a **Title**: {}",
                 section.version, item.text
@@ -200,10 +306,12 @@ mod tests {
             all[1].items(),
             [
                 Item {
+                    kind: None,
                     title: Some("Guess the move".into()),
                     text: "a drill, see Practice. It carries on.".into(),
                 },
                 Item {
+                    kind: None,
                     title: None,
                     text: "A plain fix.".into(),
                 },
@@ -214,6 +322,69 @@ mod tests {
             Some("- **Older**: before.".to_string())
         );
         assert_eq!(section(SAMPLE, "2026.11.5"), None);
+    }
+
+    const GROUPED: &str = "## Unreleased\n\nKChess becomes a database.\nEvery game, offline.\n\n\
+        A second paragraph.\n\n### Added\n\n- You can import a PGN file.\n  As large as you like.\n\
+        - **Titled**: still reads.\n\n### Fixed\n\n- Voice input no longer freezes.\n";
+
+    #[test]
+    fn a_section_reads_its_summary_and_groups() {
+        let section = &sections(GROUPED)[0];
+        assert!(section.grouped());
+        assert_eq!(
+            section.summary().as_deref(),
+            Some("KChess becomes a database. Every game, offline.\n\nA second paragraph.")
+        );
+        assert_eq!(
+            section.items(),
+            [
+                Item {
+                    kind: Some(Kind::Added),
+                    title: None,
+                    text: "You can import a PGN file. As large as you like.".into(),
+                },
+                Item {
+                    kind: Some(Kind::Added),
+                    title: Some("Titled".into()),
+                    text: "still reads.".into(),
+                },
+                Item {
+                    kind: Some(Kind::Fixed),
+                    title: None,
+                    text: "Voice input no longer freezes.".into(),
+                },
+            ]
+        );
+        // A section before the groups has no summary but what precedes its items.
+        assert_eq!(sections(SAMPLE)[1].summary(), None);
+        assert!(!sections(SAMPLE)[1].grouped());
+        // Grouped items need no title once released.
+        let released = GROUPED.replace("## Unreleased", "## 2026.11.4 (2026-11-20)");
+        assert_eq!(problems(&released), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_grouped_section_keeps_to_its_groups() {
+        let notes = "## 2026.11.4 (2026-11-20)\n\n- Loose.\n\n### New\n\n- In no group.\n\n\
+            ### Fixed\n\n- Fine.\n";
+        assert_eq!(
+            problems(notes),
+            [
+                "2026.11.4 has a group \"New\": list items under Added, Changed or Fixed.",
+                "2026.11.4 has an item outside Added, Changed and Fixed: Loose.",
+                "2026.11.4 has an item outside Added, Changed and Fixed: In no group.",
+            ]
+        );
+        let long = format!(
+            "## Unreleased\n\n{}\n\n### Added\n\n- T.\n",
+            "a".repeat(MAX_SUMMARY + 1)
+        );
+        assert!(
+            problems(&long)[0].contains("summary over"),
+            "{:?}",
+            problems(&long)
+        );
     }
 
     #[test]

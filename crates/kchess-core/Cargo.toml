@@ -48,6 +48,9 @@ tempfile = "3"
 sevenz-rust2 = { version = "0.25", default-features = false, features = ["ppmd", "bzip2"] }
 # `.pgn.bz2` imports (FICS's games): the Rust port of libbzip2, as the app's update patches use.
 bzip2 = "0.6"
+# Offline endgame tablebases (`tablebase`): probes the Syzygy tables of up to five pieces
+# (GPL-3.0-or-later, as KChess is; no memory map, so a table read is an ordinary file read).
+shakmaty-syzygy = "0.28"
 
 # Lichess OAuth PKCE: the S256 challenge is base64url(SHA-256(verifier)) (`base64` 0.23 is already
 # in Cargo.lock through reqwest; MIT/Apache-2.0, GPL-compatible).
@@ -65,14 +68,16 @@ keyring = { version = "4", default-features = false, features = ["v1"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 kchess-hack = { version = "0.1", path = "../kchess-hack" }
 
-# rustix (already in Cargo.lock through tempfile): `access(2)` for engine/status.rs, and SIGTERM
+# rustix (already in Cargo.lock through tempfile): `access(2)` for engine/status.rs, `statvfs(2)`
+# for the free disk space (`disk.rs`), and SIGTERM
 # before SIGKILL, so an engine can exit cleanly (tokio can only send SIGKILL), without unsafe.
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs", "process"] }
 
-# The power state (`power.rs`); already in Cargo.lock through the service's pipe security.
+# The power state (`power.rs`) and the free disk space (`disk.rs`); already in Cargo.lock through
+# the service's pipe security.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_Power"] }
+windows-sys = { version = "0.61", features = ["Win32_System_Power", "Win32_Storage_FileSystem"] }
 
 [features]
 # Set by `cargo xtask package` for every shipped build: the development overrides (test switch,

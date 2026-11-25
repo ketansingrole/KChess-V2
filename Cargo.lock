@@ -4448,6 +4448,7 @@ dependencies = [
  "sevenz-rust2",
  "sha2 0.11.1",
  "shakmaty",
+ "shakmaty-syzygy",
  "tar",
  "tempfile",
  "tokio",
@@ -4465,6 +4466,7 @@ dependencies = [
  "kchess-app",
  "kchess-board",
  "kchess-contracts",
+ "kchess-domain",
  "kchess-hack",
  "kchess-nav",
  "kchess-ui",
@@ -4706,6 +4708,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "tempfile",
  "url",
 ]
 
@@ -7903,6 +7906,22 @@ dependencies = [
  "btoi",
  "nohash-hasher",
  "serde",
+]
+
+[[package]]
+name = "shakmaty-syzygy"
+version = "0.28.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24b16b1750dfcbbdee863037af8bebdc37e8f66fbb988e48c6e3e1576b2934fb"
+dependencies = [
+ "arrayvec",
+ "bitflags 2.13.2",
+ "byteorder",
+ "libc",
+ "once_cell",
+ "rustc-hash 2.1.3",
+ "shakmaty",
+ "tracing",
 ]
 
 [[package]]

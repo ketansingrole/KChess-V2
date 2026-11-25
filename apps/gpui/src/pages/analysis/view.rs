@@ -68,6 +68,7 @@ impl AnalysisPage {
             page: cx.entity().downgrade(),
             palette: *palette,
             marks: self.review_marks(cx),
+            novelty: self.novelty_mark(),
             mainline: {
                 let moves = self.mainline();
                 (1..=moves.len())
@@ -142,6 +143,8 @@ impl AnalysisPage {
                 .read(cx)
                 .databases()
                 .is_empty();
+        // Withheld during a live game, as the explorer is.
+        let assisted = Self::assistance_allowed(cx);
         let page = cx.entity().downgrade();
         let step = |id: &'static str, glyph: &'static str, label: &'static str, disabled: bool| {
             Button::new(id)
@@ -314,6 +317,15 @@ impl AnalysisPage {
                                     .icon(icon("database"))
                                     .on_click(play(|setup, window, cx| {
                                         crate::pages::database::games_at(setup.fen, window, cx)
+                                    })),
+                            )
+                        })
+                        .when(searchable && assisted, |menu| {
+                            menu.item(
+                                PopupMenuItem::new("Opening report")
+                                    .icon(icon("book-marked"))
+                                    .on_click(action(|page, window, cx| {
+                                        page.open_opening_report(window, cx)
                                     })),
                             )
                         })

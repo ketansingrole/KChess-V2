@@ -56,6 +56,18 @@ impl PageAction for Action {
 fn study_info(action: StudyAction, cloud: bool) -> ActionInfo {
     let (id, label, glyph, keywords) = match action {
         StudyAction::SaveAsStudy => ("save", "Save as study", "book-plus", "keep store"),
+        StudyAction::SaveToDatabase => (
+            "save-database",
+            "Save to game database…",
+            "database",
+            "keep store pgn games add",
+        ),
+        StudyAction::SaveChanges => (
+            "save-changes",
+            "Save changes to game database",
+            "save",
+            "keep store pgn edit replace",
+        ),
         StudyAction::Details => (
             "details",
             "Game details",

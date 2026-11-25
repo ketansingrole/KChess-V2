@@ -222,8 +222,8 @@ pub struct ReleaseAsset {
 /// The Stockfish directory's install state. The version is the recorded release tag, if any.
 pub async fn managed_engine(host: &dyn Host, dir: &Path) -> ManagedEngine {
     let path = dir.join(executable_name());
-    match tokio::fs::metadata(&path).await {
-        Ok(metadata) if metadata.is_file() => {}
+    let bytes = match tokio::fs::metadata(&path).await {
+        Ok(metadata) if metadata.is_file() => metadata.len(),
         Ok(_) => return absent(&path),
         Err(cause) => {
             host.log(
@@ -233,7 +233,7 @@ pub async fn managed_engine(host: &dyn Host, dir: &Path) -> ManagedEngine {
             );
             return absent(&path);
         }
-    }
+    };
     let version = tokio::fs::read_to_string(dir.join(VERSION_FILE))
         .await
         .ok()
@@ -243,6 +243,7 @@ pub async fn managed_engine(host: &dyn Host, dir: &Path) -> ManagedEngine {
         installed: true,
         path: path.to_string_lossy().into_owned(),
         version,
+        bytes,
     }
 }
 
@@ -251,6 +252,7 @@ fn absent(path: &Path) -> ManagedEngine {
         installed: false,
         path: path.to_string_lossy().into_owned(),
         version: None,
+        bytes: 0,
     }
 }
 

@@ -47,6 +47,9 @@ const CHECKSUM_MESSAGE: &str = "Voice model checksum mismatch. Try downloading i
 const INVALID_MESSAGE: &str = "Invalid voice model archive.";
 const STOPPED_MESSAGE: &str = "Voice model preparation stopped unexpectedly.";
 const CLOSING_MESSAGE: &str = "Voice input is closing.";
+const REPLACE: &str = "Could not replace the voice model";
+const REMOVED_MESSAGE: &str = "The voice model was deleted.";
+const STILL_PREPARING: &str = "The voice model is still downloading.";
 
 /// The model KChess ships a download for: its archive's folder name and the SHA-256 of the zip.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,6 +283,59 @@ impl VoiceModelCache {
         }
     }
 
+    /// Removes the installed model, and an earlier release's archive, so its space comes back;
+    /// the next `ensure` downloads it again. Refused while a preparation runs. The removal holds
+    /// the preparation's place, so an `ensure` meanwhile fails rather than publishing into a
+    /// folder being removed.
+    pub async fn delete(&self) -> Result<()> {
+        let removal = {
+            let mut state = self.lock();
+            if state.pending.is_some() {
+                return Err(CoreError::new(STILL_PREPARING));
+            }
+            if self.inner.closing.is_cancelled() {
+                return Err(CoreError::new(CLOSING_MESSAGE));
+            }
+            let cache = self.clone();
+            let task = tokio::spawn(async move {
+                let outcome = cache.remove().await;
+                cache.finish();
+                outcome
+            });
+            let removal = async move {
+                match task.await {
+                    Ok(outcome) => outcome.map_err(|error| error.message),
+                    Err(_) => Err(STOPPED_MESSAGE.to_string()),
+                }
+            }
+            .boxed()
+            .shared();
+            let joined = removal.clone();
+            state.pending = Some(
+                async move {
+                    Err(match joined.await {
+                        Ok(()) => REMOVED_MESSAGE.to_string(),
+                        Err(message) => message,
+                    })
+                }
+                .boxed()
+                .shared(),
+            );
+            removal
+        };
+        removal.await.map_err(CoreError::new)
+    }
+
+    /// The marker goes first, so a removal cut short reads as not installed.
+    async fn remove(&self) -> Result<()> {
+        const WHY: &str = "Could not delete the voice model";
+        remove_if_present(&self.marker_path(), WHY).await?;
+        for legacy in LEGACY_FILES {
+            remove_if_present(&self.inner.directory.join(legacy), WHY).await?;
+        }
+        remove_dir_if_present(&self.path(), WHY).await
+    }
+
     /// Forget the finished preparation so the next `status` or `ensure` starts from scratch.
     fn finish(&self) {
         let mut state = self.lock();
@@ -438,11 +494,11 @@ impl VoiceModelCache {
         let prepared = staging.join("unpacked").join(&self.inner.model.name);
         let path = self.path();
         let marker_file = self.marker_path();
-        remove_if_present(&marker_file).await?;
+        remove_if_present(&marker_file, REPLACE).await?;
         for legacy in LEGACY_FILES {
-            remove_if_present(&self.inner.directory.join(legacy)).await?;
+            remove_if_present(&self.inner.directory.join(legacy), REPLACE).await?;
         }
-        remove_dir_if_present(&path).await?;
+        remove_dir_if_present(&path, REPLACE).await?;
         tokio::fs::rename(&prepared, &path)
             .await
             .map_err(|cause| CoreError::wrap("Could not publish the voice model", cause))?;
@@ -609,19 +665,21 @@ fn busy(progress: Option<Progress>) -> Status {
     }
 }
 
-async fn remove_if_present(path: &Path) -> Result<()> {
+/// Removes the file at `path` when it is there; `why` names a failure.
+async fn remove_if_present(path: &Path, why: &str) -> Result<()> {
     match tokio::fs::remove_file(path).await {
         Ok(()) => Ok(()),
         Err(cause) if cause.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(cause) => Err(CoreError::wrap("Could not replace the voice model", cause)),
+        Err(cause) => Err(CoreError::wrap(why, cause)),
     }
 }
 
-async fn remove_dir_if_present(path: &Path) -> Result<()> {
+/// Removes the folder at `path` when it is there; `why` names a failure.
+async fn remove_dir_if_present(path: &Path, why: &str) -> Result<()> {
     match tokio::fs::remove_dir_all(path).await {
         Ok(()) => Ok(()),
         Err(cause) if cause.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(cause) => Err(CoreError::wrap("Could not replace the voice model", cause)),
+        Err(cause) => Err(CoreError::wrap(why, cause)),
     }
 }
 
@@ -895,10 +953,10 @@ mod tests {
         fs::write(&file, b"x").expect("file");
         fs::create_dir(&folder).expect("folder");
         let missing = dir.path().join("missing");
-        assert!(remove_if_present(&missing).await.is_ok());
-        assert!(remove_dir_if_present(&missing).await.is_ok());
-        assert!(remove_if_present(&folder).await.is_err(), "a folder");
-        assert!(remove_dir_if_present(&file).await.is_err(), "a file");
+        assert!(remove_if_present(&missing, "x").await.is_ok());
+        assert!(remove_dir_if_present(&missing, "x").await.is_ok());
+        assert!(remove_if_present(&folder, "x").await.is_err(), "a folder");
+        assert!(remove_dir_if_present(&file, "x").await.is_err(), "a file");
     }
 
     /// A listed file that is gone makes the model unverified; one that cannot be checked at all

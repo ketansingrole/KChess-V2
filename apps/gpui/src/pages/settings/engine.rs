@@ -20,6 +20,9 @@ use crate::theme::Palette;
 use crate::widgets::{self, Look};
 
 /// Which games are reviewed automatically.
+/// What a Stockfish download takes: an archive of about 50 MB and the program it unpacks.
+const ENGINE_TAKES: u64 = 200 * 1024 * 1024;
+
 const REVIEW_AUTO: [(ReviewAuto, &str); 3] = [
     (ReviewAuto::Off, "Off"),
     (ReviewAuto::Recent, "Last 30 days"),
@@ -175,6 +178,24 @@ impl SettingsPage {
         .detach();
     }
 
+    /// Download Stockfish (`install_engine`) once the disk has room for it.
+    pub(super) fn install_engine_with_room(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.engine_busy {
+            return;
+        }
+        let this = cx.entity().downgrade();
+        crate::room::with_room(
+            Some(ENGINE_TAKES),
+            "Download anyway",
+            window,
+            cx,
+            move |window, cx| {
+                this.update(cx, |this, cx| this.install_engine(window, cx))
+                    .ok();
+            },
+        );
+    }
+
     /// Check for the latest native Stockfish and download it if needed. A first download becomes
     /// the engine in use; updating an existing copy leaves the current choice alone.
     fn install_engine(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -232,7 +253,7 @@ impl SettingsPage {
         .detach();
     }
 
-    fn ask_delete_engine(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn ask_delete_engine(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let page = cx.entity().downgrade();
         crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let page = page.clone();
@@ -407,7 +428,11 @@ impl SettingsPage {
                     })
                     .loading(busy)
                     .disabled(busy)
-                    .on_click(cx.listener(|this, _, window, cx| this.install_engine(window, cx)))
+                    .on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.install_engine_with_room(window, cx)
+                        }),
+                    )
                     .into_any_element(),
             );
         }
@@ -534,6 +559,7 @@ mod tests {
                 installed: true,
                 path: "/managed/stockfish".into(),
                 version: Some("17.1".into()),
+                bytes: 0,
             },
             can_download: true,
         }

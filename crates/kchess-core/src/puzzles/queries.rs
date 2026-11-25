@@ -192,10 +192,8 @@ fn require_installed(db: &Connection) -> Result<()> {
         .sql()?;
     let found = statement.query_row([], |_| Ok(())).optional().sql()?;
     found.ok_or_else(|| {
-        CoreError::new(
-            "Download the puzzle database first (Settings → Offline downloads, or the Rush tab).",
-        )
-        .with_kind(ErrorKind::NoPuzzleDatabase)
+        CoreError::new("Download the puzzle database first (Settings → Storage, or the Rush tab).")
+            .with_kind(ErrorKind::NoPuzzleDatabase)
     })
 }
 
@@ -693,7 +691,7 @@ mod tests {
         .expect_err("not installed");
         assert_eq!(
             error.message,
-            "Download the puzzle database first (Settings → Offline downloads, or the Rush tab)."
+            "Download the puzzle database first (Settings → Storage, or the Rush tab)."
         );
         // A frontend tells it by its kind, not its words.
         assert_eq!(error.kind, Some(ErrorKind::NoPuzzleDatabase));

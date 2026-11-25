@@ -606,6 +606,24 @@ impl Harness {
         self.cx.run_until_parked();
     }
 
+    /// Turn the wheel at a point of the window by `delta` (negative scrolls down).
+    pub fn scroll_point(&mut self, position: Point<Pixels>, delta: Pixels) {
+        self.with_window(|window, cx| {
+            use gpui_kit::{ScrollDelta, ScrollEvent, TouchPhase, point, px};
+            let event = ScrollEvent {
+                position,
+                delta: ScrollDelta::Pixels(point(px(0.), delta)),
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Moved,
+                source: Default::default(),
+            }
+            .to_platform_input();
+            window.dispatch_event(event, cx);
+            draw(window, cx);
+        });
+        self.cx.run_until_parked();
+    }
+
     /// Double-click at a point of the window, as the platform sends it: a press and release, then
     /// a second of each counted as the second click.
     pub fn double_click_point(&mut self, position: Point<Pixels>) {
