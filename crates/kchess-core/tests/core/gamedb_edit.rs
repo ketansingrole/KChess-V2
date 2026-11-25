@@ -341,6 +341,55 @@ async fn games_are_copied_and_saved_as_a_file() {
     )
     .await;
     assert_eq!(names(&core, &back).await, ["Ana-Ben", "Carl-Ana"]);
+    // Every game a search by position finds, whatever its page: the three that opened 1. e4,
+    // read from the position index rather than the games' columns.
+    let path = files.path().join("e4.pgn");
+    let e4 = json!({ "database": id, "position": AFTER_E4, "offset": 0, "limit": 1 });
+    let saved = core
+        .call(
+            "gameDbExport",
+            vec![json!(id), json!(path.to_string_lossy()), Value::Null, e4],
+        )
+        .await
+        .expect("exports");
+    assert_eq!(saved, 3);
+    let back = import(
+        &core,
+        files.path(),
+        "E4",
+        &std::fs::read_to_string(&path).expect("the file"),
+    )
+    .await;
+    assert_eq!(
+        names(&core, &back).await,
+        ["Ana-Ben", "Carl-Ana", "Dora-Carl"]
+    );
+    let refused = core
+        .call(
+            "gameDbExport",
+            vec![
+                json!(id),
+                json!(files.path().join("gone/ana.pgn").to_string_lossy()),
+                json!([1]),
+            ],
+        )
+        .await
+        .expect_err("into a folder that is not there");
+    assert!(
+        refused
+            .message
+            .starts_with("Could not save the games there"),
+        "{}",
+        refused.message
+    );
+    let refused = core
+        .call(
+            "gameDbCopyGames",
+            vec![json!("gone"), json!([1]), Value::Null, Value::Null],
+        )
+        .await
+        .expect_err("from a database that is not there");
+    assert_eq!(refused.message, "That database is not on this computer.");
     let inside = profile.path().join("ana.pgn");
     let refused = core
         .call(
