@@ -70,9 +70,12 @@ pub fn ask_delete(info: DatabaseInfo, window: &mut Window, cx: &mut App) {
     });
 }
 
-/// What brings `info`'s database up to date, when it has one: the same download again, or the
-/// next month or season.
-fn update(info: &DatabaseInfo) -> Option<(&'static str, Box<dyn Fn(&mut Window, &mut App)>)> {
+/// What a database's Update button runs.
+type Run = Box<dyn Fn(&mut Window, &mut App)>;
+
+/// What brings `info`'s database up to date, when it has one, with its button's label: the same
+/// download again, or the next month or season.
+fn update(info: &DatabaseInfo) -> Option<(&'static str, Run)> {
     match info.source {
         DatabaseSource::Player => {
             let earlier = info.player.clone()?;
@@ -225,7 +228,8 @@ fn row(index: usize, info: DatabaseInfo, busy: bool, palette: &Palette) -> impl 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{detail, total_bytes, update};
+    use kchess_contracts::types::{DatabaseInfo, DatabaseSource};
 
     fn info(source: DatabaseSource, games: u64, bytes: u64) -> DatabaseInfo {
         DatabaseInfo {
