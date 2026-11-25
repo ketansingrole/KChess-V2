@@ -315,13 +315,28 @@ impl Repertoire {
     /// The repertoire's moves checked against the game databases, in a dialog.
     pub fn check_against_databases(&self, window: &mut Window, cx: &mut App) {
         let steps = check::steps(&self.roots, Self::color(cx));
-        check::open(steps, window, cx);
+        check::open(steps, self.target(cx), window, cx);
     }
 
     /// The repertoire followed through your games with its side, in a dialog.
     pub fn check_against_your_games(&self, window: &mut Window, cx: &mut App) {
         let steps = check::every_step(&self.roots);
-        your_games::open(steps, Self::color(cx), window, cx);
+        your_games::open(steps, self.target(cx), Self::color(cx), window, cx);
+    }
+
+    /// The study drilled and the chapters its lines come from, which a check's moves join.
+    fn target(&self, cx: &App) -> check::Target {
+        let chapters = match self.chapter(cx) {
+            Some(chapter) => vec![chapter.clone()],
+            None => self
+                .study(cx)
+                .map(|study| study.chapters.clone())
+                .unwrap_or_default(),
+        };
+        check::Target {
+            study: Self::study_id(cx),
+            chapters,
+        }
     }
 
     /// Whether there are game databases other than Your games, and Your games, to check the

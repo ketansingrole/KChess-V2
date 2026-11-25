@@ -1225,8 +1225,8 @@ fn more_filters_find_games_by_length_speed_material_structure_and_pieces(
     wait_for_listed(&mut app, "the game with a knight kept on a4", &[ISOLATED]);
 }
 
-/// Practice's repertoire trainer on a new study of `pgn`, as `color`.
-fn train_repertoire(app: &mut Harness, pgn: &str, color: &str) {
+/// Practice's repertoire trainer on a new study of `pgn`, as `color`; the study's id.
+fn train_repertoire(app: &mut Harness, pgn: &str, color: &str) -> String {
     let made = std::rc::Rc::new(std::cell::RefCell::new(None));
     let pgn = pgn.to_string();
     app.cx.update(|cx| {
@@ -1251,13 +1251,27 @@ fn train_repertoire(app: &mut Harness, pgn: &str, color: &str) {
     let id = made.borrow().clone().expect("its id");
     app.with_window(|window, cx| {
         crate::prefs::set(cx, "kchess:repertoire-color", color);
-        kchess_practice::repertoire::train_study(id, window, cx);
+        kchess_practice::repertoire::train_study(id.clone(), window, cx);
+    });
+    id
+}
+
+/// Waits for study `id`'s first chapter to be saved as `pgn`.
+fn wait_for_chapter(app: &mut Harness, id: &str, pgn: &str) {
+    let id = id.to_string();
+    app.wait_for("the chapter saved", |_, cx| {
+        cx.global::<crate::studies::StudyHandle>()
+            .0
+            .read(cx)
+            .study(&id)
+            .and_then(|study| study.chapters.first())
+            .is_some_and(|chapter| chapter.pgn.contains(pgn))
     });
 }
 
 /// Practice → Repertoire → Check → Against your games: your games with White, followed through
 /// a White repertoire; the two that left it with 2. Nc3, where it plays 2. Nf3, are listed with
-/// how they went, and open on the analysis board.
+/// how they went, open on the analysis board, and can join the repertoire.
 #[gpui_kit::test]
 fn a_repertoire_is_checked_against_your_games(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
@@ -1281,7 +1295,7 @@ fn a_repertoire_is_checked_against_your_games(cx: &mut gpui_kit::TestAppContext)
     app.open("Game database");
     wait_for_databases(&mut app, "Your games", &[("Your games", 3)]);
 
-    train_repertoire(&mut app, "1. e4 e5 (1... c5 2. Nf3) 2. Nf3 *", "white");
+    let id = train_repertoire(&mut app, "1. e4 e5 (1... c5 2. Nf3) 2. Nf3 *", "white");
     app.click("repertoire-check");
     app.click_label("Against your games");
     assert_eq!(
@@ -1292,18 +1306,33 @@ fn a_repertoire_is_checked_against_your_games(cx: &mut gpui_kit::TestAppContext)
         app.find(("repertoire-games-move", 0usize)).label(),
         Some(
             "1. e4 e5 2. Nc3: You played it in 2 games · You scored 75% · Repertoire: Nf3 · \
-             Last 2025.10.22"
+             Last\u{a0}2025.10.22"
         )
     );
     assert!(!app.shows(("repertoire-games-move", 1usize)));
     app.click(("repertoire-games-move", 0usize));
     app.wait_for_page(crate::pages::Page::Analysis);
     app.find("tree-e2e4 e7e5 b1c3");
+
+    // Added to the repertoire: the study's chapter on the board, with 2. Nc3 beside 2. Nf3.
+    app.open("Practice");
+    app.click("repertoire-check");
+    app.click_label("Against your games");
+    app.click(("repertoire-games-add", 0usize));
+    // The board still has the line opened before, not saved anywhere: it asks first.
+    app.click_label("Replace");
+    app.wait_for_page(crate::pages::Page::Analysis);
+    app.find("tree-e2e4 e7e5 b1c3");
+    let page = app.with_window(|_, cx| {
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx).expect("the page")
+    });
+    assert_eq!(app.cx.update(|cx| page.read(cx).study_id().to_string()), id);
+    wait_for_chapter(&mut app, &id, "2. Nf3 ( 2. Nc3 )");
 }
 
 /// Practice → Repertoire → Check → Against databases checks a study's lines against the game
-/// databases: Black's 1...c5 is played in 1 of 21 games, so it is listed to look at, and opens on
-/// the analysis board.
+/// databases: Black's 1...c5 is played in 1 of 21 games, so it is listed to look at, and 1...e5,
+/// played instead, can join the repertoire.
 #[gpui_kit::test]
 fn a_repertoire_is_checked_against_the_databases(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
@@ -1319,7 +1348,7 @@ fn a_repertoire_is_checked_against_the_databases(cx: &mut gpui_kit::TestAppConte
         .simulate_path_prompt_response(move |_| Some(vec![path]));
     wait_for_databases(&mut app, "the games in", &[("club", 21)]);
 
-    train_repertoire(&mut app, "1. e4 c5 *", "black");
+    let id = train_repertoire(&mut app, "1. e4 c5 *", "black");
     app.click("repertoire-check");
     app.click_label("Against databases");
     assert_eq!(
@@ -1330,6 +1359,9 @@ fn a_repertoire_is_checked_against_the_databases(cx: &mut gpui_kit::TestAppConte
         app.find(("repertoire-check-move", 0usize)).label(),
         Some("1. e4 c5: 5% of 21 games · most played e5 (95%)")
     );
-    app.click(("repertoire-check-move", 0usize));
+    // 1...e5, the move played instead, joins the repertoire.
+    app.click(("repertoire-check-add", 0usize));
     app.wait_for_page(crate::pages::Page::Analysis);
+    app.find("tree-e2e4 e7e5");
+    wait_for_chapter(&mut app, &id, "1. e4 c5 ( 1... e5 )");
 }

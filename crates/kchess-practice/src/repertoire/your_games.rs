@@ -11,7 +11,7 @@ use kchess_contracts::check::{RepertoireSteps, Side};
 use kchess_contracts::types::{GameDbRepertoireGames, GameDbRepertoireGap, RepertoireStep};
 use shakmaty::Color;
 
-use super::check::{Step, line_row, open_line};
+use super::check::{Step, Target, add_button, add_to_repertoire, line_row, open_line};
 use crate::core::AppCore;
 use crate::loading::Loading;
 use crate::theme::Palette;
@@ -40,13 +40,13 @@ pub fn reason(gap: &GameDbRepertoireGap, step: &Step) -> String {
     } else {
         parts.push("No answer in the repertoire".to_string());
     }
-    parts.extend(gap.last.as_ref().map(|date| format!("Last {date}")));
+    parts.extend(gap.last.as_ref().map(|date| format!("Last\u{a0}{date}")));
     parts.join(" · ")
 }
 
 /// Checks `steps` against your games as `color` in a dialog.
-pub fn open(steps: Vec<Step>, color: Color, window: &mut Window, cx: &mut App) {
-    let view = cx.new(|cx| YourGamesCheck::new(steps, color, cx));
+pub fn open(steps: Vec<Step>, target: Target, color: Color, window: &mut Window, cx: &mut App) {
+    let view = cx.new(|cx| YourGamesCheck::new(steps, target, color, cx));
     widgets::open_dialog(window, cx, move |dialog, _, _| {
         dialog
             .title(SharedString::new_static("Check against your games"))
@@ -57,13 +57,14 @@ pub fn open(steps: Vec<Step>, color: Color, window: &mut Window, cx: &mut App) {
 
 pub struct YourGamesCheck {
     steps: Vec<Step>,
+    target: Target,
     color: Color,
     answer: Option<GameDbRepertoireGames>,
     loading: Loading,
 }
 
 impl YourGamesCheck {
-    fn new(steps: Vec<Step>, color: Color, cx: &mut Context<Self>) -> Self {
+    fn new(steps: Vec<Step>, target: Target, color: Color, cx: &mut Context<Self>) -> Self {
         let sent = steps
             .iter()
             .map(|step| RepertoireStep {
@@ -73,6 +74,7 @@ impl YourGamesCheck {
             .collect();
         let mut this = YourGamesCheck {
             steps,
+            target,
             color,
             answer: None,
             loading: Loading::default(),
@@ -136,17 +138,28 @@ impl Render for YourGamesCheck {
             .filter_map(|(index, gap)| {
                 let step = self.steps.get(gap.step as usize)?.clone();
                 let uci = gap.uci.clone();
+                let row = line_row(
+                    ("repertoire-games-move", index),
+                    &step,
+                    &gap.san,
+                    &reason(gap, &step),
+                    &palette,
+                )
+                .on_click({
+                    let (step, uci) = (step.clone(), uci.clone());
+                    move |_, window, cx| open_line(&step, &uci, window, cx)
+                })
+                .test_support();
+                let target = self.target.clone();
+                let add = add_button(("repertoire-games-add", index), &gap.san).on_click(
+                    move |_, window, cx| add_to_repertoire(&target, &step, &uci, window, cx),
+                );
                 Some(
-                    line_row(
-                        ("repertoire-games-move", index),
-                        &step,
-                        &gap.san,
-                        &reason(gap, &step),
-                        &palette,
-                    )
-                    .on_click(move |_, window, cx| open_line(&step, &uci, window, cx))
-                    .test_support()
-                    .into_any_element(),
+                    h_flex()
+                        .gap(px(4.))
+                        .child(row.flex_1().min_w_0())
+                        .child(add)
+                        .into_any_element(),
                 )
             })
             .collect();
@@ -204,7 +217,7 @@ mod tests {
         };
         assert_eq!(
             reason(&gap, &step(&["Nf3", "d4"])),
-            "You played it in 2 games · You scored 25% · Repertoire: Nf3, d4 · Last 2024.01.06"
+            "You played it in 2 games · You scored 25% · Repertoire: Nf3, d4 · Last\u{a0}2024.01.06"
         );
         gap.yours = false;
         gap.last = None;

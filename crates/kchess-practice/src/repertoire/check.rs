@@ -6,6 +6,8 @@
 use std::collections::HashMap;
 
 use gpui_kit::base::TestSupportExt as _;
+use gpui_kit::component::Sizable as _;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -13,9 +15,10 @@ use kchess_board::analysis::{self, Open};
 use kchess_contracts::calls;
 use kchess_contracts::check::{MOST_STEPS, RepertoireSteps};
 use kchess_contracts::types::{
-    GameDbRepertoireCheck, GameDbRepertoireMove, GameDbVerdict, RepertoireStep,
+    GameDbRepertoireCheck, GameDbRepertoireMove, GameDbVerdict, RepertoireStep, StudyChapter,
 };
 use kchess_domain::training::repertoire_check::{Counts, ENOUGH};
+use kchess_ui::icon;
 use shakmaty::Color;
 
 use crate::core::AppCore;
@@ -181,8 +184,8 @@ pub fn reason(check: &GameDbRepertoireCheck, played: &GameDbRepertoireMove) -> O
 }
 
 /// Checks `steps` against the game databases in a dialog.
-pub fn open(steps: Vec<Step>, window: &mut Window, cx: &mut App) {
-    let view = cx.new(|cx| RepertoireCheck::new(steps, cx));
+pub fn open(steps: Vec<Step>, target: Target, window: &mut Window, cx: &mut App) {
+    let view = cx.new(|cx| RepertoireCheck::new(steps, target, cx));
     widgets::open_dialog(window, cx, move |dialog, _, _| {
         dialog
             .title(SharedString::new_static("Check against databases"))
@@ -193,20 +196,22 @@ pub fn open(steps: Vec<Step>, window: &mut Window, cx: &mut App) {
 
 pub struct RepertoireCheck {
     steps: Vec<Step>,
+    target: Target,
     checks: Option<Vec<GameDbRepertoireCheck>>,
     loading: Loading,
 }
 
-/// A move to look at: its step, the move, and why.
+/// A move to look at: its step, the move, why, and the move most played instead (UCI and SAN).
 struct Listed {
     step: usize,
     uci: String,
     san: String,
     reason: String,
+    instead: Option<(String, String)>,
 }
 
 impl RepertoireCheck {
-    fn new(steps: Vec<Step>, cx: &mut Context<Self>) -> Self {
+    fn new(steps: Vec<Step>, target: Target, cx: &mut Context<Self>) -> Self {
         let sent = steps
             .iter()
             .map(|step| RepertoireStep {
@@ -216,6 +221,7 @@ impl RepertoireCheck {
             .collect();
         let mut this = RepertoireCheck {
             steps,
+            target,
             checks: None,
             loading: Loading::default(),
         };
@@ -237,12 +243,18 @@ impl RepertoireCheck {
             .iter()
             .enumerate()
             .flat_map(|(step, check)| {
+                let instead = check
+                    .moves
+                    .iter()
+                    .find(|other| other.verdict.is_none())
+                    .map(|other| (other.uci.clone(), other.san.clone()));
                 check.moves.iter().filter_map(move |played| {
                     Some(Listed {
                         step,
                         uci: played.uci.clone(),
                         san: played.san.clone(),
                         reason: reason(check, played)?,
+                        instead: instead.clone(),
                     })
                 })
             })
@@ -258,16 +270,100 @@ impl RepertoireCheck {
     ) -> impl IntoElement + use<> {
         let step = self.steps[listed.step].clone();
         let uci = listed.uci.clone();
-        line_row(
+        let row = line_row(
             ("repertoire-check-move", index),
             &step,
             &listed.san,
             &listed.reason,
             palette,
         )
-        .on_click(cx.listener(move |_, _, window, cx| open_line(&step, &uci, window, cx)))
-        .test_support()
+        .on_click({
+            let step = step.clone();
+            cx.listener(move |_, _, window, cx| open_line(&step, &uci, window, cx))
+        })
+        .test_support();
+        // The move most played instead can join the repertoire.
+        let add = listed.instead.clone().map(|(uci, san)| {
+            let target = self.target.clone();
+            add_button(("repertoire-check-add", index), &san)
+                .on_click(move |_, window, cx| add_to_repertoire(&target, &step, &uci, window, cx))
+        });
+        h_flex()
+            .gap(px(4.))
+            .child(row.flex_1().min_w_0())
+            .children(add)
     }
+}
+
+/// Where the moves a check finds are added: the repertoire's study and the chapters drilled.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Target {
+    pub study: String,
+    pub chapters: Vec<StudyChapter>,
+}
+
+impl Target {
+    /// Of the chapters that start at `start`, the one that follows `moves` the furthest (the
+    /// first of those that follow it as far).
+    pub fn chapter_for(&self, start: &str, moves: &[String]) -> Option<String> {
+        let mut best: Option<(usize, &str)> = None;
+        for chapter in &self.chapters {
+            let Some(tree) = TreeNode::from_pgn(&chapter.pgn) else {
+                continue;
+            };
+            if tree.fen != start {
+                continue;
+            }
+            let (mut node, mut depth) = (&tree, 0);
+            for uci in moves {
+                match node.children.iter().find(|child| child.uci == *uci) {
+                    Some(child) => (node, depth) = (child, depth + 1),
+                    None => break,
+                }
+            }
+            if best.is_none_or(|(furthest, _)| depth > furthest) {
+                best = Some((depth, &chapter.id));
+            }
+        }
+        best.map(|(_, id)| id.to_string())
+    }
+}
+
+/// `uci` after `step`'s line added to `target`'s study, on the analysis board in the chapter that
+/// has the most of that line, where the next move can be added to it too.
+pub fn add_to_repertoire(
+    target: &Target,
+    step: &Step,
+    uci: &str,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let mut moves: Vec<String> = step.line.iter().map(|(.., uci)| uci.clone()).collect();
+    moves.push(uci.to_string());
+    let Some(chapter) = target.chapter_for(&step.start, &moves) else {
+        return;
+    };
+    window.close_dialog(cx);
+    analysis::open(
+        Open::StudyLine {
+            study: target.study.clone(),
+            chapter,
+            moves,
+        },
+        window,
+        cx,
+    );
+}
+
+/// The button beside a listed move that adds `san` to the repertoire.
+pub fn add_button(id: (&'static str, usize), san: &str) -> Button {
+    let label = format!("Add {san} to the repertoire");
+    Button::new(id)
+        .ghost()
+        .small()
+        .icon(icon("book-plus"))
+        .tooltip(label.clone())
+        .accessibility_label(label)
 }
 
 /// `step`'s line and then `uci` on the analysis board: from the start, or from the position after
@@ -415,7 +511,7 @@ impl Render for RepertoireCheck {
 
 #[cfg(test)]
 mod tests {
-    use super::{TreeNode, every_step, line_text, steps};
+    use super::{Target, TreeNode, every_step, line_text, steps};
     use crate::repertoire::study_roots;
     use kchess_contracts::types::StudyChapter;
     use shakmaty::Color;
@@ -494,6 +590,49 @@ mod tests {
                 ("1. e4 c5".to_string(), vec!["Nf3".to_string()]),
             ]
         );
+    }
+
+    #[test]
+    fn a_move_joins_the_chapter_that_has_the_most_of_its_line() {
+        let chapter = |id: &str, pgn: &str| StudyChapter {
+            id: id.into(),
+            name: id.into(),
+            pgn: pgn.into(),
+        };
+        let target = Target {
+            study: "study".into(),
+            chapters: vec![
+                chapter("open", "1. e4 e5 2. Nf3 *"),
+                chapter("sicilian", "1. e4 c5 2. Nf3 d6 *"),
+                chapter(
+                    "french",
+                    "[FEN \"rnbqkbnr/pppp1ppp/4p3/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2\"]\n\n2. d4 *",
+                ),
+            ],
+        };
+        let start = crate::game::STANDARD_FEN.to_string();
+        let line = |moves: &str| -> Vec<String> { moves.split(' ').map(str::to_string).collect() };
+        assert_eq!(
+            target
+                .chapter_for(&start, &line("e2e4 c7c5 b1c3"))
+                .as_deref(),
+            Some("sicilian")
+        );
+        // Both have 1. e4: the first.
+        assert_eq!(
+            target.chapter_for(&start, &line("e2e4 c7c6")).as_deref(),
+            Some("open")
+        );
+        assert_eq!(
+            target
+                .chapter_for(
+                    "rnbqkbnr/pppp1ppp/4p3/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+                    &line("d2d4 d7d5")
+                )
+                .as_deref(),
+            Some("french")
+        );
+        assert_eq!(target.chapter_for("8/8/8/8/8/8/8/8 w - - 0 1", &[]), None);
     }
 
     fn steps_for_black(root: &TreeNode) -> Vec<String> {

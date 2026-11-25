@@ -793,6 +793,20 @@ impl AnalysisPage {
         }
     }
 
+    /// Show the end of `moves` (UCI) from the start, adding those the tree does not have, as if
+    /// played on the board; the moves stop at one that is not legal.
+    pub(crate) fn show_line(&mut self, moves: &[String], cx: &mut Context<Self>) {
+        let mut path = String::new();
+        for uci in moves {
+            match self.root.add_move(&path, uci) {
+                Some(next) => path = next,
+                None => break,
+            }
+        }
+        self.path = path;
+        self.changed(cx);
+    }
+
     /// Show the position at `path`.
     ///
     /// Which moves sound, as on Lichess's analysis board: a move played here (board, typed,
