@@ -65,12 +65,8 @@ const CARLSEN_GUKESH: &str = "Carlsen, Magnus against Gukesh D, 1-0";
 const GUKESH_CARLSEN: &str = "Gukesh D against Carlsen, Magnus, 1/2-1/2";
 const SMITH_JONES: &str = "Smith against Jones, 0-1";
 
-/// A PGN file imported on the page lists its games, newest first; the filters narrow them; a
-/// game opens on the analysis board, whose "Games with this position" comes back to the games
-/// that reached it (here by two move orders); and the database is deleted after asking.
-#[gpui_kit::test]
-fn a_database_is_imported_searched_opened_and_deleted(cx: &mut gpui_kit::TestAppContext) {
-    let mut app = Harness::start(cx);
+/// `GAMES` imported on the Database page, listed newest first.
+fn import_games(app: &mut Harness) {
     app.open("Game database");
     app.find("gamedb-import");
     assert!(!app.shows("database-delete"), "nothing to delete yet");
@@ -82,10 +78,19 @@ fn a_database_is_imported_searched_opened_and_deleted(cx: &mut gpui_kit::TestApp
     app.cx
         .simulate_path_prompt_response(move |_| Some(vec![path]));
     wait_for_listed(
-        &mut app,
+        app,
         "every game, newest first",
         &[GUKESH_CARLSEN, CARLSEN_GUKESH, SMITH_JONES],
     );
+}
+
+/// A PGN file imported on the page lists its games, newest first; the filters narrow them; a
+/// game opens on the analysis board, whose "Games with this position" comes back to the games
+/// that reached it (here by two move orders); and the database is deleted after asking.
+#[gpui_kit::test]
+fn a_database_is_imported_searched_opened_and_deleted(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_games(&mut app);
 
     // One player's games, then only those they won, then every game again.
     app.click_label("Player");
@@ -130,6 +135,38 @@ fn a_database_is_imported_searched_opened_and_deleted(cx: &mut gpui_kit::TestApp
     app.wait_gone("database-delete");
     app.find("gamedb-import");
     assert!(listed(&mut app).is_empty());
+}
+
+/// 2026-11-25: opened as the app started, the Database page asked for its games before Lichess
+/// had answered whether a game was in progress, was refused ("until your Lichess game status is
+/// verified") and showed that until a filter changed. Refused while help is held back, the games
+/// are listed once it is lent, with nothing touched.
+#[gpui_kit::test]
+fn games_refused_while_help_was_held_back_are_listed_once_it_is_lent(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use crate::online::Pause;
+    let mut app = Harness::start(cx);
+    import_games(&mut app);
+    let lichess = app.connect_with("Tester", false, |session| session.fail_check = true);
+    app.wait_for("the check for a game in progress to fail", |_, cx| {
+        crate::online::handle(cx).read(cx).pause() == Some(Pause::Unverified)
+    });
+    app.open("Game database");
+    app.click_label("Player");
+    app.type_text("carlsen");
+    wait_for_listed(&mut app, "the search to be refused", &[]);
+
+    // Lichess answers when the app checks again on its own.
+    lichess.lock().fail_check = false;
+    app.cx
+        .executor()
+        .advance_clock(std::time::Duration::from_secs(16));
+    wait_for_listed(
+        &mut app,
+        "Carlsen's games once help is lent",
+        &[GUKESH_CARLSEN, CARLSEN_GUKESH],
+    );
 }
 
 /// A PGN file dropped on the Database page is imported, however many games it has, where on

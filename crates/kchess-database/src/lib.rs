@@ -11,7 +11,7 @@
 use kchess_hack as _;
 
 use kchess_app::{core, loading, prefs};
-use kchess_board::{game_db, widgets};
+use kchess_board::{game_db, live_game, widgets};
 use kchess_ui::theme;
 
 mod lichess;
@@ -40,6 +40,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::AppCore;
 use crate::game_db::{GameDbEvent, GameDbHandle};
+use crate::live_game::Refused;
 use crate::loading::Loading;
 use crate::theme::{Palette, radii};
 use crate::widgets::{Choice, KeyboardFocus as _, Pill, Pressable as _};
@@ -125,6 +126,8 @@ pub struct DatabasePage {
     total: usize,
     /// `gameDbGames`'s load: answers to an earlier page or filter are dropped.
     loading: Loading,
+    /// Its games were refused while help was held back: listed once it is lent.
+    refused: Refused,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -258,6 +261,9 @@ impl DatabasePage {
                 }
             }));
         }
+        // Opened as the app starts, the page asks before Lichess has answered whether a game is
+        // in progress: refused, its games are listed once help is lent.
+        subscriptions.push(Refused::watch(cx, |this| &mut this.refused, Self::load));
         let databases = cx.global::<GameDbHandle>().0.clone();
         subscriptions.push(cx.observe_in(&databases, window, |this, _, window, cx| {
             this.sync_databases(window, cx)
@@ -297,6 +303,7 @@ impl DatabasePage {
             games: Vec::new(),
             total: 0,
             loading: Loading::default(),
+            refused: Refused::default(),
             _subscriptions: subscriptions,
         };
         page.sync_databases(window, cx);
@@ -403,6 +410,7 @@ impl DatabasePage {
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
+        self.refused.asking();
         let Some(database) = self.database.clone() else {
             self.loading.stop();
             self.games.clear();
@@ -417,19 +425,23 @@ impl DatabasePage {
             "database",
             |this| &mut this.loading,
             request,
-            |this, answer, cx| match answer {
-                Ok(page) => {
-                    this.total = usize::try_from(page.total).unwrap_or(usize::MAX);
-                    this.games = page.games;
-                    let pages = this.total.div_ceil(this.page_size).max(1);
-                    if this.page >= pages {
-                        this.page = pages - 1;
-                        this.load(cx);
+            |this, answer, cx| {
+                this.refused
+                    .answered(&answer, |this| &mut this.refused, Self::load, cx);
+                match answer {
+                    Ok(page) => {
+                        this.total = usize::try_from(page.total).unwrap_or(usize::MAX);
+                        this.games = page.games;
+                        let pages = this.total.div_ceil(this.page_size).max(1);
+                        if this.page >= pages {
+                            this.page = pages - 1;
+                            this.load(cx);
+                        }
                     }
-                }
-                Err(_) => {
-                    this.games.clear();
-                    this.total = 0;
+                    Err(_) => {
+                        this.games.clear();
+                        this.total = 0;
+                    }
                 }
             },
         );
