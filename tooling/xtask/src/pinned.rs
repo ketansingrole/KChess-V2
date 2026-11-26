@@ -8,7 +8,7 @@
 // The core's pin, compiled here as well: plain data, so this reads the very constants the core
 // installs from.
 #[path = "../../../crates/kchess-core/src/engine/managed/shipped.rs"]
-mod shipped;
+pub(crate) mod shipped;
 
 /// Where a pinned file comes from upstream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

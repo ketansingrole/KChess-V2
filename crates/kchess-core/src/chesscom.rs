@@ -29,7 +29,7 @@ use kchess_contracts::types::ChesscomAccount;
 use kchess_domain::chesscom::{archive_month, game_row};
 
 /// Chess.com's public API.
-pub const BASE_URL: &str = "https://api.chess.com";
+pub const BASE_URL: &str = crate::sources::CHESSCOM.url;
 
 /// The longest a rate-limited request waits before it is tried again.
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(60);

@@ -234,7 +234,7 @@ impl PositionLookups {
         let path = shown.replace(' ', "_");
         Ok(Some(OpeningDescription {
             title: shown.to_string(),
-            url: format!("https://en.wikibooks.org/wiki/{path}"),
+            url: format!("{}{path}", crate::sources::WIKIBOOKS_PAGES),
             blocks,
             fetched_at: now,
         }))

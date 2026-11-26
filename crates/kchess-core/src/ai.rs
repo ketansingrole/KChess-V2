@@ -17,9 +17,9 @@ use tokio_util::sync::CancellationToken;
 use crate::lichess::client::http_client_builder;
 use kchess_contracts::error::{CoreError, Result};
 
-const AUTH: &str = "https://auth.openai.com";
-const API: &str = "https://api.openai.com";
-const RESOURCE: &str = "https://api.openai.com/v1";
+const AUTH: &str = crate::sources::OPENAI_AUTH.url;
+const API: &str = crate::sources::OPENAI_API.url;
+const RESOURCE: &str = crate::sources::OPENAI_RESOURCE;
 const SCOPES: &str =
     "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 const PLAN_SCOPE: &str = "chatgpt.tokens.use.direct";

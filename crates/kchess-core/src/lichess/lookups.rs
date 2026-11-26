@@ -258,9 +258,9 @@ impl Endpoints {
 impl Default for Endpoints {
     fn default() -> Endpoints {
         Endpoints {
-            explorer: "https://explorer.lichess.org".into(),
-            tablebase: "https://tablebase.lichess.org".into(),
-            wikibooks: "https://en.wikibooks.org/w/api.php".into(),
+            explorer: crate::sources::LICHESS_EXPLORER.url.into(),
+            tablebase: crate::sources::LICHESS_TABLEBASE.url.into(),
+            wikibooks: crate::sources::WIKIBOOKS.url.into(),
         }
     }
 }

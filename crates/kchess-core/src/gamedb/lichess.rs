@@ -33,7 +33,7 @@ use kchess_contracts::types::{
 };
 
 /// The archive: `list.txt`, `sha256sums.txt` and the months beside them.
-pub const ARCHIVE: &str = "https://database.lichess.org/standard/";
+pub const ARCHIVE: &str = crate::sources::LICHESS_STANDARD.url;
 const PREFIX: &str = "lichess_db_standard_rated_";
 /// The most one month may bring: the largest was some 33 GB (2026).
 const MAX_MONTH: u64 = 128 * 1024 * 1024 * 1024;

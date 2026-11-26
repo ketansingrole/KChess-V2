@@ -40,7 +40,7 @@ use kchess_contracts::error::{CoreError, Result};
 /// Every table of up to five pieces: `<name> <bytes> <sha256>` a line.
 pub const FILES: &str = include_str!("files.txt");
 /// Lichess's mirror of the tables, each under `3-4-5-wdl/` or `3-4-5-dtz/`.
-pub const ORIGIN: &str = "https://tablebase.lichess.ovh/tables/standard";
+pub const ORIGIN: &str = crate::sources::SYZYGY.url;
 /// The most pieces the tables cover.
 pub const PIECES: u32 = 5;
 /// The files downloaded at once.

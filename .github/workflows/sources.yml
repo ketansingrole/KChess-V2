@@ -1,0 +1,52 @@
+name: Sources
+# Whether every third-party address KChess downloads from (crates/kchess-core/src/sources.rs) still
+# serves what it reads: `cargo xtask source-check` asks each for a small part (an archive's index,
+# a release listing, a file's first bytes) and fails naming the source and its owner. Weekly and on
+# demand, never in ci.yml, so an outage upstream cannot turn a pull request red. A failed run opens
+# an issue, and the next run that passes closes it.
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Some 2 minutes to build xtask from CI's cache and a few seconds to ask; each request has its
+    # own 60 s deadline.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # CI's caches, read only: this workflow saves none of its own.
+      - uses: ./.github/actions/rust-cache
+        with:
+          shared-key: check
+          save-if: false
+      - name: Check the download sources
+        # For GitHub's API alone, so its rate limit is the repository's and not the runner's.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: cargo xtask source-check
+
+  # A scheduled run's failure opens an issue, and its next pass closes it (.github/actions/scheduled-report).
+  report:
+    needs: [check]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/scheduled-report
+        with:
+          name: Download sources
+          failed: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}

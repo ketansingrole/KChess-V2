@@ -38,7 +38,7 @@ mod voice;
 pub const CLOSED: &str = "The KChess core is closed.";
 
 /// The puzzle database `puzzleDbInstall` downloads.
-pub(crate) const PUZZLE_DB_URL: &str = "https://database.lichess.org/lichess_db_puzzle.csv.zst";
+pub(crate) const PUZZLE_DB_URL: &str = crate::sources::LICHESS_PUZZLES.url;
 
 /// The host of a core: its events stop reaching the frontend once the core is closed. Capability
 /// requests still pass, so a call that is closing can be answered; logs always pass.
