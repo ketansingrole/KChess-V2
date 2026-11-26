@@ -560,7 +560,7 @@ fn random_position(rng: &mut Rng) -> Board {
 /// queen's points. A scanned book's hatching is uneven at random instead, and reads better.
 #[test]
 fn printed_diagrams_are_read() {
-    // Measured 2026-11-27 over these 48 pictures: 96.45% of squares, 41.7% of positions, 86% of
+    // Measured 2026-11-27 over these 48 pictures: 96.19% of squares, 43.8% of positions, 87% of
     // the wrong squares doubtful.
     const SQUARES: f32 = 95.;
     const POSITIONS: f32 = 20.;
@@ -716,11 +716,11 @@ fn redrawn(variant: Variant, piece: Piece, size: usize, drawn: Vec<[f32; 4]>) ->
 /// recoloured, thickened or smoothed, on squares of 32 to 80 pixels.
 #[test]
 fn unseen_sets_are_read() {
-    // Measured 2026-11-27 over these 48 pictures: 95.74% of squares, 41.7% of positions, all
-    // of the wrong squares doubtful; read square by square instead of a sprite at a time,
-    // 87.50% of squares and no position.
-    const SQUARES: f32 = 95.;
-    const POSITIONS: f32 = 35.;
+    // Measured 2026-11-27 over these 48 pictures: 96.68% of squares, 54.2% of positions, 99% of
+    // the wrong squares doubtful; read square by square instead of a sprite at a time, 87.50%
+    // of squares and no position.
+    const SQUARES: f32 = 96.;
+    const POSITIONS: f32 = 45.;
     const DOUBTED: f32 = 95.;
     let sets = [
         "chessnut",
