@@ -60,6 +60,9 @@ pub struct ComputerSession {
     /// The player the computer imitates in the opening, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sparring: Option<super::computer::Sparring>,
+    /// The rating band of the people the computer plays like, if any (`human::BANDS`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub people: Option<u32>,
 }
 
 /// One session, of whichever kind: what a page saves and what `session` answers.
@@ -189,6 +192,7 @@ impl From<ComputerSession> for super::computer::Saved {
             times: session.times,
             flagged: session.flagged,
             sparring: session.sparring,
+            people: session.people,
         }
     }
 }

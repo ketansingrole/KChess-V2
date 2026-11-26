@@ -35,6 +35,7 @@ KChess is now a chess database too. Keep millions of games on your computer, fro
 - Today's practice on Home lists what is due: repertoire lines, mistakes from your games and missed endgames. Click one to practise it.
 - Practice → Visualise trains you to see moves in your head: read the next few moves of a famous game without them being played, then say what is where. The moves then play out on the board, and the levels read further ahead.
 - The endgame tablebases download in Settings → Storage, so the analysis board shows how any position with up to five pieces ends, with no connection. A game review marks where an endgame you had won or drawn slipped away, and the move that kept it.
+- Play with computer can play like people at your level: pick Players rated 1600 as the Opponent, and it opens with the moves they play and makes the kind of mistakes they make, not random blunders.
 
 ### Changed
 

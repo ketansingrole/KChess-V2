@@ -1,4 +1,5 @@
-//! `bestMove` through the scripted engine: level options, the random-move path, invalid input, superseded
+//! `bestMove` and `humanMove` through the scripted engine: level options, the random-move path,
+//! the lines a human move draws from, invalid input, superseded
 //! searches reaching the engine, the warm process, and the computer-playing bookkeeping.
 
 use crate::support;
@@ -366,4 +367,126 @@ async fn battery_power_limits_the_threads_a_move_may_use() {
             .any(|line| line == "setoption name Threads value 2")
     );
     assert_eq!(search.engine_threads(), 2);
+}
+
+/// `human_move` with the scripted `human` engine, whose five lines are two good moves, a fair
+/// one, a pawn's mistake and one that lets the opponent mate, and a random source fixed at `roll`.
+fn human_search(roll: f64, log: &Path) -> Search {
+    let host = host();
+    let ctx = context(&host, scheduler(4, false), "human", log);
+    let random: RandomSource = Arc::new(move || roll);
+    Search::with_random(ctx, random)
+}
+
+/// One search of five lines at full strength, to the rating's depth and for the time asked, and
+/// the move drawn among them: the lowest roll plays the best, the highest the worst allowed, and
+/// from 1800 that is never the move that lets the opponent mate.
+#[tokio::test]
+async fn human_move_searches_several_lines_and_plays_one_as_people_would() {
+    let cases = [
+        (0.0, 1000, "e2e4"),
+        (0.0, 2200, "e2e4"),
+        (0.9999, 1000, "f2f3"),
+        (0.9999, 2000, "a2a3"),
+    ];
+    for (roll, rating, expected) in cases {
+        let log = log_path("human-move");
+        let search = human_search(roll, &log);
+        let mv = search
+            .human_move(
+                json!(["e2e4", "e7e5"]),
+                rating,
+                &fake_path(),
+                json!({ "movetime": 50 }),
+            )
+            .await
+            .expect("a move");
+        assert_eq!(mv, expected, "roll {roll} at {rating}");
+        let lines = received(&log);
+        for sent in [
+            "setoption name MultiPV value 5",
+            "setoption name UCI_LimitStrength value false",
+            "setoption name Skill Level value 20",
+            "position startpos moves e2e4 e7e5",
+        ] {
+            assert!(lines.iter().any(|line| line == sent), "{sent}: {lines:?}");
+        }
+        let depth = kchess_domain::games::human::depth(rating);
+        let go = format!("go depth {depth} movetime 50");
+        assert!(lines.contains(&go), "{go}: {lines:?}");
+    }
+}
+
+/// The same warm engine plays a level's move after a human one: it searches one line again.
+#[tokio::test]
+async fn a_level_move_after_a_human_one_searches_one_line() {
+    let log = log_path("human-then-level");
+    let search = human_search(0.0, &log);
+    search
+        .human_move(json!([]), 1500, &fake_path(), json!({ "movetime": 50 }))
+        .await
+        .expect("a human move");
+    search
+        .best_move(json!([]), "max", &fake_path(), json!({ "movetime": 50 }))
+        .await
+        .expect("a level's move");
+    let lines = received(&log);
+    let multipv: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.starts_with("setoption name MultiPV"))
+        .collect();
+    assert_eq!(
+        multipv,
+        [
+            "setoption name MultiPV value 5",
+            "setoption name MultiPV value 1"
+        ]
+    );
+    assert_eq!(lines.iter().filter(|line| *line == "uci").count(), 1);
+}
+
+/// A human move is stopped as a level's is: the stop reaches the engine's search, the move
+/// rejects as superseded, and the engine is free for the next one.
+#[tokio::test]
+async fn stopping_a_human_move_stops_its_search() {
+    let log = log_path("human-stop");
+    let search = human_search(0.0, &log);
+    let running = tokio::spawn(search.human_move(
+        json!(["e2e4"]),
+        1600,
+        &fake_path(),
+        json!({ "movetime": 5000 }),
+    ));
+    wait_until(
+        Duration::from_secs(10),
+        "the human search to reach the engine",
+        || {
+            received(&log)
+                .iter()
+                .any(|line| line.ends_with("movetime 5000"))
+                .then_some(())
+        },
+    )
+    .await;
+    search.stop_connection(kchess_core::connection::current_or_app());
+    let stopped = running
+        .await
+        .expect("the task finishes")
+        .expect_err("stopped");
+    assert_eq!(stopped.message, SUPERSEDED);
+    assert!(stopped.aborted, "a stopped search is a cancellation");
+    assert!(
+        received(&log).iter().any(|line| line == "stop"),
+        "the engine was told to stop the search"
+    );
+    let next = search
+        .human_move(
+            json!(["e2e4"]),
+            1600,
+            &fake_path(),
+            json!({ "movetime": 50 }),
+        )
+        .await
+        .expect("the next move");
+    assert_eq!(next, "e2e4");
 }

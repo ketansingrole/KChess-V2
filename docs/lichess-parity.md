@@ -145,6 +145,13 @@ can add them as a friend, challenge them or watch their current game.
   From the standard position, _Opponent_ picks a player whose games were downloaded (Player's
   games): the computer plays their moves in the opening, each as often as they played it, then
   Stockfish at the strength nearest their rating; _Out of their games_ says when it took over.
+  _Players rated 1000_ to _2500_ (the opening explorer's rating groups) play like people of that
+  band: to move 20 the moves Lichess players of that rating played from the position (blitz,
+  rapid and classical), each as often as they played it, while it has ten games or more; then a
+  search of five lines, one chosen as such a player would choose, by the share of the expected
+  score each gives up (a 1200 often a pawn worse, a 2200 rarely past the best two; a mate is
+  always played, and from 1800 a move allowing mate in one never is). Without the explorer (no
+  account, offline, refused during a live game) the search plays for the rest of the game.
   The editor and analysis board both have _Play Stockfish from here_, in the position's variant
   (the editor sets up positions in any of them; a Crazyhouse FEN keeps its pockets). On the command line, `kchess-cli play [level] [colour]
   [variant] [--fen FEN]`, and `kchess-cli local [variant] [--fen FEN]` over the board.

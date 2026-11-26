@@ -1,8 +1,9 @@
 //! New game against Stockfish: where the game starts (the standard
 //! position, a Chess960 start, another variant, which Fairy-Stockfish plays, or a FEN), the clock,
-//! the side the player takes, the engine's strength, and from the standard position a player whose
-//! downloaded games the computer imitates in the opening (Player's games on the Database page). It
-//! opens on the current game's options.
+//! the side the player takes, the engine's strength, and from the standard position who the
+//! computer plays as: Stockfish, people of a rating band (their moves in the opening, then their
+//! kind of mistakes, at no Stockfish strength), or a player whose downloaded games it imitates in
+//! the opening (Player's games on the Database page). It opens on the current game's options.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -24,7 +25,8 @@ use kchess_contracts::calls;
 use kchess_contracts::check::{DatabaseId, PlayerName};
 use kchess_contracts::types::DatabaseSource;
 use kchess_domain::games::Clock;
-use kchess_domain::games::computer::Sparring;
+use kchess_domain::games::computer::{Opponent, Sparring};
+use kchess_domain::games::human;
 use kchess_domain::variant::{Setup, Variant};
 
 const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -44,14 +46,14 @@ fn fairy_variants() -> impl Iterator<Item = Variant> {
         .filter(|variant| !variant.standard_rules())
 }
 
-/// What the dialog starts: the setup, the clock, the player's side, Stockfish's level and the
-/// player it imitates in the opening.
+/// What the dialog starts: the setup, the clock, the player's side, Stockfish's level and who the
+/// computer plays as.
 pub struct Chosen {
     pub setup: Setup,
     pub clock: Option<Clock>,
     pub color: Color,
     pub level: String,
-    pub sparring: Option<Sparring>,
+    pub opponent: Opponent,
 }
 
 pub struct GameOptions {
@@ -65,7 +67,8 @@ pub struct GameOptions {
     color: Entity<SelectState<Vec<SharedString>>>,
     level: Entity<SelectState<Vec<SharedString>>>,
     levels: Vec<String>,
-    /// Stockfish, then each player whose games were downloaded, as `opponents` lists them.
+    /// Stockfish, the rating bands (`human::BANDS`), then each player whose games were downloaded,
+    /// as `opponents` lists them.
     opponent: Entity<SelectState<Vec<SharedString>>>,
     opponents: Vec<Sparring>,
     /// Their rating, read to set the strength to it.
@@ -84,7 +87,7 @@ pub struct Current {
     pub clock: Option<Clock>,
     pub color: Color,
     pub level: String,
-    pub sparring: Option<Sparring>,
+    pub opponent: Opponent,
 }
 
 impl GameOptions {
@@ -176,11 +179,18 @@ impl GameOptions {
         let level =
             cx.new(|cx| SelectState::new(labels, level_row.map(IndexPath::new), window, cx));
         let (opponents, opponent_labels) = opponents(cx);
-        let opponent_row = current
-            .sparring
-            .as_ref()
-            .and_then(|sparring| opponents.iter().position(|one| one == sparring))
-            .map_or(0, |row| row + 1);
+        let opponent_row = match &current.opponent {
+            Opponent::Engine => None,
+            Opponent::People(band) => human::BANDS
+                .iter()
+                .position(|one| one == band)
+                .map(|row| row + 1),
+            Opponent::Player(sparring) => opponents
+                .iter()
+                .position(|one| one == sparring)
+                .map(|row| row + 1 + human::BANDS.len()),
+        }
+        .unwrap_or(0);
         let opponent = cx.new(|cx| {
             SelectState::new(
                 opponent_labels,
@@ -191,13 +201,15 @@ impl GameOptions {
         });
         let preview = cx.new(|_| ChessBoard::new(preview_state(&chess960(518))));
         let subscriptions = vec![
-            // A player picked: Stockfish takes their strength once their games run out.
+            // A player picked: Stockfish takes their strength once their games run out. A band
+            // picked: no Stockfish strength to choose.
             cx.subscribe_in(
                 &opponent,
                 window,
                 |this, _, event: &SelectEvent<Vec<SharedString>>, window, cx| {
                     if matches!(event, SelectEvent::Confirm(Some(_))) {
                         this.match_rating(window, cx);
+                        cx.notify();
                     }
                 },
             ),
@@ -267,17 +279,26 @@ impl GameOptions {
         options
     }
 
-    /// The player picked under _Opponent_, if any.
-    fn sparring(&self, cx: &App) -> Option<Sparring> {
-        let row = self.opponent.read(cx).selected_index(cx)?.row;
-        row.checked_sub(1)
-            .and_then(|row| self.opponents.get(row))
+    /// Who is picked under _Opponent_: Stockfish, a band, or a player.
+    fn opponent(&self, cx: &App) -> Opponent {
+        let Some(row) = self.opponent.read(cx).selected_index(cx).map(|at| at.row) else {
+            return Opponent::Engine;
+        };
+        let Some(row) = row.checked_sub(1) else {
+            return Opponent::Engine;
+        };
+        if let Some(band) = human::BANDS.get(row) {
+            return Opponent::People(*band);
+        }
+        self.opponents
+            .get(row - human::BANDS.len())
             .cloned()
+            .map_or(Opponent::Engine, Opponent::Player)
     }
 
     /// Set the strength to the picked player's latest rating in their games.
     fn match_rating(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(sparring) = self.sparring(cx) else {
+        let Opponent::Player(sparring) = self.opponent(cx) else {
             self.rating = None;
             return;
         };
@@ -403,9 +424,11 @@ impl GameOptions {
                 .cloned()
                 .unwrap_or_else(|| "club".into()),
             // Their games start from the usual position; another start leaves them out.
-            sparring: (self.start == Start::Standard)
-                .then(|| self.sparring(cx))
-                .flatten(),
+            opponent: if self.start == Start::Standard {
+                self.opponent(cx)
+            } else {
+                Opponent::Engine
+            },
         }
     }
 
@@ -429,9 +452,14 @@ impl GameOptions {
 }
 
 /// The players whose games were downloaded (Player's games), each with the label it is offered
-/// under, after Stockfish's own openings.
+/// under, after Stockfish and the rating bands.
 fn opponents(cx: &App) -> (Vec<Sparring>, Vec<SharedString>) {
     let mut labels = vec![SharedString::new_static("Stockfish")];
+    labels.extend(
+        human::BANDS
+            .iter()
+            .map(|band| SharedString::from(human::name(*band))),
+    );
     let opponents = cx
         .global::<GameDbHandle>()
         .0
@@ -467,6 +495,8 @@ impl Render for GameOptions {
         let fen_problem = self.fen_problem(cx);
         let number_problem = self.number_problem(cx);
         let blocked = fen_problem.is_some() || number_problem.is_some();
+        let people =
+            self.start == Start::Standard && matches!(self.opponent(cx), Opponent::People(_));
         let selected = match self.start {
             Start::Standard => 0,
             Start::Chess960 => 1,
@@ -590,23 +620,23 @@ impl Render for GameOptions {
                         .flex_1(),
                     ),
             )
-            .when(
-                self.start == Start::Standard && !self.opponents.is_empty(),
-                |form| {
-                    form.child(widgets::field(
-                        "Opponent",
-                        Select::new(&self.opponent).accessibility_label("Opponent"),
-                        None,
-                        &palette,
-                    ))
-                },
-            )
-            .child(widgets::field(
-                "Stockfish strength",
-                Select::new(&self.level).accessibility_label("Stockfish strength"),
-                None,
-                &palette,
-            ))
+            .when(self.start == Start::Standard, |form| {
+                form.child(widgets::field(
+                    "Opponent",
+                    Select::new(&self.opponent).accessibility_label("Opponent"),
+                    None,
+                    &palette,
+                ))
+            })
+            // People of a band play at their own strength.
+            .when(!people, |form| {
+                form.child(widgets::field(
+                    "Stockfish strength",
+                    Select::new(&self.level).accessibility_label("Stockfish strength"),
+                    None,
+                    &palette,
+                ))
+            })
             .child(
                 h_flex()
                     .justify_end()

@@ -284,7 +284,7 @@ fn decode_computer(raw: &J) -> Option<J> {
         Some(f) if f == "white" || f == "black" => J::Str(f.into()),
         _ => J::Null,
     };
-    Some(J::Obj(vec![
+    let mut session = vec![
         ("moves".into(), moves_value(&moves)),
         ("ply".into(), J::Num(ply)),
         ("level".into(), J::Str(level.into())),
@@ -300,6 +300,35 @@ fn decode_computer(raw: &J) -> Option<J> {
             clock.map_or(J::Null, |_| times_value(raw.get("times"))),
         ),
         ("flagged".into(), flagged),
+    ];
+    // Who the computer plays as, kept when it is one it can play as.
+    if let Some(sparring) = computer_sparring(raw.get("sparring")) {
+        session.push(("sparring".into(), sparring));
+    }
+    if let Some(band) = integer_of(raw.get("people")).filter(|band| {
+        crate::games::human::BANDS
+            .iter()
+            .any(|one| f64::from(*one) == *band)
+    }) {
+        session.push(("people".into(), J::Num(band)));
+    }
+    Some(J::Obj(session))
+}
+
+/// The player a computer session imitates (`computer::Sparring`): a game database's id and a
+/// name in its games.
+fn computer_sparring(raw: Option<&J>) -> Option<J> {
+    let raw = object_or_none(raw?)?;
+    let database = text_of(raw.get("database"), 40).filter(|id| {
+        !id.is_empty()
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    })?;
+    let player = text_of(raw.get("player"), 200).filter(|name| !name.trim().is_empty())?;
+    Some(J::Obj(vec![
+        ("database".into(), J::Str(database.into())),
+        ("player".into(), J::Str(player.into())),
     ]))
 }
 
@@ -558,6 +587,55 @@ mod tests {
             check(session("standard", crate::rules::INITIAL_FEN)),
             Err("This session cannot be saved.".into())
         );
+    }
+
+    /// Who the computer plays as is saved with its game: the player it imitates, or the band of
+    /// people it plays like. Both were once dropped on saving, so a resumed game, or one read
+    /// again after a save, played as Stockfish. One it cannot play as is left out.
+    #[test]
+    fn a_computer_game_keeps_its_opponent() {
+        let check = |extra: serde_json::Value| {
+            let mut session = serde_json::json!({
+                "setup": { "variant": "standard", "fen": crate::rules::INITIAL_FEN },
+                "moves": ["d2d4"],
+                "level": "club",
+                "color": "white",
+            });
+            for (key, value) in extra.as_object().expect("an object") {
+                session[key] = value.clone();
+            }
+            assert_session(vec![
+                J::Str("computer".into()),
+                crate::misc::from_json(&session),
+            ])
+            .map(J::into_value)
+            .expect("a computer game")
+        };
+        let sparring =
+            serde_json::json!({ "database": "player-lichess-carlsen", "player": "Carlsen" });
+        assert_eq!(
+            check(serde_json::json!({ "sparring": sparring }))["sparring"],
+            sparring
+        );
+        assert_eq!(check(serde_json::json!({ "people": 1600 }))["people"], 1600);
+        // Read back as the game's session, it plays as them.
+        let kept: crate::games::session::ComputerSession =
+            serde_json::from_value(check(serde_json::json!({ "people": 1600 }))).unwrap();
+        assert_eq!(kept.people, Some(1600));
+        for odd in [
+            serde_json::json!({ "people": 1500 }),
+            serde_json::json!({ "people": "1600" }),
+            serde_json::json!({ "sparring": { "database": "Not An Id", "player": "Carlsen" } }),
+            serde_json::json!({ "sparring": { "database": "player-x", "player": " " } }),
+        ] {
+            let kept = check(odd.clone());
+            assert!(
+                kept.get("people").is_none() && kept.get("sparring").is_none(),
+                "{odd}: {kept}"
+            );
+        }
+        let plain = check(serde_json::json!({}));
+        assert!(plain.get("people").is_none() && plain.get("sparring").is_none());
     }
 
     /// Another variant's FEN may run past a standard one's 100 characters, up to 120: a full

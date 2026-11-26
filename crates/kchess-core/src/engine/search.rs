@@ -1,9 +1,13 @@
 //! Computer moves. One warm engine process serves consecutive moves; a new search supersedes
 //! the one running (`SUPERSEDED`), and the process goes after two idle minutes.
 //!
-//! `best_move` takes its place in line and supersedes the running search as soon as it is
-//! called, before its future is polled; the search itself runs inside the returned future.
-//! Dropping that future ends the search.
+//! A move is the engine's at a level's strength (`best_move`), or one people of a rating would
+//! play (`human_move`): a search of several lines at full strength, one of which
+//! `kchess_domain::games::human` picks.
+//!
+//! `best_move` (and `human_move`) takes its place in line and supersedes the running search as
+//! soon as it is called, before its future is polled; the search itself runs inside the returned
+//! future. Dropping that future ends the search.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -27,8 +31,10 @@ use crate::time::now_ms;
 use kchess_contracts::check::{Moves, check};
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::BestMoveOptions;
+use kchess_domain::games::human::{self, Candidate};
 use kchess_domain::js::number_to_string as js_number;
 use kchess_domain::misc::value::J;
+use kchess_domain::training::uci_info::parse_info;
 
 /// The message a superseded search rejects with.
 pub const SUPERSEDED: &str = "Engine search superseded.";
@@ -53,6 +59,22 @@ struct LevelProfile {
     random_move: Option<f64>,
 }
 
+/// How strong the move is: the engine's at a level, or one people of a rating would play.
+#[derive(Clone, Debug)]
+enum Strength {
+    Level(String),
+    Human(u32),
+}
+
+impl std::fmt::Display for Strength {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Strength::Level(level) => write!(f, "level={level}"),
+            Strength::Human(rating) => write!(f, "rating={rating}"),
+        }
+    }
+}
+
 /// A validated request, ready to search.
 struct Request {
     moves: Vec<String>,
@@ -61,7 +83,7 @@ struct Request {
     chess960: bool,
     /// Fairy-Stockfish's name of the variant (`UCI_Variant`), for a variant game.
     variant: Option<&'static str>,
-    level: String,
+    strength: Strength,
     configured: String,
 }
 
@@ -203,6 +225,31 @@ impl Search {
         configured: &str,
         options: Value,
     ) -> BoxFuture<'static, Result<String>> {
+        let strength = Strength::Level(level.to_string());
+        self.checked_search(moves, strength, configured, options)
+    }
+
+    /// The move people rated `rating` would play from the position the moves reach: one search
+    /// of `human::LINES` lines at full strength, for the rating's time (or `movetime`), and one
+    /// of them drawn as they would choose it. In line, superseded and stopped as `best_move` is.
+    pub fn human_move(
+        &self,
+        moves: Value,
+        rating: u32,
+        configured: &str,
+        options: Value,
+    ) -> BoxFuture<'static, Result<String>> {
+        self.checked_search(moves, Strength::Human(rating), configured, options)
+    }
+
+    /// `best_move` or `human_move` with its arguments checked as the core checks them.
+    fn checked_search(
+        &self,
+        moves: Value,
+        strength: Strength,
+        configured: &str,
+        options: Value,
+    ) -> BoxFuture<'static, Result<String>> {
         let checked = check::<Moves>(J::from(&moves)).and_then(|Moves(moves)| {
             let options = match options {
                 Value::Null => BestMoveOptions::default(),
@@ -214,7 +261,7 @@ impl Search {
             Ok(checked) => checked,
             Err(refusal) => return Box::pin(ready(Err(CoreError::new(refusal)))),
         };
-        self.best_move_with_settings(moves, level, options, ready(Ok(configured.to_string())))
+        self.search_with_settings(moves, strength, options, ready(Ok(configured.to_string())))
     }
 
     /// Register before settings are read, so stop/suspend also cancel that wait.
@@ -225,7 +272,29 @@ impl Search {
         options: BestMoveOptions,
         configured: impl Future<Output = Result<String>> + Send + 'a,
     ) -> BoxFuture<'a, Result<String>> {
-        let mut request = match prepare(moves, options, level, "") {
+        let strength = Strength::Level(level.to_string());
+        self.search_with_settings(moves, strength, options, configured)
+    }
+
+    /// `best_move_with_settings` for the move people rated `rating` would play.
+    pub(crate) fn human_move_with_settings<'a>(
+        &self,
+        moves: Vec<String>,
+        rating: u32,
+        options: BestMoveOptions,
+        configured: impl Future<Output = Result<String>> + Send + 'a,
+    ) -> BoxFuture<'a, Result<String>> {
+        self.search_with_settings(moves, Strength::Human(rating), options, configured)
+    }
+
+    fn search_with_settings<'a>(
+        &self,
+        moves: Vec<String>,
+        strength: Strength,
+        options: BestMoveOptions,
+        configured: impl Future<Output = Result<String>> + Send + 'a,
+    ) -> BoxFuture<'a, Result<String>> {
+        let mut request = match prepare(moves, options, strength, "") {
             Ok(request) => request,
             Err(cause) => return Box::pin(ready(Err(cause))),
         };
@@ -256,8 +325,8 @@ impl Search {
                 };
                 let shown_key = if key.is_empty() { "unstarted" } else { &key };
                 let context = format!(
-                    "level={} moves={} engine={} {fen}",
-                    request.level,
+                    "{} moves={} engine={} {fen}",
+                    request.strength,
                     request.moves.len(),
                     truncate_for_log(shown_key, 80),
                 );
@@ -300,7 +369,7 @@ impl Search {
 fn prepare(
     moves: Vec<String>,
     options: BestMoveOptions,
-    level: &str,
+    strength: Strength,
     configured: &str,
 ) -> Result<Request> {
     let chess960 = options.chess960 == Some(true);
@@ -326,7 +395,7 @@ fn prepare(
         movetime: options.movetime.map(|ms| ms as f64),
         chess960,
         variant,
-        level: level.to_string(),
+        strength,
         configured: configured.to_string(),
     })
 }
@@ -363,7 +432,10 @@ async fn attempt(
     key.clone_from(&located.key);
     wanted()?;
     let target = shared.warm.open(&located, || token.is_cancelled())?.uci;
-    let profile = level_profile(&request.level)?;
+    let profile = match &request.strength {
+        Strength::Level(level) => Some(level_profile(level)?),
+        Strength::Human(_) => None,
+    };
     shared
         .ctx
         .lease(Priority::Computer, token, async {
@@ -371,9 +443,114 @@ async fn attempt(
             target.ready().await?;
             wanted()?;
             target.write("ucinewgame")?;
-            search_under_lease(shared, request, &profile, &target, token).await
+            match (&request.strength, &profile) {
+                (Strength::Level(_), Some(profile)) => {
+                    search_under_lease(shared, request, profile, &target, token).await
+                }
+                (Strength::Human(rating), _) => {
+                    human_search(shared, request, *rating, &target, token).await
+                }
+                (Strength::Level(level), None) => {
+                    Err(CoreError::new(format!("Unknown engine level {level}.")))
+                }
+            }
         })
         .await
+}
+
+/// The options every computer search sends: its threads, hash, rules and strength, with the
+/// variant first (a warm Fairy-Stockfish keeps the one it played last). The warm process keeps
+/// the previous search's options and only changed values are sent, so each search sets them all.
+fn search_options<'a>(
+    request: &'a Request,
+    threads: &'a str,
+    chess960: &'a str,
+    strength: [(&'a str, &'a str); 3],
+) -> Vec<(&'a str, &'a str)> {
+    let mut options = vec![
+        ("Threads", threads),
+        ("Hash", "64"),
+        ("UCI_Chess960", chess960),
+    ];
+    options.extend(strength);
+    if let Some(variant) = request.variant {
+        options.insert(0, ("UCI_Variant", variant));
+    }
+    options
+}
+
+/// The move people of `rating` would play, under the engine budget: `human::LINES` lines at full
+/// strength, to the rating's depth and for its time, and one of them drawn (`human::pick`). An
+/// engine that tells no scores plays its own move.
+async fn human_search(
+    shared: &Arc<Shared>,
+    request: &Request,
+    rating: u32,
+    target: &UciController,
+    token: &CancellationToken,
+) -> Result<String> {
+    let threads = shared.ctx.scheduler.search_threads().to_string();
+    let chess960 = request.chess960.to_string();
+    let lines = human::LINES.to_string();
+    let strength = [
+        ("UCI_LimitStrength", "false"),
+        ("Skill Level", "20"),
+        ("MultiPV", lines.as_str()),
+    ];
+    target
+        .ensure_options(&search_options(request, &threads, &chess960, strength))
+        .await?;
+    if token.is_cancelled() {
+        return Err(signal_aborted());
+    }
+    target.write(&job::position_command(
+        request.fen.as_deref(),
+        &request.moves,
+    ))?;
+    let movetime = request.movetime.unwrap_or(human::movetime(rating) as f64);
+    // The latest line of each rank, the best first. Scores are the side to move's.
+    let found: Arc<Mutex<Vec<Option<Candidate>>>> =
+        Arc::new(Mutex::new(vec![None; human::LINES as usize]));
+    let sink = Arc::clone(&found);
+    let command = format!(
+        "go depth {} movetime {}",
+        human::depth(rating),
+        js_number(movetime)
+    );
+    let timeout = Duration::from_millis(15_000f64.max(movetime + 10_000.0) as u64);
+    let response = target
+        .search(
+            &command,
+            move |line: &str| {
+                let Some(info) = parse_info(line, true) else {
+                    return;
+                };
+                let rank = info.line.rank;
+                if !(rank >= 1.0 && rank <= f64::from(human::LINES)) {
+                    return;
+                }
+                let Some(uci) = info.line.pv.first().cloned() else {
+                    return;
+                };
+                if let Some(slot) = lock(&sink).get_mut(rank as usize - 1) {
+                    *slot = Some(Candidate {
+                        uci,
+                        cp: info.line.cp,
+                        mate: info.line.mate,
+                    });
+                }
+            },
+            Some(timeout),
+            Some(token),
+        )
+        .await?;
+    let candidates: Vec<Candidate> = lock(&found).iter().flatten().cloned().collect();
+    let mv = human::pick(&candidates, rating, (shared.random)())
+        .or_else(|| response.split_whitespace().nth(1).map(str::to_string));
+    match mv {
+        Some(mv) if !mv.is_empty() && mv != "(none)" && mv != "0000" => Ok(mv),
+        _ => Err(CoreError::new("Stockfish found no legal move.")),
+    }
 }
 
 /// The part of a search that holds the engine budget: options, position, `go`, and the move.
@@ -384,8 +561,8 @@ async fn search_under_lease(
     target: &UciController,
     token: &CancellationToken,
 ) -> Result<String> {
-    // The warm process reuses the previous game's options; only changed values are sent.
-    // Chess960 is set every time: the warm engine may have played a Chess960 game before.
+    // Chess960 is set every time: the warm engine may have played a Chess960 game before. One
+    // line, where a move people would play searched several.
     let threads = shared.ctx.scheduler.search_threads().to_string();
     let elo = profile.uci_elo.filter(|elo| *elo != 0.0);
     let strength = match elo {
@@ -394,18 +571,14 @@ async fn search_under_lease(
     };
     let chess960 = request.chess960.to_string();
     let limit = elo.is_some().to_string();
-    let mut options = vec![
-        ("Threads", threads.as_str()),
-        ("Hash", "64"),
-        ("UCI_Chess960", chess960.as_str()),
+    let strength = [
         ("UCI_LimitStrength", limit.as_str()),
         (strength.0, strength.1.as_str()),
+        ("MultiPV", "1"),
     ];
-    // The variant first: a warm Fairy-Stockfish keeps the one it played last.
-    if let Some(variant) = request.variant {
-        options.insert(0, ("UCI_Variant", variant));
-    }
-    target.ensure_options(&options).await?;
+    target
+        .ensure_options(&search_options(request, &threads, &chess960, strength))
+        .await?;
     if token.is_cancelled() {
         return Err(signal_aborted());
     }
@@ -474,7 +647,7 @@ fn perft_move(line: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{BestMoveOptions, perft_move, prepare};
+    use super::{BestMoveOptions, Strength, perft_move, prepare};
 
     /// A variant's moves, drops among them, replay by its own rules and go to the engine as
     /// they are.
@@ -487,10 +660,11 @@ mod tests {
             variant: Some("crazyhouse".into()),
             ..BestMoveOptions::default()
         };
-        let request = prepare(moves.clone(), options, "max", "").expect("a crazyhouse game");
+        let max = || Strength::Level("max".into());
+        let request = prepare(moves.clone(), options, max(), "").expect("a crazyhouse game");
         assert_eq!(request.moves, moves);
         assert_eq!(request.variant, Some("crazyhouse"));
-        assert!(prepare(moves, BestMoveOptions::default(), "max", "").is_err());
+        assert!(prepare(moves, BestMoveOptions::default(), max(), "").is_err());
     }
 
     /// The weakest levels pick from `go perft 1`'s moves: drops and Antichess's king promotions

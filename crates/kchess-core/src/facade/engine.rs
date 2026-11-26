@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use kchess_contracts::Variant;
-use kchess_contracts::check::{AnalysisClient, Fen, GameIds, Moves, ReviewKey};
+use kchess_contracts::check::{AnalysisClient, Fen, GameIds, Moves, Rating, ReviewKey};
 use kchess_contracts::core_api::{Assist, EngineApi};
 use kchess_contracts::types::{
     AnalysisRequest, BestMoveOptions, EngineInstalled, EngineLevel, EngineStatus, Keyed,
@@ -78,6 +78,19 @@ impl EngineApi for Core {
                 options.unwrap_or_default(),
                 configured,
             )
+            .await
+    }
+
+    async fn human_move(
+        &self,
+        Moves(moves): Moves,
+        rating: Rating,
+        options: Option<BestMoveOptions>,
+    ) -> Result<String> {
+        let configured = self.configured_engine(Assist::Engine);
+        let rating = u32::try_from(rating.0).map_err(|_| CoreError::new("Invalid rating."))?;
+        self.search
+            .human_move_with_settings(moves, rating, options.unwrap_or_default(), configured)
             .await
     }
 
