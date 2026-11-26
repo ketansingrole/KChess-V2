@@ -729,6 +729,21 @@ core_api! {
             games: Option<GameDbGameIds>,
             search: Option<GameDbQuery>
         ) -> u64;
+        /// Merges the games `games` lists, or that `search` finds, from `database` into one
+        /// chapter: the last of the study `study`, named `name` (the database's name when none),
+        /// or the only one of a new study named `name`. Its moves are every game's from the first
+        /// game's start, the most played move the main line at each branch and the others its
+        /// variations, with the games' comments and NAGs and a comment naming each game where
+        /// its line ends (`kchess_domain::tree::merge`). Games from another start or variant are
+        /// left out, and those past 200 games or past what a chapter holds.
+        #[writes(Studies)]
+        GameDbMergeGames = "gameDbMergeGames" fn game_db_merge_games(
+            database: DatabaseId;
+            games: Option<GameDbGameIds>,
+            search: Option<GameDbQuery>,
+            study: Option<LibraryId>,
+            name: Option<StudyName>
+        ) -> GameDbMerged;
         /// The position `fen` through every game database (Your games aside): how its games
         /// ended, its main lines (the most played move after move) and its strongest games.
         #[assist(Lookups)]

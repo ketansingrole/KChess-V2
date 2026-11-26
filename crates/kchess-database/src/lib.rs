@@ -17,6 +17,7 @@ use kchess_ui::theme;
 mod event;
 mod lichess;
 mod manage;
+mod merge;
 mod player;
 mod report;
 pub mod target;
@@ -787,6 +788,13 @@ impl DatabasePage {
     }
 
     /// Copies the `chosen` games to a database picked in a dialog.
+    /// Merges the `chosen` games into a chapter of a study picked in a dialog.
+    fn merge_games(&self, chosen: Chosen, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(info) = self.shown_database(cx).cloned() {
+            merge::merge(info, chosen, window, cx);
+        }
+    }
+
     fn copy_games(&self, chosen: Chosen, count: u64, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(info) = self.shown_database(cx).cloned() {
             target::copy(info, chosen, count, window, cx);
@@ -1131,7 +1139,7 @@ impl DatabasePage {
 }
 
 /// A menu of what may be done with some games: for one, its players' and event's reports and
-/// guessing its moves; copy them, save them as PGN, or delete them;
+/// guessing its moves; copy them, save them as PGN, merge a search's into a study, or delete them;
 /// from Your games only copy and save, and only save while an import runs.
 #[derive(Clone)]
 struct GamesMenu {
@@ -1148,7 +1156,8 @@ struct GamesMenu {
 
 impl GamesMenu {
     fn build(&self, menu: PopupMenu) -> PopupMenu {
-        let (copy, export, delete) = (self.clone(), self.clone(), self.clone());
+        let (copy, export, merge, delete) =
+            (self.clone(), self.clone(), self.clone(), self.clone());
         // A game's players, each with their report.
         let players: Vec<String> = self
             .game
@@ -1233,6 +1242,21 @@ impl GamesMenu {
                         .ok();
                 }),
         )
+        // Games found, as one chapter: one game alone has nothing to merge.
+        .when(self.game.is_none(), |menu| {
+            menu.item(
+                PopupMenuItem::new("Merge into a study…")
+                    .icon(icon("book-plus"))
+                    .on_click(move |_, window, cx| {
+                        merge
+                            .page
+                            .update(cx, |page, cx| {
+                                page.merge_games(merge.chosen.clone(), window, cx)
+                            })
+                            .ok();
+                    }),
+            )
+        })
         .when(!self.busy && self.editable, |menu| {
             menu.separator().item(
                 PopupMenuItem::new(if self.game.is_some() {

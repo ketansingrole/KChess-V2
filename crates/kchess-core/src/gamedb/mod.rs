@@ -992,6 +992,59 @@ impl GameDbService {
         .map_err(|_| CoreError::new("The games could not be saved. Try again."))?
     }
 
+    /// The games `selection` names from database `id` merged into one move tree
+    /// (`kchess_domain::tree::merge`), in the database's order until a chapter is full, with the
+    /// database's name.
+    pub async fn merge_games(
+        &self,
+        id: &str,
+        selection: edit::Selection,
+    ) -> Result<(kchess_domain::tree::merge::Merged, String)> {
+        let result = self.merge_games_inner(id, selection).await;
+        self.inner.logged("merge games", result)
+    }
+
+    async fn merge_games_inner(
+        &self,
+        id: &str,
+        selection: edit::Selection,
+    ) -> Result<(kchess_domain::tree::merge::Merged, String)> {
+        use kchess_domain::tree::merge::Merger;
+        let info = self
+            .inner
+            .info(id)
+            .await?
+            .ok_or_else(|| CoreError::new("That database is not on this computer."))?;
+        let ids = self.selected(id, selection).await?;
+        if ids.is_empty() {
+            return Err(CoreError::new("No games to merge."));
+        }
+        let lane = self.inner.reader(id)?;
+        let merged = lane
+            .run(move |db| {
+                let mut merger = Merger::new();
+                for (read, &game) in ids.iter().enumerate() {
+                    if merger.full() {
+                        merger.no_room_for(ids.len() - read);
+                        break;
+                    }
+                    let stored = search::stored(db, game as u64)?;
+                    match stored.as_ref().and_then(gamedb::game_of) {
+                        Some(game) => {
+                            merger.add(&game);
+                        }
+                        // Gone or damaged since it was found: none of its moves can be merged.
+                        None => merger.unreadable(),
+                    }
+                }
+                merger
+                    .finish()
+                    .ok_or_else(|| CoreError::new("None of these games could be merged."))
+            })
+            .await?;
+        Ok((merged, info.name))
+    }
+
     pub async fn games(&self, query: GameDbQuery) -> Result<GameDbPage> {
         // A search the caller dropped (a newer one replaced it) stops replaying games for nobody.
         let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));

@@ -196,6 +196,21 @@ fn study_pgn(pgn: &str, path: &str) -> Result<(), Refusal> {
     max_chars(pgn, MAX_DOCUMENT, None, path)
 }
 
+/// A study's or a chapter's name to give: 1 to 120 characters, trimmed, as a chapter keeps it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(transparent)]
+pub struct StudyName(pub String);
+
+impl Validate for StudyName {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        let text: String = decode(value, plain)?;
+        let text = js::trim(&text);
+        min_chars(text, 1, None, "")?;
+        max_chars(text, 120, None, "")?;
+        Ok(StudyName(text.to_owned()))
+    }
+}
+
 /// A study chapter's PGN, as large as a chapter may be (`MAX_DOCUMENT`): what a save is based
 /// on. It was a game's `PgnText`, capped at 500,000 characters, so every save of a larger chapter
 /// was refused, and the editor tried it again for ever.
