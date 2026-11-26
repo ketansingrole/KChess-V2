@@ -1,5 +1,6 @@
-//! Choose a database for games to go into: one already on this computer, or a new one named
-//! here. Copying games from the Database page and saving the analysis board's game both ask it.
+//! Choose where games go: a database already on this computer or a study in the library, or a
+//! new one named here. Copying games from the Database page and saving the analysis board's game
+//! ask it for a database, merging games (`merge`) for a study.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -9,12 +10,13 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_board::game_db::{Chosen, GameDbHandle};
 use kchess_board::widgets;
-use kchess_contracts::types::{DatabaseInfo, DatabaseSource};
+use kchess_contracts::types::{DatabaseInfo, DatabaseSource, Study};
+use kchess_domain::library::MAX_CHAPTERS;
 
 use crate::theme::Palette;
 use crate::widgets::Choice;
 
-/// The target that makes a new database.
+/// The target that makes a new database or study.
 const NEW: &str = "";
 
 /// The databases games may go into: not `except` (the one they come from), and not Your games,
@@ -31,17 +33,31 @@ pub fn targets(databases: &[DatabaseInfo], except: Option<&str>) -> Vec<Choice> 
         .collect()
 }
 
-/// Where the games go: the database chosen, or a new one's name.
+/// The studies games may go into as a new chapter: a new one, or one with room for a chapter.
+pub fn study_targets(studies: &[Study]) -> Vec<Choice> {
+    std::iter::once(Choice::new(NEW, "New study"))
+        .chain(
+            studies
+                .iter()
+                .filter(|study| study.chapters.len() < MAX_CHAPTERS)
+                .map(|study| Choice::new(study.id.clone(), study.name.clone())),
+        )
+        .collect()
+}
+
+/// Where the games go: the target chosen, or a new one's name.
 type Pick = Box<dyn Fn(Option<String>, Option<String>, &mut Window, &mut App)>;
 
 /// What the dialog asks and does.
 pub struct Ask {
     pub title: &'static str,
-    /// The database the games come from, which is not offered.
-    pub except: Option<String>,
-    /// The database chosen at first, when it is offered; a new one otherwise.
+    /// The targets offered, a new one first (`targets`, `study_targets`).
+    pub choices: Vec<Choice>,
+    /// What a target is, naming its list: "Database", "Study".
+    pub kind: &'static str,
+    /// The target chosen at first, when it is offered; a new one otherwise.
     pub first: Option<String>,
-    /// A new database's name at first.
+    /// A new target's name at first.
     pub name: String,
     /// The confirm button's label and icon.
     pub confirm: String,
@@ -74,7 +90,11 @@ pub fn open(
 pub fn copy(from: DatabaseInfo, chosen: Chosen, count: u64, window: &mut Window, cx: &mut App) {
     let ask = Ask {
         title: "Copy to a database",
-        except: Some(from.id.clone()),
+        choices: targets(
+            cx.global::<GameDbHandle>().0.read(cx).databases(),
+            Some(&from.id),
+        ),
+        kind: "Database",
         first: None,
         name: from.name.clone(),
         confirm: format!(
@@ -98,7 +118,7 @@ pub struct TargetDialog {
     ask: Ask,
     pick: Pick,
     target: Entity<SelectState<Vec<Choice>>>,
-    /// The database chosen; `None` for a new one.
+    /// The target chosen; `None` for a new one.
     into: Option<String>,
     name: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
@@ -106,10 +126,7 @@ pub struct TargetDialog {
 
 impl TargetDialog {
     fn new(ask: Ask, pick: Pick, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let choices = targets(
-            cx.global::<GameDbHandle>().0.read(cx).databases(),
-            ask.except.as_deref(),
-        );
+        let choices = ask.choices.clone();
         let into = ask
             .first
             .clone()
@@ -170,7 +187,7 @@ impl Render for TargetDialog {
         let palette = *cx.global::<Palette>();
         v_flex()
             .gap(px(12.))
-            .child(Select::new(&self.target).accessibility_label("Database"))
+            .child(Select::new(&self.target).accessibility_label(self.ask.kind))
             .when(self.into.is_none(), |dialog| {
                 dialog.child(Input::new(&self.name).aria_label("Name"))
             })
@@ -231,5 +248,32 @@ mod tests {
         };
         assert_eq!(names(Some("club")), ["New database", "MASTER"]);
         assert_eq!(names(None), ["New database", "CLUB", "MASTER"]);
+    }
+
+    #[test]
+    fn games_merge_into_a_new_study_or_one_with_room_for_a_chapter() {
+        use kchess_contracts::types::{Study, StudyChapter};
+        let study = |id: &str, chapters: usize| Study {
+            id: id.into(),
+            name: id.to_uppercase(),
+            pgn: "*".into(),
+            chapters: (0..chapters)
+                .map(|n| StudyChapter {
+                    id: n.to_string(),
+                    name: n.to_string(),
+                    pgn: "*".into(),
+                })
+                .collect(),
+            updated_at: 0.into(),
+            cloud: None,
+        };
+        let names: Vec<String> = super::study_targets(&[
+            study("open", 1),
+            study("full", kchess_domain::library::MAX_CHAPTERS),
+        ])
+        .into_iter()
+        .map(|choice| choice.label.to_string())
+        .collect();
+        assert_eq!(names, ["New study", "OPEN"]);
     }
 }

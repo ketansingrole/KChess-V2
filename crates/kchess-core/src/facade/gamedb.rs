@@ -1,15 +1,15 @@
 //! The local game databases.
 
 use kchess_contracts::check::{
-    DatabaseId, DatabaseName, Fen, GameDbGameId, GameDbGameIds, LichessMonth, MasterMonths, Moves,
-    PgnFilePath, PgnSavePath, PgnText, PlayerName, PlayerNames,
+    DatabaseId, DatabaseName, Fen, GameDbGameId, GameDbGameIds, LibraryId, LichessMonth,
+    MasterMonths, Moves, PgnFilePath, PgnSavePath, PgnText, PlayerName, PlayerNames, StudyName,
 };
 use kchess_contracts::core_api::GameDbApi;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    DatabaseSource, GameDbImported, GameDbNameGroup, GameDbNovelty, GameDbOpeningReport,
-    GameDbPage, GameDbPlayerReport, GameDbQuery, GameDbSaved, GameDbStatus, GameSite,
-    InsightsFilters, InsightsReport, LichessArchive, LichessGames, PlayerGames,
+    DatabaseSource, GameDbImported, GameDbMerged, GameDbNameGroup, GameDbNovelty,
+    GameDbOpeningReport, GameDbPage, GameDbPlayerReport, GameDbQuery, GameDbSaved, GameDbStatus,
+    GameSite, InsightsFilters, InsightsReport, LichessArchive, LichessGames, PlayerGames,
 };
 
 use crate::core::Core;
@@ -188,6 +188,43 @@ impl GameDbApi for Core {
     ) -> Result<u64> {
         let selection = selection(games, search)?;
         self.gamedb.export(&database.0, selection, path.0).await
+    }
+
+    async fn game_db_merge_games(
+        &self,
+        database: DatabaseId,
+        games: Option<GameDbGameIds>,
+        search: Option<GameDbQuery>,
+        study: Option<LibraryId>,
+        name: Option<StudyName>,
+    ) -> Result<GameDbMerged> {
+        let selection = selection(games, search)?;
+        let into = study.map(|study| study.0);
+        if into.is_none() && name.is_none() {
+            return Err(CoreError::new("Choose a study, or name a new one."));
+        }
+        let (merged, database_name) = self.gamedb.merge_games(&database.0, selection).await?;
+        let pgn = merged.tree.to_pgn().map_err(CoreError::new)?;
+        // Read back as a chapter is opened: past a chapter's limits, nothing is saved.
+        if !kchess_domain::tree::valid_pgn(&pgn) {
+            return Err(CoreError::new("These games are too many for one chapter."));
+        }
+        let name = name.map_or(database_name, |name| name.0);
+        let now = crate::time::now_ms() as f64;
+        let (saved, study, chapter) = self
+            .database
+            .write_async(move |ctx| {
+                crate::store::studies::save_chapter(ctx.db, into.as_deref(), &name, &pgn, now)
+            })
+            .await?;
+        Ok(GameDbMerged {
+            study,
+            chapter,
+            merged: merged.merged as u64,
+            left_out: merged.elsewhere as u64,
+            no_room: merged.no_room as u64,
+            saved,
+        })
     }
 
     async fn game_db_repertoire(

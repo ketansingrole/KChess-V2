@@ -639,7 +639,11 @@ impl StudyBar {
             .map(|game| game.database.clone());
         let ask = database::target::Ask {
             title: "Save to a database",
-            except: None,
+            choices: database::target::targets(
+                cx.global::<GameDbHandle>().0.read(cx).databases(),
+                None,
+            ),
+            kind: "Database",
             first,
             name: "Saved games".to_string(),
             confirm: "Save".to_string(),

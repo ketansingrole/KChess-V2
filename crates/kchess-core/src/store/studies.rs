@@ -612,6 +612,66 @@ fn study_matches(study: &Study, downloaded: &str) -> Result<bool> {
         .ok_or_else(|| CoreError::new("A study chapter holds no game."))
 }
 
+/// A new chapter named `name` holding `pgn`: the last of the study `into`, or the only one of a
+/// new study of that name. Answers what the command changed (incrementally), the study's id and
+/// the chapter's.
+pub(crate) fn save_chapter(
+    db: &Connection,
+    into: Option<&str>,
+    name: &str,
+    pgn: &str,
+    now: f64,
+) -> Result<(StudyCommandResult, String, String)> {
+    let unsaved = || CoreError::new("The study could not be saved.");
+    let Some(id) = non_empty(into) else {
+        let command = StudyCommand::Save {
+            name: name.to_string(),
+            pgn: pgn.to_string(),
+            id: None,
+            chapter_id: None,
+        };
+        let result = study_command(db, &command, now, true)?;
+        let id = result.id.clone().ok_or_else(unsaved)?;
+        let chapter = result
+            .studies
+            .iter()
+            .find(|study| study.id == id)
+            .and_then(|study| study.chapters.first())
+            .map(|chapter| chapter.id.clone())
+            .ok_or_else(unsaved)?;
+        return Ok((result, id, chapter));
+    };
+    migrate_studies(db)?;
+    let study = read_study_rows(db, StudyBodies::Only(Some(id)))?
+        .into_iter()
+        .filter_map(Stored::into_study)
+        .find(|study| study.id == id)
+        .ok_or_else(|| CoreError::new("That study no longer exists."))?;
+    if study.chapters.len() >= MAX_CHAPTERS {
+        return Err(CoreError::new("A study can contain up to 64 chapters."));
+    }
+    // As `addChapter` adds one: the chapters before keep their ids by place.
+    let mut chapters = inputs(&study.chapters);
+    chapters.push(ChapterInput {
+        name: name.to_string(),
+        pgn: pgn.to_string(),
+    });
+    let command = StudyCommand::SaveChapters {
+        name: study.name.clone(),
+        chapters,
+        id: Some(study.id.clone()),
+    };
+    let result = study_command(db, &command, now, true)?;
+    let chapter = result
+        .studies
+        .iter()
+        .find(|saved| saved.id == study.id)
+        .and_then(|saved| saved.chapters.last())
+        .map(|chapter| chapter.id.clone())
+        .ok_or_else(unsaved)?;
+    Ok((result, study.id, chapter))
+}
+
 /// Atomically update changed rows and ordering, then return a snapshot or an incremental response.
 fn finish_studies(
     db: &Connection,

@@ -15,6 +15,8 @@ use crate::rules;
 use crate::trainer::analysis_tree::{self, moves_of, path_of};
 use crate::variant::Variant;
 
+pub mod merge;
+
 #[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TreeNode {
@@ -71,8 +73,12 @@ pub fn tree_from_pgn(text: &str) -> Option<TreeNode> {
     if games.len() != 1 {
         return None;
     }
-    let game = games.pop()?;
-    let start = starting_position(&game)?;
+    tree_from_game(&games.pop()?)
+}
+
+/// One game read as a tree, as `tree_from_pgn` reads it, or None when it cannot be without loss.
+pub fn tree_from_game(game: &Game) -> Option<TreeNode> {
+    let start = starting_position(game)?;
     let root_pos = root_position(&start);
     let root = TreeNode {
         uci: String::new(),
@@ -90,7 +96,7 @@ pub fn tree_from_pgn(text: &str) -> Option<TreeNode> {
         starting_comments: None,
         nags: None,
     };
-    walk(&game, root, start)
+    walk(game, root, start)
 }
 
 /// A node being built: its moves still to read, and the position it reached.
