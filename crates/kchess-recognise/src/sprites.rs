@@ -1,7 +1,7 @@
 //! One reading per sprite. A picture draws every piece of a kind alike: the squares that show the
 //! same drawing (a sprite) are read together, as one piece, and the sprites are read together
-//! too, within what a position allows (one king a side, no more than eight pawns, two of a minor
-//! piece or a rook and one queen but by promotion). A white piece and a black piece of one kind
+//! too, within what a position allows (one king a side, no more than eight pawns and none on the
+//! first or last rank, two of a minor piece or a rook and one queen but by promotion). A white piece and a black piece of one kind
 //! share their outline, so a kind can be tried for every sprite of an outline at once. A set no
 //! bundled set draws then reads by what most of its squares and the rules say, not each square
 //! by its own nearest bundled drawing.
@@ -32,6 +32,8 @@ const PAWNS: f32 = 1.;
 const MORE: f32 = 1.;
 /// What each queen of a side past one costs.
 const QUEENS: f32 = 0.5;
+/// What a pawn costs on a square of a sprite with a square on the first or last rank.
+const PAWN_HOME: f32 = 1.;
 /// The least difference in tone (0 to 1) between the two sides' pieces for it to tell them.
 const SIDES_APART: f32 = 0.12;
 
@@ -42,6 +44,8 @@ pub(crate) struct Seen<'a> {
     pub shape: &'a Silhouette,
     pub features: &'a Features,
     pub best: [f32; 12],
+    /// Whether the square is on the board's first or last rank, where no pawn stands.
+    pub home: bool,
 }
 
 /// A sprite: the squares that show it, how unlike each piece it reads, and its tone.
@@ -92,6 +96,13 @@ pub(crate) fn together(seen: &mut [Seen]) {
             }
             let tone =
                 members.iter().map(|&i| tone(seen[i].features)).sum::<f32>() / members.len() as f32;
+            if members.iter().any(|&i| seen[i].home) {
+                for slot in [0, 6] {
+                    if cost[slot] < f32::MAX {
+                        cost[slot] += PAWN_HOME;
+                    }
+                }
+            }
             Sprite {
                 members,
                 cost,
@@ -525,6 +536,7 @@ mod tests {
                 shape: &shapes[k],
                 features: &found[k],
                 best: readings[k],
+                home: false,
             })
             .collect();
         together(&mut seen);
@@ -537,6 +549,46 @@ mod tests {
             })
             .collect();
         assert_eq!(chosen, [0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 5]);
+    }
+
+    /// A sprite with a square on the first or last rank is no pawn, however near a pawn it
+    /// reads.
+    #[test]
+    fn no_pawn_stands_on_the_first_or_last_rank() {
+        let white = [250.; 3];
+        let cells: Vec<Cell> = (0..3)
+            .map(|k| piece(0, white, if k % 2 == 0 { LIGHT } else { DARK }))
+            .collect();
+        let shapes: Vec<Silhouette> = cells.iter().map(shape).collect();
+        let found: Vec<Features> = cells
+            .iter()
+            .zip(&shapes)
+            .map(|(cell, shape)| features(shape, &cell.rgb))
+            .collect();
+        let mut best = [0.8; 12];
+        best[0] = 0.3;
+        best[2] = 0.35;
+        let read = |home: [bool; 3]| {
+            let mut seen: Vec<Seen> = (0..3)
+                .map(|k| Seen {
+                    cell: &cells[k],
+                    shape: &shapes[k],
+                    features: &found[k],
+                    best,
+                    home: home[k],
+                })
+                .collect();
+            together(&mut seen);
+            seen.iter()
+                .map(|seen| {
+                    (0..12)
+                        .min_by(|&a, &b| seen.best[a].total_cmp(&seen.best[b]))
+                        .unwrap()
+                })
+                .collect::<Vec<usize>>()
+        };
+        assert_eq!(read([false; 3]), [0, 0, 0]);
+        assert_eq!(read([false, true, false]), [2, 2, 2]);
     }
 
     /// The sides by tone: the lighter sprites White's, the darker Black's; sprites of one

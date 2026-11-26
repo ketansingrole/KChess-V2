@@ -373,11 +373,12 @@ impl Recogniser {
         // Then all together, a sprite read as one.
         let mut seen: Vec<sprites::Seen> = found
             .iter()
-            .map(|(_, shape, features, best, cell)| sprites::Seen {
+            .map(|(index, shape, features, best, cell)| sprites::Seen {
                 features,
                 cell,
                 shape,
                 best: *best,
+                home: matches!(index / 8, 0 | 7),
             })
             .collect();
         sprites::together(&mut seen);
