@@ -316,13 +316,24 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
         return ndjson(out);
     }
     // Name search is public: a few players whatever is typed, one of them online.
-    // The opening explorer's Lichess database: a Crazyhouse position's drop, or the usual 1. e4.
+    // The opening explorer's Lichess database: a Crazyhouse position's drop, players rated 1600's
+    // 1... d5 after 1. d4 (the computer playing like them asks for their band), or the usual 1. e4.
     if request.path() == "/explorer/lichess" {
         let crazyhouse = request
             .query_string()
             .split('&')
             .any(|pair| pair == "variant=crazyhouse");
-        let uci = if crazyhouse { "P@e3" } else { "e2e4" };
+        let after_d4 = request.query("fen").is_some_and(|fen| {
+            fen.replace("%2F", "/")
+                .starts_with("rnbqkbnr/pppppppp/8/8/3P4/")
+        }) && request.query("ratings").as_deref() == Some("1600");
+        let uci = if crazyhouse {
+            "P@e3"
+        } else if after_d4 {
+            "d7d5"
+        } else {
+            "e2e4"
+        };
         return reply(
             out,
             &json!({

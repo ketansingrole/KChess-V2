@@ -607,8 +607,11 @@ fn a_downloaded_player_plays_their_own_openings(cx: &mut gpui_kit::TestAppContex
     app.wait_for("Stockfish as the opponent", |window, _| {
         value(window, "Opponent").as_deref() == Some("Stockfish")
     });
+    // Listed after Stockfish and the rating bands.
     app.click_label("Opponent");
-    app.press("down");
+    for _ in 0..=kchess_domain::games::human::BANDS.len() {
+        app.press("down");
+    }
     app.press("enter");
     app.wait_for("their games picked", |window, _| {
         value(window, "Opponent").as_deref() == Some("Scouted_Player · Lichess")
@@ -633,5 +636,66 @@ fn a_downloaded_player_plays_their_own_openings(cx: &mut gpui_kit::TestAppContex
     app.wait_for("out of their games", |_, cx| {
         crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
             .is_some_and(|page| page.read(cx).out_of_their_games() == Some(true))
+    });
+}
+
+/// Picked as the Opponent, "Players rated 1600" plays the moves people of that rating played
+/// (the explorer's, asked for their band) at no Stockfish strength: the scripted engine only ever
+/// answers `e2e4`, so Black's 1... d5 can only be theirs. The game resumes against them.
+#[gpui_kit::test]
+fn people_of_a_rating_play_the_moves_they_play(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestQueryExt as _;
+    use kchess_domain::games::computer::Opponent;
+    let value = |window: &mut gpui_kit::Window, label: &str| {
+        window
+            .try_find_by_label(label)
+            .and_then(|select| select.value().map(str::to_string))
+    };
+    let opponent = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
+                .map(|page| page.read(cx).opponent())
+        })
+    };
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Play with computer");
+    app.find("chess-board");
+    wait_playable(&mut app);
+    app.click("game-options");
+    app.wait_for("Stockfish as the opponent", |window, _| {
+        value(window, "Opponent").as_deref() == Some("Stockfish")
+    });
+    // 1000, 1200, 1400, 1600.
+    app.click_label("Opponent");
+    for _ in 0..4 {
+        app.press("down");
+    }
+    app.press("enter");
+    app.wait_for("the band picked", |window, _| {
+        value(window, "Opponent").as_deref() == Some("Players rated 1600")
+    });
+    app.wait_for("no Stockfish strength", |window, _| {
+        window.try_find_by_label("Stockfish strength").is_none()
+    });
+    app.click("start-game");
+    app.wait_gone("start-game");
+    wait_playable(&mut app);
+    assert_eq!(opponent(&mut app), Some(Opponent::People(1600)));
+    app.drag_square("d2", "d4", true);
+    app.wait_for_moves(&["d4", "d5"]);
+    app.wait_for("their name", |_, cx| {
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx).is_some_and(|page| {
+            let page = page.read(cx);
+            page.opponent_name() == "Players rated 1600" && page.out_of_their_games().is_none()
+        })
+    });
+    // The saved game keeps them.
+    let mut app = app.restart();
+    app.open("Play with computer");
+    app.wait_for_moves(&["d4", "d5"]);
+    assert_eq!(opponent(&mut app), Some(Opponent::People(1600)));
+    app.click("game-options");
+    app.wait_for("the dialog opens on them", |window, _| {
+        value(window, "Opponent").as_deref() == Some("Players rated 1600")
     });
 }

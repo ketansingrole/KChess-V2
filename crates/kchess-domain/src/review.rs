@@ -171,6 +171,18 @@ fn win_chances(score: Score, white_to_move: bool) -> f64 {
     raw_chances(clamp_cp(score.cp.unwrap_or(0.0)))
 }
 
+/// The winning chances, from -1 (lost) to 1 (won), of the side a score is given for: the curve the
+/// reviews judge moves by. A mate counts as a large lead, mated now (`mate` 0) as lost.
+pub fn winning_chances(cp: Option<f64>, mate: Option<f64>) -> f64 {
+    let score = Score {
+        cp,
+        mate,
+        tablebase: false,
+    };
+    // Seen from the side the score is for, as if it were White to move.
+    win_chances(score, true)
+}
+
 fn centipawns(score: Score, white_to_move: bool) -> f64 {
     if score.mate == Some(0.0) {
         return if white_to_move { -MAX_CP } else { MAX_CP };

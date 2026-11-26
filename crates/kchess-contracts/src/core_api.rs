@@ -225,6 +225,15 @@ core_api! {
             level: EngineLevel;
             options: Option<BestMoveOptions>
         ) -> String;
+        /// The move people rated `rating` would play: one search of a few lines, one of which is
+        /// played as often as they would choose it (`kchess_domain::games::human`). `options` as
+        /// `bestMove`'s, its `movetime` in place of the rating's.
+        #[assist(Engine)]
+        HumanMove = "humanMove" fn human_move(
+            moves: Moves,
+            rating: Rating;
+            options: Option<BestMoveOptions>
+        ) -> String;
         /// Start analysing a position (replacing any running analysis); updates arrive on
         /// `engine:analysis`.
         #[assist(Analysis)]

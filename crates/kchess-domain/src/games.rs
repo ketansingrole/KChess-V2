@@ -1,10 +1,11 @@
-//! Game sessions: the computer game, the board game with clocks, the board clock and the archive
-//! identity. Each is a typed state machine: the frontend holds it, calls its methods with what it
-//! knows now (its clock, whether the engine may play), and carries out the effects it returns,
-//! in order.
+//! Game sessions: the computer game (and how it plays like people, `human`), the board game with
+//! clocks, the board clock and the archive identity. Each is a typed state machine: the frontend
+//! holds it, calls its methods with what it knows now (its clock, whether the engine may play), and
+//! carries out the effects it returns, in order.
 
 pub mod archive;
 pub mod computer;
+pub mod human;
 pub mod local;
 pub mod otb_clock;
 pub mod session;

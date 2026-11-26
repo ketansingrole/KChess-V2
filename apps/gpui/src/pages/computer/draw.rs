@@ -102,9 +102,10 @@ impl ComputerPage {
             .into_any_element();
         }
         if self.thinking() {
-            let thinking = match self.game.sparring() {
-                Some(sparring) => format!("{} is thinking…", sparring.player).into(),
-                None => SharedString::new_static("Stockfish is thinking…"),
+            let thinking = match self.opponent() {
+                Opponent::Engine => SharedString::new_static("Stockfish is thinking…"),
+                Opponent::Player(sparring) => format!("{} is thinking…", sparring.player).into(),
+                Opponent::People(band) => format!("{} are thinking…", human::name(band)).into(),
             };
             return widgets::StatusBanner::turn(thinking).into_any_element();
         }
@@ -116,9 +117,10 @@ impl ComputerPage {
         widgets::StatusBanner::turn(if turn == self.user_color() {
             "Your move".into()
         } else {
-            match self.game.sparring() {
-                Some(sparring) => format!("{}'s move", sparring.player).into(),
-                None => SharedString::new_static("Stockfish's move"),
+            match self.opponent() {
+                Opponent::Engine => SharedString::new_static("Stockfish's move"),
+                Opponent::Player(sparring) => format!("{}'s move", sparring.player).into(),
+                Opponent::People(_) => SharedString::new_static("Their move"),
             }
         })
         .when(check, |banner| banner.detail("Check".into()))
@@ -187,29 +189,32 @@ impl Render for ComputerPage {
                             SharedString::new_static("Their openings")
                         })
                 }))
-                .child(
-                    h_flex()
-                        .w(px(196.))
-                        .min_w_0()
-                        .pl(px(8.))
-                        .gap(px(4.))
-                        .rounded(radii::BOX)
-                        .bg(palette.elevated)
-                        .text_color(palette.highlighted)
-                        .font_weight(FontWeight::NORMAL)
-                        .child(icon("gauge").size(px(14.)).text_color(palette.text_muted))
-                        .child(
-                            div().flex_1().min_w_0().child(
-                                Select::new(&self.level)
-                                    .small()
-                                    .appearance(false)
-                                    // Wider than its trigger: every level's name and rating
-                                    // in full ("International Master · ~2400").
-                                    .menu_width(px(260.))
-                                    .accessibility_label("Difficulty"),
+                // People of a band play at their own strength: no level to choose.
+                .when(self.opponent().people().is_none(), |line| {
+                    line.child(
+                        h_flex()
+                            .w(px(196.))
+                            .min_w_0()
+                            .pl(px(8.))
+                            .gap(px(4.))
+                            .rounded(radii::BOX)
+                            .bg(palette.elevated)
+                            .text_color(palette.highlighted)
+                            .font_weight(FontWeight::NORMAL)
+                            .child(icon("gauge").size(px(14.)).text_color(palette.text_muted))
+                            .child(
+                                div().flex_1().min_w_0().child(
+                                    Select::new(&self.level)
+                                        .small()
+                                        .appearance(false)
+                                        // Wider than its trigger: every level's name and rating
+                                        // in full ("International Master · ~2400").
+                                        .menu_width(px(260.))
+                                        .accessibility_label("Difficulty"),
+                                ),
                             ),
-                        ),
-                )
+                    )
+                })
                 .children(widgets::material(
                     &fen,
                     user != Color::White,
