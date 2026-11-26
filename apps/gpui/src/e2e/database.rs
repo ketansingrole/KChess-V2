@@ -468,21 +468,21 @@ fn the_player_download_offers_names_to_pick(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
-/// The master games button downloads Lichess's broadcast archive (here the stand-in's one month)
+/// The broadcast games button downloads Lichess's broadcast archive (here the stand-in's one month)
 /// into a database of their own, whose games are listed with the archive's attribution; the
 /// button then offers to bring in newer months.
 #[gpui_kit::test]
-fn the_master_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext) {
+fn the_broadcast_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.open("Game database");
     assert_eq!(
         app.find("database-masters").label(),
-        Some("Master games · 770 MB")
+        Some("Broadcast games · 770 MB")
     );
     app.click("database-masters");
     wait_for_listed(
         &mut app,
-        "the master games, newest first",
+        "the broadcast games, newest first",
         &[
             "Caruana, Fabiano against Firouzja, Alireza, 1/2-1/2",
             "Firouzja, Alireza against Caruana, Fabiano, 1-0",
@@ -506,7 +506,7 @@ fn the_master_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext)
         window
             .elements()
             .iter()
-            .any(|element| element.label() == Some("Update master games"))
+            .any(|element| element.label() == Some("Update broadcast games"))
     });
 }
 

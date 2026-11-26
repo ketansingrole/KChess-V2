@@ -669,7 +669,7 @@ core_api! {
             database: DatabaseId,
             game: GameDbGameId
         ) -> String;
-        /// Downloads Lichess's over-the-board broadcast games into the "Master games" database
+        /// Downloads Lichess's over-the-board broadcast games into the "Broadcast games" database
         /// (id `master`) month by month, each month checked against the archive's SHA-256 sums
         /// before it is read; a later call brings only the months the database lacks. `months`
         /// keeps to the archive's newest that many months. Progress arrives as `gamedb:progress`

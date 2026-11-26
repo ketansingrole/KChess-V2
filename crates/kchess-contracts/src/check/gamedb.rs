@@ -257,7 +257,7 @@ impl Validate for PgnFilePath {
     }
 }
 
-/// How many of the master games archive's newest months to keep to: 1 to 600 (fifty years).
+/// How many of the broadcast games archive's newest months to keep to: 1 to 600 (fifty years).
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(transparent)]
 pub struct MasterMonths(pub u32);

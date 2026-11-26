@@ -2,7 +2,7 @@
 //! one `.pgn.zst` file a month of some 30 GB and 90 million games), of which only the games whose
 //! players were both rated at least a floor are kept, bullet and bots' games left out. Each floor
 //! has a database of its own (`lichess-2400`, "Lichess 2400+") that gathers months, as the
-//! master games do: each import records the file it read.
+//! broadcast games do: each import records the file it read.
 //!
 //! A month is far too large to save first: it is read as it downloads. The download sends its
 //! bytes to the import's thread (`Arriving`), which decodes them as it reads a `.pgn.zst` file

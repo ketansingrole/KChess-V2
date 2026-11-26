@@ -90,7 +90,7 @@ pub struct Core {
     /// Where `puzzleDbInstall` downloads the puzzle database from: Lichess's, or the test
     /// origin's `/database` in its place.
     pub(crate) puzzle_db_url: String,
-    /// Where `gameDbMasterInstall` finds the master games archive: Lichess's, or the test
+    /// Where `gameDbMasterInstall` finds the broadcast games archive: Lichess's, or the test
     /// origin's `/database/broadcast/` in its place.
     pub(crate) master_games_url: String,
     /// Where the `gameDbLichess*` methods find Lichess's monthly rated games: Lichess's, or the

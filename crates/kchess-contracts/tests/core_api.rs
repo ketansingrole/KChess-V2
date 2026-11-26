@@ -64,7 +64,7 @@ fn game_database_reads_are_help_a_live_game_withholds() {
     let import = core_api::method("gameDbImport").expect("declared");
     let params: Vec<(&str, bool)> = import.params.iter().map(|p| (p.name, p.optional)).collect();
     assert_eq!(params, [("path", false), ("into", true), ("name", true)]);
-    // The master games download writes a database and shows nothing of its games.
+    // The broadcast games download writes a database and shows nothing of its games.
     let master = core_api::method("gameDbMasterInstall").expect("declared");
     assert_eq!(master.assist, None);
     let params: Vec<(&str, bool)> = master.params.iter().map(|p| (p.name, p.optional)).collect();

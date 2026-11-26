@@ -3,7 +3,7 @@
 //! Each database is one SQLite file: removing a database removes its file, and an import that
 //! fails or is cancelled leaves every database as it was (`import`). Searches read each file
 //! through its own read-only lane, so they go on while an import writes. One import (or a
-//! download: the master games, `master`, or a player's games, `player`) runs at a time; its progress reaches every window as
+//! download: the broadcast games, `master`, or a player's games, `player`) runs at a time; its progress reaches every window as
 //! `gamedb:progress`. One database, "Your games", is kept in step with the player's own games
 //! (`own`), rebuilt when no import or download runs.
 
@@ -133,9 +133,9 @@ struct Reporter {
     database: String,
     cancel: CancellationToken,
     last: Option<Instant>,
-    /// What the same run added before this file: the master games' earlier months.
+    /// What the same run added before this file: the broadcast games' earlier months.
     earlier: import::Count,
-    /// The month of the master games being brought in, as the progress names it.
+    /// The month of the broadcast games being brought in, as the progress names it.
     month: Option<String>,
 }
 
@@ -481,7 +481,7 @@ impl GameDbService {
         Ok(GameDbStatus { databases, busy })
     }
 
-    /// The one run (an import or the master games download) that may write, claimed for the
+    /// The one run (an import or the broadcast games download) that may write, claimed for the
     /// database `id`; refused while another runs.
     fn claim(&self, id: &str) -> Result<Importing<'_>> {
         let running = Arc::new(Running {
@@ -606,7 +606,7 @@ impl GameDbService {
         }
         self.inner.release(id).await;
         import::remove_files(&self.inner.file(id));
-        // A database made again under this id (the master games) counts its imports afresh.
+        // A database made again under this id (the broadcast games) counts its imports afresh.
         self.inner.listed.forget();
         self.status().await
     }

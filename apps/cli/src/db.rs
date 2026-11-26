@@ -1,4 +1,4 @@
-//! `db`: the game databases on this computer — list them, import a PGN file, download the master
+//! `db`: the game databases on this computer — list them, import a PGN file, download the broadcast
 //! games, TCEC's engine games, a player's games or a month of strong Lichess games, search one's
 //! games, print a game, rename and delete.
 
@@ -25,8 +25,8 @@ pub enum Db {
         into: Option<String>,
         name: Option<String>,
     },
-    /// Download the master games' missing months (the newest `months` of them, if given).
-    Masters {
+    /// Download the broadcast games' missing months (the newest `months` of them, if given).
+    Broadcasts {
         months: Option<u32>,
     },
     /// Download TCEC's latest engine games, unless they are in.
@@ -96,7 +96,7 @@ pub fn parse(words: &[String]) -> Result<Db, String> {
                 .into_owned();
             Ok(Db::Import { path, into, name })
         }
-        "masters" => {
+        "broadcasts" => {
             let mut words = rest.iter();
             let mut months = None;
             while let Some(word) = words.next() {
@@ -104,10 +104,10 @@ pub fn parse(words: &[String]) -> Result<Db, String> {
                     "--months" => {
                         months = Some(number(&value(&mut words, "--months")?, "--months")?)
                     }
-                    other => return Err(format!("db masters does not take {other}.")),
+                    other => return Err(format!("db broadcasts does not take {other}.")),
                 }
             }
-            Ok(Db::Masters { months })
+            Ok(Db::Broadcasts { months })
         }
         "tcec" => match rest.first() {
             None => Ok(Db::Tcec),
@@ -257,7 +257,7 @@ pub fn parse(words: &[String]) -> Result<Db, String> {
             database: database(rest)?,
         }),
         other => Err(format!(
-            "Unknown db command {other}: list, import, masters, tcec, player, lichess, games, \
+            "Unknown db command {other}: list, import, broadcasts, tcec, player, lichess, games, \
              game, rename or delete."
         )),
     }
@@ -287,7 +287,7 @@ fn progress_line(progress: &GameDbProgress) -> String {
     line
 }
 
-/// Waits for an import (or the master games' download) to end, printing its progress on stderr;
+/// Waits for an import (or the broadcast games' download) to end, printing its progress on stderr;
 /// Ctrl-C cancels it.
 async fn follow(
     core: &CoreClient,
@@ -330,7 +330,7 @@ pub async fn run(core: &CoreClient, events: &mut ClientEvents, db: Db) -> Result
             });
             print(json!(follow(core, events, import).await?));
         }
-        Db::Masters { months } => {
+        Db::Broadcasts { months } => {
             let install = core.request(calls::GameDbMasterInstall {
                 months: months.map(MasterMonths),
             });
@@ -445,12 +445,12 @@ mod tests {
     #[test]
     fn db_download_words_make_their_commands() {
         assert_eq!(
-            parse(&words("masters")).unwrap(),
-            Db::Masters { months: None }
+            parse(&words("broadcasts")).unwrap(),
+            Db::Broadcasts { months: None }
         );
         assert_eq!(
-            parse(&words("masters --months 12")).unwrap(),
-            Db::Masters { months: Some(12) }
+            parse(&words("broadcasts --months 12")).unwrap(),
+            Db::Broadcasts { months: Some(12) }
         );
         assert_eq!(
             parse(&words("player lichess DrNykterstein")).unwrap(),
@@ -503,8 +503,8 @@ mod tests {
             ("games abc --player", "needs a value"),
             ("game abc", "needs the game"),
             ("rename abc", "needs the new name"),
-            ("masters --months lots", "takes a number"),
-            ("masters abc", "does not take abc"),
+            ("broadcasts --months lots", "takes a number"),
+            ("broadcasts abc", "does not take abc"),
             ("player", "needs a site"),
             ("player fics someone", "lichess or chesscom"),
             ("player lichess", "needs the player's username"),

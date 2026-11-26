@@ -1,4 +1,4 @@
-//! The master games: Lichess's archive of over-the-board broadcast games
+//! The broadcast games: Lichess's archive of over-the-board broadcast games
 //! (`database.lichess.org/broadcast`, CC BY-SA 4.0), one `.pgn.zst` file a month, brought into
 //! one database (`master`) a month at a time.
 //!
@@ -28,10 +28,10 @@ use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{DatabaseSource, GameDbImported, GameDbPhase as Phase, UsageKind};
 
-/// The master games database's id.
+/// The broadcast games database's id.
 pub const ID: &str = "master";
 /// Its name as first listed; the person may rename it.
-pub const NAME: &str = "Master games";
+pub const NAME: &str = "Broadcast games";
 /// Whose games they are and on what terms, as the licence asks to be shown.
 pub const ATTRIBUTION: &str = "Lichess broadcast games, database.lichess.org, CC BY-SA 4.0";
 /// The archive: `list.txt`, `sha256sums.txt` and the months beside them.
@@ -75,7 +75,7 @@ pub(super) fn month_of<'a>(file: &'a str, prefix: &str) -> Option<&'a str> {
     valid.then_some(month)
 }
 
-/// The months of the master games `list` names that `sums` gives a digest for, oldest first,
+/// The months of the broadcast games `list` names that `sums` gives a digest for, oldest first,
 /// and how many it names without one.
 pub fn months(list: &str, sums: &str) -> (Vec<Month>, usize) {
     archive_months(list, sums, PREFIX)
@@ -131,17 +131,17 @@ pub(super) fn installed(db: &Connection) -> Result<HashSet<String>> {
     Ok(files)
 }
 
-/// How the master games download words its failures.
+/// How the broadcast games download words its failures.
 const WORDING: download::Wording = download::Wording {
     network: |error| {
         if error.is_timeout() {
-            "The master games download timed out.".to_string()
+            "The broadcast games download timed out.".to_string()
         } else {
-            format!("Could not download the master games: {error}")
+            format!("Could not download the broadcast games: {error}")
         }
     },
-    status: |status| format!("Lichess answered {status} for the master games."),
-    too_large: "The master games download is unexpectedly large.",
+    status: |status| format!("Lichess answered {status} for the broadcast games."),
+    too_large: "The broadcast games download is unexpectedly large.",
 };
 
 /// A download saved to a file, removed however its import ends.
@@ -237,7 +237,7 @@ pub(super) struct Expected<'a> {
 }
 
 impl GameDbService {
-    /// Brings the months of the master games the database lacks from the archive at `archive`
+    /// Brings the months of the broadcast games the database lacks from the archive at `archive`
     /// (`ARCHIVE`, or a test's), the newest `keep` months of it when given. Progress arrives as
     /// `gamedb:progress`; `cancel` stops it, keeping the months already in.
     pub async fn master_install(
@@ -247,7 +247,7 @@ impl GameDbService {
         meter: &dyn Meter,
     ) -> Result<GameDbImported> {
         let result = self.master_install_inner(archive, keep, meter).await;
-        self.inner.logged("master games download", result)
+        self.inner.logged("broadcast games download", result)
     }
 
     async fn master_install_inner(
@@ -302,7 +302,7 @@ impl GameDbService {
             inner.host.log(
                 Level::Warn,
                 "gamedb",
-                &format!("{unchecked} month(s) of master games have no checksum yet; left out"),
+                &format!("{unchecked} month(s) of broadcast games have no checksum yet; left out"),
             );
         }
         if let Some(keep) = keep {
@@ -310,7 +310,9 @@ impl GameDbService {
             months.drain(..older);
         }
         if months.is_empty() {
-            return Err(CoreError::new("Lichess lists no master games to download."));
+            return Err(CoreError::new(
+                "Lichess lists no broadcast games to download.",
+            ));
         }
         let file = inner.file(ID);
         let held = if file.is_file() {
@@ -336,7 +338,7 @@ impl GameDbService {
                 max_bytes: MAX_MONTH,
                 wording: &WORDING,
                 broken: format!(
-                    "The master games of {} did not arrive intact. Try again.",
+                    "The broadcast games of {} did not arrive intact. Try again.",
                     month.month
                 ),
             };
