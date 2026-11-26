@@ -30,6 +30,7 @@ pub mod run;
 mod square_color;
 pub mod today;
 mod under_board;
+pub mod visualise;
 
 use gpui_kit::component::v_flex;
 use gpui_kit::*;
@@ -47,6 +48,7 @@ pub enum Tab {
     Coordinates,
     Colors,
     Knight,
+    Visualise,
     Endgames,
     Openings,
     Mistakes,
@@ -58,6 +60,7 @@ impl PageTab for Tab {
         Tab::Coordinates,
         Tab::Colors,
         Tab::Knight,
+        Tab::Visualise,
         Tab::Endgames,
         Tab::Openings,
         Tab::Mistakes,
@@ -87,6 +90,13 @@ impl PageTab for Tab {
                 "Knight paths",
                 "crown",
                 "knight tour",
+            ),
+            Tab::Visualise => (
+                "visualise",
+                "Visualise",
+                "Visualise",
+                "eye",
+                "visualize blindfold calculate moves",
             ),
             Tab::Endgames => (
                 "endgames",
@@ -140,6 +150,7 @@ pub struct PracticePage {
     coordinates: Option<Entity<coordinates::Coordinates>>,
     colors: Option<Entity<square_color::SquareColors>>,
     knight: Option<Entity<knight::KnightPaths>>,
+    visualise: Option<Entity<visualise::Visualise>>,
     repertoire: Option<Entity<repertoire::Repertoire>>,
     endgames: Option<Entity<endgames::Endgames>>,
     mistakes: Option<Entity<mistakes::Mistakes>>,
@@ -162,6 +173,7 @@ impl PracticePage {
             coordinates: None,
             colors: None,
             knight: None,
+            visualise: None,
             repertoire: None,
             endgames: None,
             mistakes: None,
@@ -210,6 +222,11 @@ impl PracticePage {
     #[cfg(any(test, feature = "test-support"))]
     pub fn knight(&self) -> Option<Entity<knight::KnightPaths>> {
         self.knight.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn visualise(&self) -> Option<Entity<visualise::Visualise>> {
+        self.visualise.clone()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -340,6 +357,11 @@ impl PracticePage {
                 .get_or_insert_with(|| cx.new(|cx| knight::KnightPaths::new(window, cx)))
                 .clone()
                 .into(),
+            Tab::Visualise => self
+                .visualise
+                .get_or_insert_with(|| cx.new(|cx| visualise::Visualise::new(window, cx)))
+                .clone()
+                .into(),
             Tab::Endgames => self
                 .endgames
                 .get_or_insert_with(|| cx.new(endgames::Endgames::new))
@@ -374,6 +396,11 @@ impl PracticePage {
             }
             Tab::Colors => {
                 if let Some(drill) = &self.colors {
+                    drill.update(cx, |drill, cx| drill.key(event, window, cx));
+                }
+            }
+            Tab::Visualise => {
+                if let Some(drill) = &self.visualise {
                     drill.update(cx, |drill, cx| drill.key(event, window, cx));
                 }
             }
@@ -420,7 +447,10 @@ impl Render for PracticePage {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| {
-                    if matches!(Tab::stored(cx), Tab::Coordinates | Tab::Colors) {
+                    if matches!(
+                        Tab::stored(cx),
+                        Tab::Coordinates | Tab::Colors | Tab::Visualise
+                    ) {
                         window.focus(&this.focus, cx)
                     }
                 }),
@@ -531,12 +561,12 @@ impl PageView for PracticePage {
         });
     }
 
-    /// The trainers with a board of their own: the coordinates, knight paths, endgame and
-    /// repertoire trainers.
+    /// The trainers with a board of their own: the coordinates, knight paths, visualise,
+    /// endgame and repertoire trainers.
     fn zen(&self, cx: &App) -> bool {
         matches!(
             Tab::stored(cx),
-            Tab::Coordinates | Tab::Knight | Tab::Endgames | Tab::Openings
+            Tab::Coordinates | Tab::Knight | Tab::Visualise | Tab::Endgames | Tab::Openings
         )
     }
 
