@@ -63,9 +63,13 @@ pub(crate) fn cells(picture: &Picture, grid: &Grid, size: usize, blur: f32) -> V
     };
     for row in 0..8 {
         for column in 0..8 {
-            let left = grid.x + column as f32 * grid.width;
-            let top = grid.y + row as f32 * grid.height;
-            let (step_x, step_y) = (grid.width / size as f32, grid.height / size as f32);
+            // Inside the lines drawn between the squares.
+            let left = grid.x + column as f32 * grid.width + grid.gap / 2.;
+            let top = grid.y + row as f32 * grid.height + grid.gap / 2.;
+            let (step_x, step_y) = (
+                (grid.width - grid.gap) / size as f32,
+                (grid.height - grid.gap) / size as f32,
+            );
             let mut rgb = Vec::with_capacity(size * size);
             for j in 0..size {
                 for i in 0..size {

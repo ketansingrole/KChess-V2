@@ -12,7 +12,7 @@
 
 use std::ops::Range;
 
-use crate::picture::Picture;
+use crate::picture::{Picture, distance, median_colour};
 
 /// The flat stretch, in pixels, each side of an edge: the pixel either side of the boundary is
 /// left out, since a scaled or compressed picture blurs it.
@@ -23,6 +23,9 @@ const FLAT: f32 = 18.;
 const STEP: f32 = 8.;
 /// The smallest square looked for, in pixels.
 pub(crate) const MIN_SQUARE: f32 = 7.;
+/// How far past the picture's edge, as a part of a square, a board looked for again may reach:
+/// a screenshot cut a little into it leaves its outer squares narrower than the rest.
+pub(crate) const CUT: f32 = 0.2;
 
 /// Evenly spaced lines along one axis: the board's edge at `start`, then a square's edge every
 /// `step`; `score` is how strongly its seven inner edges show.
@@ -42,6 +45,9 @@ pub(crate) struct Grid {
     pub width: f32,
     pub height: f32,
     pub score: f32,
+    /// How wide the lines drawn between the squares are, if any: what of each square's width
+    /// is line, half at either side.
+    pub gap: f32,
 }
 
 /// How strongly a square's edge runs down each boundary between columns (`0..=width`), within
@@ -94,8 +100,15 @@ pub(crate) fn transpose(luma: &[f32], width: usize, height: usize) -> Vec<f32> {
 }
 
 /// Evenly spaced lines along `edges` with a step in `steps` (tried every `increment` pixels), the
-/// `keep` strongest that differ.
-pub(crate) fn search(edges: &[f32], steps: (f32, f32), increment: f32, keep: usize) -> Vec<Lines> {
+/// `keep` strongest that differ; reaching a pixel past either end of `edges`, or `cut` of a
+/// square.
+pub(crate) fn search(
+    edges: &[f32],
+    steps: (f32, f32),
+    increment: f32,
+    keep: usize,
+    cut: f32,
+) -> Vec<Lines> {
     let len = edges.len().saturating_sub(1) as f32;
     // Each boundary's strength, as the strongest within a pixel of it (an edge blurred over two
     // pixels shows on either), square-rooted so seven fair edges beat three strong ones.
@@ -110,14 +123,16 @@ pub(crate) fn search(edges: &[f32], steps: (f32, f32), increment: f32, keep: usi
     let strength = |at: f32| near.get(at.round() as usize).copied().unwrap_or(0.);
     let mut found = Vec::new();
     let mut step = steps.0.max(MIN_SQUARE);
-    while step <= steps.1 && 8. * step <= len + 2. {
+    while step <= steps.1 && 8. * step <= len + 2. * (step * cut).max(1.) {
+        let reach = (step * cut).max(1.);
         let mut best = Lines {
             start: 0.,
             step,
             score: 0.,
         };
-        let mut start = -1f32;
-        while start + 8. * step <= len + 1. {
+        // Whole pixels, as within the picture.
+        let mut start = -reach.ceil();
+        while start + 8. * step <= len + reach {
             let score: f32 = (1..8).map(|k| strength(start + k as f32 * step)).sum();
             if score > best.score {
                 best = Lines { start, step, score };
@@ -244,6 +259,7 @@ struct Axes<'a> {
     width: usize,
     height: usize,
     skip: usize,
+    cut: f32,
 }
 
 /// From lines found along one axis, the board: the lines across it within the columns they span,
@@ -251,11 +267,23 @@ struct Axes<'a> {
 fn follow(axes: &Axes, first: Lines) -> Vec<(Lines, Lines)> {
     let mut found = Vec::new();
     let across = edges(axes.across, axes.height, span(first, axes.width), axes.skip);
-    for second in search(&across, (first.step * 0.92, first.step * 1.08), 0.25, 2) {
+    for second in search(
+        &across,
+        (first.step * 0.92, first.step * 1.08),
+        0.25,
+        2,
+        axes.cut,
+    ) {
         let second = refine(&across, second);
         let along = edges(axes.along, axes.width, span(second, axes.height), axes.skip);
-        if let Some(&again) =
-            search(&along, (second.step * 0.95, second.step * 1.05), 0.25, 1).first()
+        if let Some(&again) = search(
+            &along,
+            (second.step * 0.95, second.step * 1.05),
+            0.25,
+            1,
+            axes.cut,
+        )
+        .first()
         {
             let again = refine(&along, again);
             found.push((
@@ -271,11 +299,12 @@ fn follow(axes: &Axes, first: Lines) -> Vec<(Lines, Lines)> {
 }
 
 /// Where the board may be, most likely first: from the columns' edges first, and from the rows'.
-pub(crate) fn candidates(picture: &Picture, skip: usize) -> Vec<Grid> {
+/// Boards reaching `cut` of a square past the picture's edges are looked for too.
+pub(crate) fn candidates(picture: &Picture, skip: usize, cut: f32) -> Vec<Grid> {
     let (width, height) = (picture.width, picture.height);
     let luma = picture.luma();
     let turned = transpose(&luma, width, height);
-    let largest = width.min(height) as f32 / 8.;
+    let largest = width.min(height) as f32 / (8. - 2. * cut);
     let mut grids = Vec::new();
     let columns = Axes {
         along: &luma,
@@ -283,6 +312,7 @@ pub(crate) fn candidates(picture: &Picture, skip: usize) -> Vec<Grid> {
         width,
         height,
         skip,
+        cut,
     };
     let rows = Axes {
         along: &turned,
@@ -290,12 +320,14 @@ pub(crate) fn candidates(picture: &Picture, skip: usize) -> Vec<Grid> {
         width: height,
         height: width,
         skip,
+        cut,
     };
     for first in search(
         &edges(&luma, width, 0..height, skip),
         (MIN_SQUARE, largest),
         0.5,
         3,
+        cut,
     ) {
         for (x, y) in follow(&columns, first) {
             grids.push(Grid {
@@ -304,6 +336,7 @@ pub(crate) fn candidates(picture: &Picture, skip: usize) -> Vec<Grid> {
                 width: x.step,
                 height: y.step,
                 score: x.score + y.score,
+                gap: 0.,
             });
         }
     }
@@ -312,6 +345,7 @@ pub(crate) fn candidates(picture: &Picture, skip: usize) -> Vec<Grid> {
         (MIN_SQUARE, largest),
         0.5,
         3,
+        cut,
     ) {
         for (y, x) in follow(&rows, first) {
             grids.push(Grid {
@@ -320,6 +354,7 @@ pub(crate) fn candidates(picture: &Picture, skip: usize) -> Vec<Grid> {
                 width: x.step,
                 height: y.step,
                 score: x.score + y.score,
+                gap: 0.,
             });
         }
     }
@@ -338,6 +373,87 @@ pub(crate) fn candidates(picture: &Picture, skip: usize) -> Vec<Grid> {
         }
     }
     distinct
+}
+
+/// How wide the lines drawn between `grid`'s squares are, in pixels: across each square's edge,
+/// the run of columns (and rows) that are one colour all down the board, where a column through
+/// squares alternates between their two `colours`. A column one blend of the two all down (an
+/// edge between pixels, in a scaled picture) is no line: a line is a colour of its own.
+pub(crate) fn gap(picture: &Picture, grid: &Grid, colours: [[f32; 3]; 2]) -> f32 {
+    let (width, height) = (picture.width, picture.height);
+    // Whether the line through the board at `at` across it is one colour of its own.
+    let line = |at: f32, down: bool| -> bool {
+        let (start, step, len, across_len) = if down {
+            (grid.y, grid.height, height, width)
+        } else {
+            (grid.x, grid.width, width, height)
+        };
+        if at < 0. || at as usize >= across_len {
+            return false;
+        }
+        let pixels: Vec<[f32; 3]> = (0..(8. * step) as usize)
+            .map(|k| start + k as f32)
+            .filter(|&along| along >= 0. && (along as usize) < len)
+            .map(|along| {
+                let (x, y) = if down {
+                    (at as usize, along as usize)
+                } else {
+                    (along as usize, at as usize)
+                };
+                picture.rgb[y * width + x]
+            })
+            .collect();
+        let Some(colour) = median_colour(pixels.iter().copied()) else {
+            return false;
+        };
+        let alike = pixels
+            .iter()
+            .filter(|&&p| distance(p, colour) <= 20.)
+            .count();
+        alike * 10 >= pixels.len() * 8 && off_between(colour, colours) > 24.
+    };
+    let mut widths = Vec::new();
+    for down in [true, false] {
+        let (start, step) = if down {
+            (grid.x, grid.width)
+        } else {
+            (grid.y, grid.height)
+        };
+        let reach = (step * 0.1).ceil() as isize;
+        for k in 1..8 {
+            let edge = start + k as f32 * step;
+            let lined: Vec<bool> = (-reach..=reach)
+                .map(|offset| line((edge + offset as f32).floor(), down))
+                .collect();
+            // The run of line columns through the edge, or beside it.
+            let middle = reach as usize;
+            let Some(centre) = [middle, middle - 1, middle + 1]
+                .into_iter()
+                .find(|&at| lined.get(at) == Some(&true))
+            else {
+                widths.push(0.);
+                continue;
+            };
+            let before = lined[..centre].iter().rev().take_while(|l| **l).count();
+            let after = lined[centre + 1..].iter().take_while(|l| **l).count();
+            widths.push((before + after + 1) as f32);
+        }
+    }
+    widths.sort_by(f32::total_cmp);
+    // Most edges show it; a piece standing across an edge's whole length cannot.
+    widths[widths.len() / 2]
+}
+
+/// How far `colour` is from every blend of `colours`.
+fn off_between(colour: [f32; 3], [a, b]: [[f32; 3]; 2]) -> f32 {
+    let along = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let length = along.iter().map(|c| c * c).sum::<f32>();
+    let share = if length > 0. {
+        ((0..3).map(|c| (colour[c] - a[c]) * along[c]).sum::<f32>() / length).clamp(0., 1.)
+    } else {
+        0.
+    };
+    distance(colour, [0, 1, 2].map(|c| a[c] + share * along[c]))
 }
 
 #[cfg(test)]
@@ -364,7 +480,7 @@ mod tests {
     #[test]
     fn a_board_on_a_page_is_found_to_the_pixel() {
         let picture = checkerboard((500, 420), 37, 21, 45);
-        let grid = candidates(&picture, 1)[0];
+        let grid = candidates(&picture, 1, 0.)[0];
         assert!((grid.x - 37.).abs() < 0.5, "{grid:?}");
         assert!((grid.y - 21.).abs() < 0.5, "{grid:?}");
         assert!((grid.width - 45.).abs() < 0.1, "{grid:?}");
@@ -391,6 +507,71 @@ mod tests {
         assert!((refined.step - 80.).abs() < 0.01, "{refined:?}");
     }
 
+    /// A board cut into by the picture's edges is found as one reaching past them, when looked
+    /// for so.
+    #[test]
+    fn a_board_cut_into_is_found_past_the_edges() {
+        let whole = checkerboard((480, 480), 0, 0, 60);
+        let side = 466;
+        let mut rgb = Vec::with_capacity(side * side);
+        for y in 7..7 + side {
+            rgb.extend_from_slice(&whole.rgb[y * 480 + 7..y * 480 + 7 + side]);
+        }
+        let cut = Picture {
+            width: side,
+            height: side,
+            rgb,
+        };
+        assert!(
+            candidates(&cut, 1, 0.)
+                .iter()
+                .all(|grid| (grid.width - 60.).abs() > 1.)
+        );
+        let grid = candidates(&cut, 1, CUT)[0];
+        assert!((grid.x + 7.).abs() < 0.5, "{grid:?}");
+        assert!((grid.width - 60.).abs() < 0.1, "{grid:?}");
+    }
+
+    /// Lines drawn between the squares are measured; a plain board's edges, and a scaled one's
+    /// edges blended over a pixel, are no line.
+    #[test]
+    fn lines_between_the_squares_are_measured() {
+        let colours = [[240., 217., 181.], [181., 136., 99.]];
+        let mut picture = checkerboard((400, 400), 0, 0, 50);
+        let grid = Grid {
+            x: 0.,
+            y: 0.,
+            width: 50.,
+            height: 50.,
+            score: 1.,
+            gap: 0.,
+        };
+        assert_eq!(gap(&picture, &grid, colours), 0.);
+        // Each edge a pixel blended half and half, as scaling leaves it.
+        let mut blended = Picture {
+            rgb: picture.rgb.clone(),
+            ..picture
+        };
+        for k in 1..8 {
+            for along in 0..400 {
+                for (x, y) in [(k * 50, along), (along, k * 50)] {
+                    let (a, b) = (picture.rgb[y * 400 + x - 1], picture.rgb[y * 400 + x]);
+                    blended.rgb[y * 400 + x] = [0, 1, 2].map(|c| (a[c] + b[c]) / 2.);
+                }
+            }
+        }
+        assert_eq!(gap(&blended, &grid, colours), 0.);
+        for k in 1..8 {
+            for along in 0..400 {
+                for across in k * 50 - 2..k * 50 + 2 {
+                    picture.rgb[along * 400 + across] = [231., 196., 106.];
+                    picture.rgb[across * 400 + along] = [231., 196., 106.];
+                }
+            }
+        }
+        assert_eq!(gap(&picture, &grid, colours), 4.);
+    }
+
     #[test]
     fn a_blank_page_has_no_board() {
         let picture = Picture {
@@ -398,7 +579,7 @@ mod tests {
             height: 200,
             rgb: vec![[250.; 3]; 200 * 200],
         };
-        assert!(candidates(&picture, 1).is_empty());
+        assert!(candidates(&picture, 1, 0.).is_empty());
         assert_eq!(
             transpose(&[1., 2., 3., 4., 5., 6.], 3, 2),
             [1., 4., 2., 5., 3., 6.]

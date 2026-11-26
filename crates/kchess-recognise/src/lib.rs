@@ -149,15 +149,35 @@ impl Recogniser {
         // An edge averaged over the period is a ramp that wide: the flat stretches either side
         // of it start beyond it.
         let skip = 1 + period.map_or(0, |period| (period / 2.) as usize);
-        let (grid, colours) = grid::candidates(picture, skip)
-            .into_iter()
-            .take(6)
-            .find_map(|grid| {
+        // Lines drawn between the squares are passed over as the ramp is: a line wider than
+        // that gap (a large board's) shows as two weaker edges, one either side of it, and
+        // passed over whole as one edge at its middle, half again as strong as both. (A
+        // textured picture's gap is already the texture's.)
+        let find = |cut: f32| {
+            let first = |skip| -> Vec<grid::Grid> {
+                grid::candidates(picture, skip, cut)
+                    .into_iter()
+                    .take(6)
+                    .collect()
+            };
+            let mut grids = first(skip);
+            if period.is_none() {
+                let wider = first(skip + 2);
+                let best = |grids: &[grid::Grid]| grids.first().map_or(0., |grid| grid.score);
+                if best(&wider) > 1.5 * best(&grids) {
+                    grids = wider;
+                } else {
+                    grids.extend(wider);
+                }
+            }
+            grids.into_iter().find_map(|grid| {
                 let probe = cell_size(&grid);
                 let cells = squares::cells(picture, &grid, probe, 0.);
                 squares::checkered(&cells).map(|colours| (grid, colours))
             })
-            .ok_or(Refusal::NoBoard)?;
+        };
+        let (mut grid, colours) = find(grid::CUT).ok_or(Refusal::NoBoard)?;
+        grid.gap = grid::gap(picture, &grid, colours);
         let size = cell_size(&grid);
         // The texture's period in the cells' pixels.
         let blur = period.map_or(0., |period| {

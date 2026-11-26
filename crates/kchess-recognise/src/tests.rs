@@ -177,6 +177,41 @@ fn pictures_without_a_board_are_refused() {
     );
 }
 
+/// A screenshot cut a little into the board, its outer squares narrower than the rest, and a
+/// board with lines drawn between its squares wider than a scaled edge's blur, are read.
+#[test]
+fn a_cut_board_and_a_board_with_lines_between_squares_are_read() {
+    let fen = "r1bq1rk1/pp2bppp/2n1pn2/3p4/2PP4/2N1PN2/PP1B1PPP/R2QKB1R w KQ - 0 1";
+    let board = fen
+        .parse::<shakmaty::fen::Fen>()
+        .unwrap()
+        .into_setup()
+        .board;
+    let pieces = set("cburnett");
+    for (square, cut) in [(60, 7), (60, 9), (45, 5), (90, 12)] {
+        let whole = picture(&board, &pieces, square, true, 0);
+        let side = whole.width() - 2 * cut;
+        let cut_into = image::imageops::crop_imm(&whole, cut, cut, side, side).to_image();
+        let read = recogniser().read(&png(&cut_into)).unwrap();
+        assert_eq!(read.fen, fen, "{square} pixels cut by {cut}");
+    }
+    for (square, line) in [(90, 3), (90, 4), (64, 3)] {
+        let mut lined = picture(&board, &pieces, square, true, 6);
+        let colour = image::Rgba([231, 196, 106, 255]);
+        for k in 1..8 {
+            let at = 6 + (k * square) as u32 - line / 2;
+            for along in 6..6 + 8 * square as u32 {
+                for across in at..at + line {
+                    lined.put_pixel(across, along, colour);
+                    lined.put_pixel(along, across, colour);
+                }
+            }
+        }
+        let read = recogniser().read(&png(&lined)).unwrap();
+        assert_eq!(read.fen, fen, "{square} pixels, lines {line} wide");
+    }
+}
+
 /// Coordinate labels in the corners of the edge squares, as a website draws them in the other
 /// square's colour, are left out of the squares, a piece standing on a labelled square included.
 #[test]
