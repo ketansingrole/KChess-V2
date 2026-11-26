@@ -366,8 +366,8 @@ mod tests {
         reads[60] = read(piece(Color::White, Role::King), &[]);
         // Eight white pawns on the second rank and a ninth on c4, the least certain of them,
         // nearly a white bishop.
-        for index in 48..56 {
-            reads[index] = read(piece(Color::White, Role::Pawn), &[]);
+        for square in &mut reads[48..56] {
+            *square = read(piece(Color::White, Role::Pawn), &[]);
         }
         reads[34] = Read::Piece {
             ranked: vec![
@@ -380,7 +380,10 @@ mod tests {
         reads[31] = Read::Empty { doubtful: true };
         let recognised = assemble(&reads);
         assert_eq!(recognised.fen, "1r2k3/8/8/8/2B5/8/PPPPPPPP/4K3 w - - 0 1");
-        assert_eq!(recognised.doubtful, vec![Square::C4, Square::H5, Square::E8]);
+        assert_eq!(
+            recognised.doubtful,
+            vec![Square::C4, Square::H5, Square::E8]
+        );
         assert!(doubtful_ranking(&[]));
         assert!(!doubtful_ranking(&[(piece(Color::White, Role::Pawn), 0.1)]));
         assert!(doubtful_ranking(&[(piece(Color::White, Role::Pawn), 0.5)]));
