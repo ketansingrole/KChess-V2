@@ -29,6 +29,7 @@ mod process;
 pub mod profile_lock;
 pub mod puzzles;
 pub mod secrets;
+pub mod sources;
 pub mod store;
 pub mod tablebase;
 pub mod tasks;

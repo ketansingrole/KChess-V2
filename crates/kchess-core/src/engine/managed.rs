@@ -35,10 +35,9 @@ use kchess_contracts::error::{CoreError, Result};
 use kchess_delta::hex;
 
 /// The GitHub endpoint for the latest official Stockfish release.
-pub const RELEASE_URL: &str =
-    "https://api.github.com/repos/official-stockfish/Stockfish/releases/latest";
+pub const RELEASE_URL: &str = crate::sources::STOCKFISH.url;
 /// Where every official asset downloads from: `<tag>/<asset name>` follows.
-const DOWNLOAD_BASE: &str = "https://github.com/official-stockfish/Stockfish/releases/download/";
+const DOWNLOAD_BASE: &str = crate::sources::STOCKFISH_DOWNLOADS;
 
 // The pin has a file of its own: CI keys its engine cache on it, and `cargo xtask pins --check`
 // reads it (`tooling/xtask/src/pinned.rs`).
@@ -49,16 +48,14 @@ pub use shipped::{PinnedRelease, SHIPPED};
 /// official release's asset comes from the official repository's downloads alone, whatever
 /// address the release metadata named. A test endpoint serves its own.
 fn download_allowed(release_url: &str, tag: &str, asset: &str, url: &str) -> bool {
-    let official = release_url == RELEASE_URL
-        || release_url.starts_with(
-            "https://api.github.com/repos/official-stockfish/Stockfish/releases/tags/",
-        );
+    let official =
+        release_url == RELEASE_URL || release_url.starts_with(crate::sources::STOCKFISH_TAGS);
     !official || url == format!("{DOWNLOAD_BASE}{tag}/{asset}")
 }
 
 /// The release endpoint of one tag.
 pub fn tag_url(tag: &str) -> String {
-    format!("https://api.github.com/repos/official-stockfish/Stockfish/releases/tags/{tag}")
+    format!("{}{tag}", crate::sources::STOCKFISH_TAGS)
 }
 
 /// Larger downloads are refused, both up front and while streaming.

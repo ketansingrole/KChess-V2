@@ -64,7 +64,7 @@ impl VoiceModel {
     pub fn official() -> VoiceModel {
         VoiceModel {
             name: "vosk-model-small-en-us-0.15".into(),
-            url: "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip".into(),
+            url: crate::sources::VOSK_MODEL.url.into(),
             sha256: "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498".into(),
         }
     }

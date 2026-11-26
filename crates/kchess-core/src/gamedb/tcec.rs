@@ -31,11 +31,11 @@ pub const NAME: &str = "TCEC engine games";
 /// Whose games they are and on what terms, as the licence asks to be shown.
 pub const ATTRIBUTION: &str = "TCEC games, tcec-chess.com, CC BY-SA 3.0";
 /// GitHub's answer naming the latest release.
-pub const LATEST: &str = "https://api.github.com/repos/TCEC-Chess/tcecgames/releases/latest";
+pub const LATEST: &str = crate::sources::TCEC.url;
 /// Where a release's files are, by tag: `{DOWNLOADS}{tag}/{ASSET}`.
-pub const DOWNLOADS: &str = "https://github.com/TCEC-Chess/tcecgames/releases/download/";
+pub const DOWNLOADS: &str = crate::sources::TCEC_DOWNLOADS;
 /// The release file KChess reads: every game, its comments replaced by book exits.
-pub const ASSET: &str = "TCEC-everything-compact.zip";
+pub const ASSET: &str = crate::sources::TCEC_ASSET;
 /// The file of it KChess keeps: the standard-chess competitions.
 const ENTRY: &str = "TCEC-everything-compet-traditional.pgn";
 /// The most the zip may bring: 27 MB in 2026, growing some 3 MB a season.

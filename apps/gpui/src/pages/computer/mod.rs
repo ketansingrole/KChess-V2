@@ -4,9 +4,10 @@
 //! unfinished game in the profile, to resume it.
 
 use crate::pages::PageView;
+use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
-use kchess_contracts::check::Moves;
-use kchess_contracts::types::EngineLevel;
+use kchess_contracts::check::{Fen, Moves};
+use kchess_contracts::types::{EngineLevel, LookupOptions, PositionLookupKind};
 use kchess_domain::games::archive::Snapshot;
 use kchess_domain::training::clock::format_clock;
 use kchess_domain::variant::{Setup, Variant};
@@ -41,7 +42,7 @@ use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Side, Tone};
 use kchess_domain::games::Host;
-use kchess_domain::games::computer::{self, ComputerGame, Effect, SearchRequest};
+use kchess_domain::games::computer::{self, ComputerGame, Effect, SearchRequest, Sparring};
 use options::{Chosen, Current, GameOptions};
 
 mod draw;
@@ -96,6 +97,9 @@ pub struct ComputerPage {
     /// The unfinished game the profile keeps, read to resume it and saved as it changes.
     saver: SessionSaver<ComputerPage>,
     search: Option<Task<()>>,
+    /// The move count at which the imitated player's games had no move: from there on the engine
+    /// plays, until a takeback goes back before it.
+    out_of_games: Option<usize>,
     ticker: Option<Task<()>>,
     /// The player's low-time warning; the computer's clock runs low unannounced.
     low_time: crate::game::low_time::LowTime,
@@ -254,6 +258,7 @@ impl ComputerPage {
                 cx,
             ),
             search: None,
+            out_of_games: None,
             ticker: None,
             low_time: Default::default(),
             faces: Faces::default(),
@@ -410,6 +415,73 @@ impl ComputerPage {
             Ok(None) => return,
             Err(cause) => return self.log_warn(&cause),
         };
+        if let Some(sparring) = self.game.sparring().cloned()
+            && self.game.setup().is_standard_start()
+            && self.out_of_games.is_none_or(|at| request.count < at)
+        {
+            return self.move_from_games(request, sparring, cx);
+        }
+        self.engine_search(request, cx);
+    }
+
+    /// The imitated player's move here, drawn from their games as often as they played it; the
+    /// engine searches instead when they have none.
+    fn move_from_games(
+        &mut self,
+        request: SearchRequest,
+        sparring: Sparring,
+        cx: &mut Context<Self>,
+    ) {
+        let fen = self
+            .position_at(request.count)
+            .as_ref()
+            .map(kchess_domain::rules::make_fen)
+            .unwrap_or_default();
+        let lookup = cx.global::<AppCore>().lookup(calls::PositionLookup {
+            kind: PositionLookupKind::Database,
+            fen: Fen(fen),
+            options: Some(LookupOptions {
+                database: Some(sparring.database),
+                player: Some(sparring.player),
+                color: Some(!self.user_color()),
+                ..LookupOptions::default()
+            }),
+        });
+        cx.notify();
+        self.search = Some(cx.spawn(async move |this, cx| {
+            let found = lookup.await.warn_on_err();
+            this.update(cx, |this, cx| {
+                let moves: Vec<(String, u64)> = found
+                    .map(|lookup| {
+                        lookup
+                            .saved
+                            .moves
+                            .into_iter()
+                            .map(|played| {
+                                let games = [played.white, played.draws, played.black]
+                                    .into_iter()
+                                    .flatten()
+                                    .sum::<i64>();
+                                (played.uci, u64::try_from(games).unwrap_or(0))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let roll = kchess_games::random_unit().warn_on_err().unwrap_or(0.0);
+                match computer::pick_from_games(&moves, roll) {
+                    Some(uci) => this.search_finished(&request, Ok(uci), cx),
+                    None => {
+                        this.out_of_games = Some(request.count);
+                        this.engine_search(request, cx);
+                    }
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// The engine's search for the computer's move.
+    fn engine_search(&mut self, request: SearchRequest, cx: &mut Context<Self>) {
         let Some(level) = EngineLevel::from_key(&request.level) else {
             return self.log_warn("Invalid engine level.");
         };
@@ -493,9 +565,23 @@ impl ComputerPage {
         game
     }
 
-    /// The game an Export saves, named "You" and "Stockfish".
+    /// The game an Export saves, named "You" and "Stockfish" (or the player it imitated).
     fn game_export(&self) -> PlayedGame {
-        self.played_game("Stockfish")
+        self.played_game(&self.opponent_name())
+    }
+
+    /// Who the computer's side is: Stockfish, or the player whose openings it plays.
+    pub(crate) fn opponent_name(&self) -> SharedString {
+        match self.game.sparring() {
+            Some(sparring) => sparring.player.clone().into(),
+            None => SharedString::new_static("Stockfish"),
+        }
+    }
+
+    /// Whether the imitated player's games ran out at the move shown; none without one.
+    pub(crate) fn out_of_their_games(&self) -> Option<bool> {
+        self.game.sparring()?;
+        Some(self.out_of_games.is_some_and(|at| at <= self.moves().len()))
     }
 
     /// Review the game on the analysis board, opened at the move being looked at, with the
@@ -505,6 +591,10 @@ impl ComputerPage {
             "Stockfish ({})",
             crate::game::engine_level_label(self.game.level())
         );
+        let engine = match self.game.sparring() {
+            Some(sparring) => format!("{engine} as {}", sparring.player),
+            None => engine,
+        };
         let game = self.played_game(&engine);
         kchess_board::analysis::open(
             kchess_board::analysis::Open::Played { game, review: true },
@@ -680,6 +770,7 @@ impl ComputerPage {
             clock: self.game.clock(),
             color: self.user_color(),
             level: self.game.level().to_string(),
+            sparring: self.game.sparring().cloned(),
         };
         let page = cx.entity().downgrade();
         let levels = level_choices(cx);
@@ -714,6 +805,7 @@ impl ComputerPage {
                     clock: this.game.clock(),
                     color,
                     level: this.game.level().to_string(),
+                    sparring: None,
                 };
                 this.start_chosen(chosen, window, cx);
             },
@@ -744,6 +836,7 @@ impl ComputerPage {
                     clock: this.game.clock(),
                     color,
                     level,
+                    sparring: None,
                 };
                 this.start_chosen(chosen, window, cx);
             },
@@ -764,6 +857,8 @@ impl ComputerPage {
 
     fn begin(&mut self, chosen: Chosen, window: &mut Window, cx: &mut Context<Self>) {
         self.game.set_level(&chosen.level);
+        self.game.set_sparring(chosen.sparring);
+        self.out_of_games = None;
         self.game.set_color(chosen.color);
         self.flipped = false;
         self.reset_archive(cx);
@@ -799,6 +894,7 @@ impl ComputerPage {
 
     fn new_game(&mut self, cx: &mut Context<Self>) {
         self.reset_archive(cx);
+        self.out_of_games = None;
         let host = self.host();
         let effects = self.game.start(None, None, &host);
         self.perform(effects, cx);

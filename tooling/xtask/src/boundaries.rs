@@ -71,14 +71,17 @@ const RULES: [Rule; 2] = [
 ];
 
 /// Whether `path` holds only tests, which may name anything.
-fn is_test_file(path: &str) -> bool {
+pub(crate) fn is_test_file(path: &str) -> bool {
     path.contains("/e2e/") || path.contains("/tests/") || path.ends_with("/tests.rs")
 }
 
 /// The shipped part of a source file: what comes before its inline test module, which is last
-/// (`every_test_module_comes_after_the_code`).
-fn shipped(text: &str) -> &str {
-    text.find("#[cfg(test)]\nmod tests")
+/// (`every_test_module_comes_after_the_code`). A Windows checkout ends its lines with CRLF.
+pub(crate) fn shipped(text: &str) -> &str {
+    ["#[cfg(test)]\nmod tests", "#[cfg(test)]\r\nmod tests"]
+        .iter()
+        .filter_map(|marker| text.find(marker))
+        .min()
         .map_or(text, |at| &text[..at])
 }
 
@@ -354,6 +357,8 @@ fn only_code_before_the_test_module_ships() {
     assert_eq!(shipped("a\n#[cfg(test)]\nmod tests {}\n"), "a\n");
     let helper = "a\n#[cfg(test)]\nfn helper() {}\n";
     assert_eq!(shipped(helper), helper);
+    // As a Windows checkout has it.
+    assert_eq!(shipped("a\r\n#[cfg(test)]\r\nmod tests {}\r\n"), "a\r\n");
 }
 
 /// Each item of `files` after a test module, as `path:line` of its first line: code after the
