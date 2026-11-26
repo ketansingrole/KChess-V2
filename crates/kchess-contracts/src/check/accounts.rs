@@ -10,8 +10,9 @@ use kchess_domain::variant::VARIANTS;
 use super::*;
 use crate::types::{
     APPEARANCES, CLOSE_ACTIONS, COORDINATE_MODES, CoreSettings, ENGINE_LEVELS, EXPLORER_SPEEDS,
-    FrontendPreferences, GamePageQuery, InsightsQuery, PERF_TYPES, PIECE_ANIMATIONS,
-    PROMOTION_MODES, PerfType, RELATION_ACTIONS, REVIEW_AUTO, RelationAction, Settings,
+    FrontendPreferences, GamePageQuery, InsightsFilters, InsightsQuery, PERF_TYPES,
+    PIECE_ANIMATIONS, PROMOTION_MODES, PerfType, RELATION_ACTIONS, REVIEW_AUTO, RelationAction,
+    Settings,
 };
 
 /* ── Names and ids ── */
@@ -429,31 +430,62 @@ impl Validate for InsightsQuery {
             _ => None,
         })?;
         let account = game_account(&sent.account, "account")?;
-        let speed = match sent.speed {
-            Some(speed) => {
-                one_of(&speed, EXPLORER_SPEEDS, None, "speed")?;
-                Some(chosen(speed)?)
-            }
-            None => None,
-        };
-        if let Some(days) = sent.days {
-            within(days, 1, 3650, Some("Invalid period."), "days")?;
-        }
-        let variant = match sent.variant {
-            Some(key) => {
-                one_of(&key, VARIANTS, Some("Invalid variant."), "variant")?;
-                kchess_domain::variant::Variant::from_key(&key)
-            }
-            None => None,
-        };
-        Ok(InsightsQuery {
-            account,
-            speed,
-            rated: sent.rated,
-            days: sent.days,
-            variant,
-        })
+        Ok(insights_filters(sent.speed, sent.rated, sent.days, sent.variant)?.of(&account))
     }
+}
+
+/// A game database player's insights filter as sent.
+#[derive(Deserialize)]
+#[serde(expecting = "an object")]
+struct SentInsightsFilters {
+    speed: Option<String>,
+    rated: Option<bool>,
+    days: Option<u64>,
+    variant: Option<String>,
+}
+
+impl Validate for InsightsFilters {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        let sent: SentInsightsFilters = decode(value, |keys| match keys {
+            [] => Some("Invalid insights filter."),
+            ["days"] => Some("Invalid period."),
+            _ => None,
+        })?;
+        insights_filters(sent.speed, sent.rated, sent.days, sent.variant)
+    }
+}
+
+/// The insights filters, each checked: a speed of the explorer's, a period of 1 to 3650 days
+/// and a variant KChess plays.
+fn insights_filters(
+    speed: Option<String>,
+    rated: Option<bool>,
+    days: Option<u64>,
+    variant: Option<String>,
+) -> Result<InsightsFilters, Refusal> {
+    let speed = match speed {
+        Some(speed) => {
+            one_of(&speed, EXPLORER_SPEEDS, None, "speed")?;
+            Some(chosen(speed)?)
+        }
+        None => None,
+    };
+    if let Some(days) = days {
+        within(days, 1, 3650, Some("Invalid period."), "days")?;
+    }
+    let variant = match variant {
+        Some(key) => {
+            one_of(&key, VARIANTS, Some("Invalid variant."), "variant")?;
+            kchess_domain::variant::Variant::from_key(&key)
+        }
+        None => None,
+    };
+    Ok(InsightsFilters {
+        speed,
+        rated,
+        days,
+        variant,
+    })
 }
 
 #[cfg(test)]
@@ -502,6 +534,28 @@ mod tests {
         assert_eq!(
             check::<GamePageQuery>(query),
             Err("result: unknown variant `won`, expected one of `win`, `loss`, `draw`".into())
+        );
+    }
+
+    /// A player's insights filter is checked as an account's is, with no account to name.
+    #[test]
+    fn a_players_insights_filter_is_checked_as_an_accounts() {
+        assert_eq!(
+            checked::<InsightsFilters>(json!({ "speed": "blitz", "rated": true, "days": 30 })),
+            Ok(json!({ "speed": "blitz", "rated": true, "days": 30 }))
+        );
+        assert_eq!(checked::<InsightsFilters>(json!({})), Ok(json!({})));
+        assert_eq!(
+            checked::<InsightsFilters>(json!({ "days": 0 })),
+            Err("Invalid period.".into())
+        );
+        assert_eq!(
+            checked::<InsightsFilters>(json!({ "variant": "chess" })),
+            Err("Invalid variant.".into())
+        );
+        assert_eq!(
+            checked::<InsightsQuery>(json!({ "account": "Alice", "days": 4000 })),
+            Err("Invalid period.".into())
         );
     }
 

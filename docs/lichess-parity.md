@@ -167,7 +167,11 @@ can add them as a friend, challenge them or watch their current game.
   that synced Lichess and Chess.com games carry: results when your clock fell under a tenth of
   its start, your clock against your opponent's at moves 20 and 40, blunders per 100 moves short
   of time and with time to spare (in reviewed games), and time per move in the opening,
-  middlegame and endgame. Everything is worked out locally from synced games.
+  middlegame and endgame. Everything is worked out locally from synced games. **A downloaded
+  player** (Database → Player's games) is offered beside your accounts: the same report from
+  that player's games, their speeds from the games' time controls and their accuracy and
+  mistakes from the evals of the games Lichess analysed (Player's games asks Lichess for clocks
+  and evals), with their endgames and pawn structures; no engine runs for it.
 - **Chess.com games**: a Chess.com username added in Settings → Accounts syncs its public games
   from Chess.com's public API (it needs no login) into History, the background reviews, Insights
   and mistake drills. Their speeds, variants and endings are named as Lichess names them, so both

@@ -733,6 +733,16 @@ core_api! {
             database: DatabaseId,
             name: PlayerName
         ) -> GameDbPlayerReport;
+        /// Insights (`insights`) over the games of a player's database (`source` `player`), as
+        /// if they were an account's: the player's results broken down, their accuracy and
+        /// mistakes from the evals of the games Lichess analysed, their time use from the
+        /// games' clocks, and their endgames and pawn structures. `filters` apply where the
+        /// games tell; the report's `account` is the player's name.
+        #[assist(Lookups)]
+        GameDbInsights = "gameDbInsights" fn game_db_insights(
+            database: DatabaseId,
+            filters: crate::types::InsightsFilters
+        ) -> InsightsReport;
         /// The event of game `game` of `database`, as it was played around that game's date:
         /// its standings and each player's results.
         #[assist(Lookups)]

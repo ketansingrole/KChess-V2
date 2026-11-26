@@ -1,6 +1,8 @@
 //! The Database page: importing a PGN file, searching and paging its games, opening one on the
 //! analysis board, the games with a position, and deleting the database.
 
+use gpui_kit::test::TestWindowExt as _;
+
 use super::Harness;
 
 const GAMES: &str = r#"[Event "Tata Steel"]
@@ -1549,4 +1551,84 @@ fn an_insights_structure_opens_its_games(cx: &mut gpui_kit::TestAppContext) {
             .try_find_by_label("Pawn structure")
             .is_some_and(|select| select.value() == Some("Isolated queen pawn"))
     });
+}
+
+/// Insights → a downloaded player: once Scouted_Player's games are downloaded on the Database
+/// page, Insights offers them beside the account, and their report is of their games: their
+/// record, their time use from the clocks Lichess sent and their accuracy from the evals of the
+/// game it analysed. Choosing the account again shows the account's report.
+#[gpui_kit::test]
+fn insights_show_a_downloaded_players_games(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::SCOUTED;
+    use crate::pages::insights::InsightsPage;
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    app.wait_for_app("Your games", |cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .iter()
+            .any(|database| database.source == kchess_contracts::types::DatabaseSource::Own)
+    });
+    app.open("Insights");
+    let settled = |cx: &gpui_kit::App, account: &str| {
+        crate::shell::view::<InsightsPage>(cx).is_some_and(|page| {
+            let page = page.read(cx);
+            page.settled()
+                && page
+                    .report()
+                    .is_some_and(|report| report.account == account && report.total > 0)
+        })
+    };
+    app.wait_for("the account's report", |_, cx| {
+        settled(cx, "Showcase") && !crate::accounts::handle(cx).read(cx).working()
+    });
+    let page = app
+        .cx
+        .update(|cx| crate::shell::view::<InsightsPage>(cx))
+        .expect("the Insights page");
+    let own = app.cx.update(|cx| page.read(cx).report_total());
+
+    app.open("Game database");
+    app.click("database-player");
+    app.fill_in_dialog("Username", SCOUTED);
+    app.click("player-download");
+    wait_for_listed(
+        &mut app,
+        "their games",
+        &[
+            "Rival against Scouted_Player, 0-1",
+            "Scouted_Player against Rival, 1-0",
+        ],
+    );
+
+    app.open("Insights");
+    // The player follows the one account.
+    choose(&mut app, "Account", 1);
+    app.wait_for("their report", |_, cx| settled(cx, SCOUTED));
+    app.cx.update(|cx| {
+        let page = page.read(cx);
+        let report = page.report().expect("their report");
+        assert_eq!(report.total, 2);
+        assert_eq!((report.record.win, report.record.loss), (2, 0));
+        assert_eq!(report.by_color.black.win, 1);
+        let time = report.time_use.as_ref().expect("their time use");
+        assert_eq!(time.games, 2);
+        let accuracy = report.accuracy.as_ref().expect("their accuracy");
+        assert_eq!(accuracy.games, 1);
+    });
+    // Drawn below the fold, as e2e::history checks it.
+    app.wait_for("their time use", |window, _| {
+        window
+            .try_find(gpui_kit::ElementId::from("insights-time-use"))
+            .is_some()
+    });
+
+    app.click_label("Account");
+    app.press("up");
+    app.press("enter");
+    app.wait_for("the account's report again", |_, cx| {
+        settled(cx, "Showcase")
+    });
+    assert_eq!(app.cx.update(|cx| page.read(cx).report_total()), own);
 }

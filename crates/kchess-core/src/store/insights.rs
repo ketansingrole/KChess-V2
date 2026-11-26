@@ -4,6 +4,11 @@
 //! the endgames the tablebases decide went and the pawn structures reached
 //! (`replayed_games`). Everything is read locally; nothing
 //! is sent to Lichess.
+//!
+//! The report is made from rows, one a game (`Row`, `results`), and from what replaying,
+//! clocks and reviews add (`Replays`, `Clocks`, `Mistakes`): the synced games' SQL here makes
+//! them for an account, and `gamedb::insights` for a player of a game database, so both reports
+//! mean the same.
 
 use rusqlite::{Connection, params_from_iter, types::Value as Sql};
 use serde_json::Value;
@@ -50,13 +55,13 @@ const LENGTH_BANDS: [(&str, f64, f64); 4] = [
     ("60 moves or more", 120.0, INF),
 ];
 
-const DAY_MS: f64 = 86_400_000.0;
-const ROW_LIMIT: i64 = 20_000;
-const REVIEW_LIMIT: i64 = 2_000;
+pub(crate) const DAY_MS: f64 = 86_400_000.0;
+pub(crate) const ROW_LIMIT: i64 = 20_000;
+pub(crate) const REVIEW_LIMIT: i64 = 2_000;
 /// The newest clocked games read for time use: each one's PGN is parsed and replayed.
-const CLOCK_LIMIT: i64 = 2_000;
+pub(crate) const CLOCK_LIMIT: i64 = 2_000;
 /// The newest games replayed for their endgames and pawn structures.
-const REPLAY_LIMIT: i64 = 2_000;
+pub(crate) const REPLAY_LIMIT: i64 = 2_000;
 /// The kinds of endgame listed, won and drawn each.
 const ENDGAME_LINES: usize = 8;
 /// The moves whose clocks are compared with the opponent's.
@@ -190,7 +195,7 @@ pub fn insights(
                 });
             Ok(Row {
                 color: row.get(1)?,
-                speed: row.get(2)?,
+                speed: Some(row.get(2)?),
                 opening: row.get(4)?,
                 opponent_rating: row.get(5)?,
                 player_rating: row.get(6)?,
@@ -206,7 +211,17 @@ pub fn insights(
     for row in rows {
         rows_out.push(row.sql()?);
     }
+    let mut report = results(&query.account, &rows_out)?;
+    report.accuracy = accuracy_report(host, db, query, now)?;
+    report.time_use = time_use_report(host, db, query, now)?;
+    report.variants = played_variants(db, query)?;
+    Ok(report)
+}
 
+/// The report of `account`'s games `rows`, newest first: their results overall and broken
+/// down, and the streaks. Accuracy, time use, endgames, structures and variants are the
+/// producer's to add.
+pub(crate) fn results(account: &str, rows: &[Row]) -> Result<InsightsReport> {
     let mut record = GameRecord::default();
     let mut by_color = [GameRecord::default(), GameRecord::default()];
     let mut speeds: Slots<GameRecord> = Slots::new();
@@ -222,7 +237,7 @@ pub fn insights(
     let mut run = 0;
     let mut run_kind = String::new();
     // Rows are newest first; streaks are counted oldest first.
-    for row in rows_out.iter().rev() {
+    for row in rows.iter().rev() {
         add(&mut record, &row.result);
         let side = match row.color.as_str() {
             "white" => 0,
@@ -235,7 +250,9 @@ pub fn insights(
             }
         };
         add(&mut by_color[side], &row.result);
-        add(speeds.slot(&row.speed, GameRecord::default), &row.result);
+        if let Some(speed) = &row.speed {
+            add(speeds.slot(speed, GameRecord::default), &row.result);
+        }
         if let Some(opening) = row.opening.as_deref().filter(|o| !o.is_empty()) {
             // Group variations under their opening family: "Sicilian Defense: Najdorf" → "Sicilian Defense".
             let family = js::trim(opening.split(':').next().unwrap_or_default());
@@ -306,8 +323,8 @@ pub fn insights(
         record: *record,
     };
     Ok(InsightsReport {
-        account: query.account.clone(),
-        total: rows_out.len() as i64,
+        account: account.to_string(),
+        total: rows.len() as i64,
         record,
         by_color: ByColor {
             white: by_color[0],
@@ -346,11 +363,11 @@ pub fn insights(
             longest_loss,
             current,
         },
-        accuracy: accuracy_report(host, db, query, now)?,
-        time_use: time_use_report(host, db, query, now)?,
+        accuracy: None,
+        time_use: None,
         endgames: None,
         structures: None,
-        variants: played_variants(db, query)?,
+        variants: Vec::new(),
     })
 }
 
@@ -380,91 +397,129 @@ pub fn replayed_games(
     );
     let mut statement = db.prepare(&sql).sql()?;
     let mut rows = statement.query(params_from_iter(params.iter())).sql()?;
-    let mut games = 0;
-    let mut won: Slots<EndgameRecord> = Slots::new();
-    let mut drawn: Slots<EndgameRecord> = Slots::new();
-    let mut yours: Slots<StructureRecord> = Slots::new();
-    let mut theirs: Slots<StructureRecord> = Slots::new();
+    let mut replays = Replays::default();
     while let Some(row) = rows.next().sql()? {
         let color: String = row.get(0).sql()?;
         let sans: String = row.get(1).sql()?;
         let pgn: Option<String> = row.get(2).sql()?;
         let result: String = row.get(3).sql()?;
-        games += 1;
         let you = if color == "white" {
             Color::White
         } else {
             Color::Black
         };
-        let Some((start, moves)) = replayed(pgn.as_deref(), &sans) else {
-            continue;
+        replays.add(you, &result, replayed(pgn.as_deref(), &sans), tables)?;
+    }
+    Ok(replays.report(tables.is_some()))
+}
+
+/// The games replayed for their endgames and pawn structures, newest first.
+#[derive(Default)]
+pub(crate) struct Replays {
+    games: i64,
+    won: Slots<EndgameRecord>,
+    drawn: Slots<EndgameRecord>,
+    yours: Slots<StructureRecord>,
+    theirs: Slots<StructureRecord>,
+}
+
+impl<T> Default for Slots<T> {
+    fn default() -> Self {
+        Slots::new()
+    }
+}
+
+impl Replays {
+    /// One game the player had `you` in, with its `result` for them, from its start along its
+    /// moves (none when they do not replay, which still counts the game): the structures it
+    /// kept, and its endgame as `tables` decide it.
+    pub(crate) fn add(
+        &mut self,
+        you: Color,
+        result: &str,
+        replayed: Option<(Chess, Vec<Move>)>,
+        tables: Option<&Tablebase<Chess>>,
+    ) -> Result<()> {
+        self.games += 1;
+        let Some((start, moves)) = replayed else {
+            return Ok(());
         };
         for (structure, owner) in patterns::structures_held(&start, &moves) {
             let slots = if owner == you {
-                &mut yours
+                &mut self.yours
             } else {
-                &mut theirs
+                &mut self.theirs
             };
             let structure = GameDbStructure::from(structure);
             let entry = slots.slot(&format!("{structure:?}"), || StructureRecord {
                 structure,
                 record: GameRecord::default(),
             });
-            add(&mut entry.record, &result);
+            add(&mut entry.record, result);
         }
         let Some(tables) = tables else {
-            continue;
+            return Ok(());
         };
         let scanned = endgames::scan(start, &moves, you, tables)?;
         let Some((decided, material)) = scanned.reached else {
-            continue;
+            return Ok(());
         };
         let (slots, goal) = match decided {
-            2 => (&mut won, "win"),
-            0 => (&mut drawn, "draw"),
-            _ => continue,
+            2 => (&mut self.won, "win"),
+            0 => (&mut self.drawn, "draw"),
+            _ => return Ok(()),
         };
         let entry = slots.slot(&material, || EndgameRecord {
             material: material.clone(),
             record: GameRecord::default(),
             let_go: Vec::new(),
         });
-        add(&mut entry.record, &result);
+        add(&mut entry.record, result);
         if let Some(slip) = scanned.slip.filter(|slip| slip.goal == goal) {
             entry.let_go.push(slip.fen());
         }
+        Ok(())
     }
-    let endgame_lines = |slots: Slots<EndgameRecord>| {
-        let mut lines: Vec<EndgameRecord> = slots
-            .into_items()
-            .into_iter()
-            .map(|(_, line)| line)
-            .collect();
-        lines.sort_by_key(|line| std::cmp::Reverse(line.record.total));
-        lines.truncate(ENDGAME_LINES);
-        lines
-    };
-    let structure_lines = |slots: Slots<StructureRecord>| {
-        let mut lines: Vec<StructureRecord> = slots
-            .into_items()
-            .into_iter()
-            .map(|(_, line)| line)
-            .collect();
-        lines.sort_by_key(|line| std::cmp::Reverse(line.record.total));
-        lines
-    };
-    let endgames = EndgameReport {
-        tables: tables.is_some(),
-        games: if tables.is_some() { games } else { 0 },
-        won: endgame_lines(won),
-        drawn: endgame_lines(drawn),
-    };
-    let structures = StructureReport {
-        games,
-        yours: structure_lines(yours),
-        theirs: structure_lines(theirs),
-    };
-    Ok((Some(endgames), Some(structures)))
+
+    /// Whether `REPLAY_LIMIT` games are in.
+    pub(crate) fn full(&self) -> bool {
+        self.games >= REPLAY_LIMIT
+    }
+
+    /// The endgames (decided only with `tables`) and the structures of the games added.
+    pub(crate) fn report(self, tables: bool) -> (Option<EndgameReport>, Option<StructureReport>) {
+        let endgame_lines = |slots: Slots<EndgameRecord>| {
+            let mut lines: Vec<EndgameRecord> = slots
+                .into_items()
+                .into_iter()
+                .map(|(_, line)| line)
+                .collect();
+            lines.sort_by_key(|line| std::cmp::Reverse(line.record.total));
+            lines.truncate(ENDGAME_LINES);
+            lines
+        };
+        let structure_lines = |slots: Slots<StructureRecord>| {
+            let mut lines: Vec<StructureRecord> = slots
+                .into_items()
+                .into_iter()
+                .map(|(_, line)| line)
+                .collect();
+            lines.sort_by_key(|line| std::cmp::Reverse(line.record.total));
+            lines
+        };
+        let endgames = EndgameReport {
+            tables,
+            games: if tables { self.games } else { 0 },
+            won: endgame_lines(self.won),
+            drawn: endgame_lines(self.drawn),
+        };
+        let structures = StructureReport {
+            games: self.games,
+            yours: structure_lines(self.yours),
+            theirs: structure_lines(self.theirs),
+        };
+        (Some(endgames), Some(structures))
+    }
 }
 
 /// A synced game's start, its PGN's `FEN` or the usual one, and its moves (`sans`) from there.
@@ -493,18 +548,23 @@ fn replayed(pgn: Option<&str>, sans: &str) -> Option<(Chess, Vec<Move>)> {
     Some((start, moves))
 }
 
-/// One game row of the main query.
-struct Row {
-    color: String,
-    speed: String,
-    status: String,
-    opening: Option<String>,
-    opponent_rating: Option<f64>,
-    player_rating: Option<f64>,
-    result: String,
-    weekday: i64,
-    hour: i64,
-    plies: i64,
+/// One finished game as the report counts it.
+pub(crate) struct Row {
+    /// The player's colour: `white` or `black`.
+    pub color: String,
+    /// Its speed's Lichess key (`blitz`); none when its time control is unknown.
+    pub speed: Option<String>,
+    /// How it ended, as Lichess's status names it (`mate`, `resign`).
+    pub status: String,
+    pub opening: Option<String>,
+    pub opponent_rating: Option<f64>,
+    pub player_rating: Option<f64>,
+    /// `win`, `loss` or `draw`, for the player.
+    pub result: String,
+    /// Sunday 0 to Saturday 6, and the hour, in local time; -1 when unknown.
+    pub weekday: i64,
+    pub hour: i64,
+    pub plies: i64,
 }
 
 /// Accuracy and mistake counts of the reviewed games (by Lichess or locally), newest first.
@@ -534,15 +594,9 @@ fn accuracy_report(
     for row in rows {
         reviewed.push(row.sql()?);
     }
-    if reviewed.is_empty() {
-        return Ok(None);
-    }
-    let mut accuracy_sum = 0.0;
-    let mut accuracy_games = 0;
-    let mut acpl_sum = 0.0;
-    let mut acpl_games = 0;
-    let (mut inaccuracy, mut mistake, mut blunder) = (0.0, 0.0, 0.0);
+    let mut mistakes = Mistakes::default();
     for (color, text) in &reviewed {
+        mistakes.reviewed();
         // A summary that is not JSON, or is empty, is left out.
         let summary = match serde_json::from_str::<Value>(text) {
             Ok(Value::Null) => {
@@ -562,34 +616,82 @@ fn accuracy_report(
         let Some(side) = summary.get(color.as_str()).filter(|s| truthy(Some(s))) else {
             continue;
         };
-        if let Some(accuracy) = side.get("accuracy").and_then(Value::as_f64) {
-            accuracy_sum += accuracy;
-            accuracy_games += 1;
-        }
-        if let Some(acpl) = side.get("acpl").and_then(Value::as_f64) {
-            acpl_sum += acpl;
-            acpl_games += 1;
-        }
-        inaccuracy += count_of(side.get("inaccuracy"));
-        mistake += count_of(side.get("mistake"));
-        blunder += count_of(side.get("blunder"));
+        mistakes.side(
+            side.get("accuracy").and_then(Value::as_f64),
+            side.get("acpl").and_then(Value::as_f64),
+            [
+                count_of(side.get("inaccuracy")),
+                count_of(side.get("mistake")),
+                count_of(side.get("blunder")),
+            ],
+        );
     }
-    let games = reviewed.len() as f64;
-    Ok(Some(AccuracyReport {
-        games: reviewed.len() as i64,
-        average: (accuracy_games > 0).then(|| accuracy_sum / f64::from(accuracy_games)),
-        acpl: (acpl_games > 0).then(|| acpl_sum / f64::from(acpl_games)),
-        per_game: MistakeRates {
-            inaccuracy: inaccuracy / games,
-            mistake: mistake / games,
-            blunder: blunder / games,
-        },
-    }))
+    Ok(mistakes.report())
+}
+
+/// The reviewed games' accuracy and mistakes, summed.
+#[derive(Default)]
+pub(crate) struct Mistakes {
+    games: i64,
+    accuracy_sum: f64,
+    accuracy_games: u32,
+    acpl_sum: f64,
+    acpl_games: u32,
+    /// Inaccuracies, mistakes and blunders.
+    counts: [f64; 3],
+}
+
+impl Mistakes {
+    /// One more reviewed game, counted whether or not its side's figures can be read.
+    pub(crate) fn reviewed(&mut self) {
+        self.games += 1;
+    }
+
+    /// The player's side of a reviewed game: its accuracy, its average centipawn loss, and its
+    /// inaccuracies, mistakes and blunders.
+    pub(crate) fn side(&mut self, accuracy: Option<f64>, acpl: Option<f64>, counts: [f64; 3]) {
+        if let Some(accuracy) = accuracy {
+            self.accuracy_sum += accuracy;
+            self.accuracy_games += 1;
+        }
+        if let Some(acpl) = acpl {
+            self.acpl_sum += acpl;
+            self.acpl_games += 1;
+        }
+        for (sum, count) in self.counts.iter_mut().zip(counts) {
+            *sum += count;
+        }
+    }
+
+    /// None without a reviewed game.
+    pub(crate) fn report(&self) -> Option<AccuracyReport> {
+        if self.games == 0 {
+            return None;
+        }
+        let games = self.games as f64;
+        let [inaccuracy, mistake, blunder] = self.counts;
+        Some(AccuracyReport {
+            games: self.games,
+            average: (self.accuracy_games > 0)
+                .then(|| self.accuracy_sum / f64::from(self.accuracy_games)),
+            acpl: (self.acpl_games > 0).then(|| self.acpl_sum / f64::from(self.acpl_games)),
+            per_game: MistakeRates {
+                inaccuracy: inaccuracy / games,
+                mistake: mistake / games,
+                blunder: blunder / games,
+            },
+        })
+    }
+
+    /// Whether `REVIEW_LIMIT` games are in.
+    pub(crate) fn full(&self) -> bool {
+        self.games >= REVIEW_LIMIT
+    }
 }
 
 /// Time use across the clocked games.
 #[derive(Default)]
-struct Clocks {
+pub(crate) struct Clocks {
     games: i64,
     /// Results of games where the player's clock fell under a tenth of its start, and of the rest.
     trouble: GameRecord,
@@ -608,7 +710,13 @@ struct Clocks {
 
 impl Clocks {
     /// One game: the player's side, its result, its clock and its review's move labels.
-    fn add(&mut self, white: bool, result: &str, time: &TimeUse, verdicts: Option<&[MoveVerdict]>) {
+    pub(crate) fn add(
+        &mut self,
+        white: bool,
+        result: &str,
+        time: &TimeUse,
+        verdicts: Option<&[MoveVerdict]>,
+    ) {
         self.games += 1;
         let mine = |ply: usize| time.white(ply) == white;
         let plies = time.clocks.len();
@@ -657,7 +765,7 @@ impl Clocks {
         }
     }
 
-    fn report(&self) -> TimeUseReport {
+    pub(crate) fn report(&self) -> TimeUseReport {
         let total: f64 = self.phase_seconds.iter().sum();
         let phases = PHASES
             .iter()
@@ -693,6 +801,16 @@ impl Clocks {
                 spare: self.blunders_spare,
             }),
         }
+    }
+
+    /// None without a clocked game.
+    pub(crate) fn finish(&self) -> Option<TimeUseReport> {
+        (self.games > 0).then(|| self.report())
+    }
+
+    /// Whether `CLOCK_LIMIT` games are in.
+    pub(crate) fn full(&self) -> bool {
+        self.games >= CLOCK_LIMIT
     }
 }
 
@@ -750,7 +868,7 @@ fn time_use_report(
         let verdicts = analysed.as_ref().map(|analysis| analysis.moves.as_slice());
         clocks.add(color == "white", &result, &time, verdicts);
     }
-    Ok((clocks.games > 0).then(|| clocks.report()))
+    Ok(clocks.finish())
 }
 
 /// A count; absent or null is 0.

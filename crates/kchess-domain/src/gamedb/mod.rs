@@ -404,10 +404,21 @@ pub fn start_of(fen: Option<&str>) -> Option<VariantPosition> {
 }
 
 /// The value of a stored game's header `name` that its columns do not hold (`TimeControl`, say),
-/// from its notes or its text; None when it has none.
+/// from its notes or its text; None when it has none. A header whose value starts as a column's
+/// does (Lichess's `UTCDate`, as its `Date`) needs the columns: `stored_header`.
 pub fn header_of(extra: Option<&[u8]>, name: &str) -> Option<String> {
+    header_in(extra, name, None)
+}
+
+/// The value of a stored game's header `name`, from its notes or its text, or from its columns
+/// when a header has a column's value.
+pub fn stored_header(stored: &Stored, name: &str) -> Option<String> {
+    header_in(stored.extra.as_deref(), name, Some(stored))
+}
+
+fn header_in(extra: Option<&[u8]>, name: &str, stored: Option<&Stored>) -> Option<String> {
     match extra?.split_first()? {
-        (&EXTRA_NOTES, _) => notes::header(extra?, name),
+        (&EXTRA_NOTES, _) => notes::header(extra?, name, stored),
         (&EXTRA_TEXT, text) => {
             let text = std::str::from_utf8(text).ok()?;
             let start = format!("[{name} \"");
@@ -429,6 +440,25 @@ pub fn pgn_of(stored: &Stored) -> Option<String> {
         let text = String::from_utf8(text.to_vec()).ok()?;
         return Some(with_players(text, stored));
     }
+    Some(pgn::make_pgn(&written(stored)?))
+}
+
+/// A stored game as a PGN game, its headers, comments and clocks with it, as `pgn_of` writes
+/// it. None when its moves or notes are damaged.
+pub fn game_of(stored: &Stored) -> Option<Game> {
+    let extra = stored.extra.as_deref();
+    if let Some((&EXTRA_TEXT, text)) = extra.and_then(<[u8]>::split_first) {
+        let text = String::from_utf8(text.to_vec()).ok()?;
+        return pgn::parse_pgn(&with_players(text, stored))
+            .into_iter()
+            .next();
+    }
+    written(stored)
+}
+
+/// A game kept as columns, moves and notes, as a PGN game.
+fn written(stored: &Stored) -> Option<Game> {
+    let extra = stored.extra.as_deref();
     let start = start_of(stored.fen.as_deref())?;
     let sans = sans_of(&start, &decode_line(&start, &stored.moves)?);
     let game = match extra {
@@ -448,7 +478,7 @@ pub fn pgn_of(stored: &Stored) -> Option<String> {
             game
         }
     };
-    Some(pgn::make_pgn(&game))
+    Some(game)
 }
 
 #[cfg(test)]
@@ -568,6 +598,30 @@ mod tests {
             Some("180+2")
         );
         assert_eq!(header_of(None, "TimeControl"), None);
+    }
+
+    /// A Lichess game's `UTCDate` is its `Date`, a column, so its notes write it as sharing that
+    /// start. Reading the headers stopped there, and the `TimeControl` after it was never found:
+    /// a speed search, and Insights, saw no Lichess download's speed.
+    #[test]
+    fn a_header_after_one_sharing_a_columns_start_is_found() {
+        let text = "[Event \"Rated blitz game\"]\n[Date \"2026.11.01\"]\n[White \"A\"]\n\
+            [Black \"B\"]\n[Result \"1-0\"]\n[UTCDate \"2026.11.01\"]\n[UTCTime \"10:00:00\"]\n\
+            [TimeControl \"180+2\"]\n\n1. e4 { [%clk 0:03:00] } 1-0\n";
+        let stored = store(&game(text)).unwrap();
+        assert_eq!(stored.extra.as_deref().unwrap().first(), Some(&EXTRA_NOTES));
+        let extra = stored.extra.as_deref();
+        assert_eq!(header_of(extra, "TimeControl").as_deref(), Some("180+2"));
+        assert_eq!(header_of(extra, "UTCTime").as_deref(), Some("10:00:00"));
+        assert_eq!(header_of(extra, "UTCDate"), None, "it needs the columns");
+        assert_eq!(
+            stored_header(&stored, "UTCDate").as_deref(),
+            Some("2026.11.01")
+        );
+        assert_eq!(
+            stored_header(&stored, "TimeControl").as_deref(),
+            Some("180+2")
+        );
     }
 
     #[test]

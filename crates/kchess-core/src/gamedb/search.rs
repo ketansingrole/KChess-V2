@@ -241,39 +241,44 @@ pub fn ids(db: &Connection, query: &GameDbQuery) -> Result<Vec<i64>> {
         .sql()
 }
 
+/// The columns `stored_row` reads, over `games g` and its `JOINS`.
+pub const STORED_COLUMNS: &str = "w.name, b.name, e.name, g.site, g.date, g.year, g.round,
+    g.white_elo, g.black_elo, g.result, g.eco, g.opening, g.fen, g.plies, g.moves, g.extra";
+
+/// A game as stored, from a row whose first columns are `STORED_COLUMNS`.
+pub fn stored_row(row: &Row) -> rusqlite::Result<Stored> {
+    let elo = |value: Option<i64>| value.and_then(|elo| u16::try_from(elo).ok());
+    let date: Option<String> = row.get(4)?;
+    Ok(Stored {
+        white: row.get(0)?,
+        black: row.get(1)?,
+        event: row.get(2)?,
+        site: row.get(3)?,
+        month: date.as_deref().and_then(|d| gamedb::date_parts(d).1),
+        date,
+        year: row.get(5)?,
+        round: row.get(6)?,
+        white_elo: elo(row.get(7)?),
+        black_elo: elo(row.get(8)?),
+        outcome: Outcome::from_score(row.get(9)?),
+        eco: row.get(10)?,
+        opening: row.get(11)?,
+        fen: row.get(12)?,
+        plies: usize::try_from(row.get::<_, i64>(13)?).unwrap_or(0),
+        moves: row.get(14)?,
+        extra: row.get(15)?,
+    })
+}
+
 /// The game `id` as stored.
 pub fn stored(db: &Connection, id: u64) -> Result<Option<Stored>> {
     let visible = visible(db)?;
     db.query_row(
         &format!(
-            "SELECT w.name, b.name, e.name, g.site, g.date, g.year, g.round, g.white_elo,
-                    g.black_elo, g.result, g.eco, g.opening, g.fen, g.plies, g.moves, g.extra
-             FROM games g {JOINS} WHERE g.id = ?1 AND g.import_id <= ?2"
+            "SELECT {STORED_COLUMNS} FROM games g {JOINS} WHERE g.id = ?1 AND g.import_id <= ?2"
         ),
         rusqlite::params![id as i64, visible],
-        |row| {
-            let elo = |value: Option<i64>| value.and_then(|elo| u16::try_from(elo).ok());
-            let date: Option<String> = row.get(4)?;
-            Ok(Stored {
-                white: row.get(0)?,
-                black: row.get(1)?,
-                event: row.get(2)?,
-                site: row.get(3)?,
-                month: date.as_deref().and_then(|d| gamedb::date_parts(d).1),
-                date,
-                year: row.get(5)?,
-                round: row.get(6)?,
-                white_elo: elo(row.get(7)?),
-                black_elo: elo(row.get(8)?),
-                outcome: Outcome::from_score(row.get(9)?),
-                eco: row.get(10)?,
-                opening: row.get(11)?,
-                fen: row.get(12)?,
-                plies: usize::try_from(row.get::<_, i64>(13)?).unwrap_or(0),
-                moves: row.get(14)?,
-                extra: row.get(15)?,
-            })
-        },
+        stored_row,
     )
     .optional()
     .sql()
