@@ -25,6 +25,7 @@ use kchess_hack as _;
 mod grid;
 mod picture;
 mod position;
+mod sprites;
 mod squares;
 mod texture;
 
@@ -317,6 +318,9 @@ impl Recogniser {
             .collect();
         let labels = squares::labels(cells, size);
         let mut reads = Vec::with_capacity(cells.len());
+        // Each square's piece as it reads on its own: where it is in `reads`, its silhouette,
+        // its features, and how unlike each piece it is.
+        let mut found = Vec::new();
         for cell in cells {
             let shape = match squares::silhouette(size, cell, &labels[reads.len()]) {
                 Ok(shape) => shape,
@@ -360,7 +364,23 @@ impl Recogniser {
                     }
                 }
             }
-            let mut ranked: Vec<(Piece, f32)> = best
+            found.push((reads.len(), shape, features, best, cell));
+            reads.push(position::Read::Empty { doubtful: true });
+        }
+        // Then all together, a sprite read as one.
+        let mut seen: Vec<sprites::Seen> = found
+            .iter()
+            .map(|(_, shape, features, best, cell)| sprites::Seen {
+                features,
+                cell,
+                shape,
+                best: *best,
+            })
+            .collect();
+        sprites::together(&mut seen);
+        for ((index, shape, ..), seen) in found.iter().zip(&seen) {
+            let mut ranked: Vec<(Piece, f32)> = seen
+                .best
                 .iter()
                 .enumerate()
                 .filter(|(_, apart)| **apart < f32::MAX)
@@ -368,12 +388,11 @@ impl Recogniser {
                 .collect();
             ranked.sort_by(|a, b| a.1.total_cmp(&b.1));
             if ranked.is_empty() {
-                reads.push(position::Read::Empty { doubtful: true });
                 continue;
             }
             let doubtful =
                 shape.area < squares::PIECE_AREA * 1.5 || position::doubtful_ranking(&ranked);
-            reads.push(position::Read::Piece { ranked, doubtful });
+            reads[*index] = position::Read::Piece { ranked, doubtful };
         }
         reads
     }

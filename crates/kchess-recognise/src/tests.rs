@@ -46,6 +46,25 @@ fn picture(
     white_at_bottom: bool,
     margin: u32,
 ) -> image::RgbaImage {
+    picture_redrawn(
+        board,
+        pieces,
+        square,
+        white_at_bottom,
+        margin,
+        &|_, drawn| drawn,
+    )
+}
+
+/// `picture`, each piece's drawing passed through `redraw` first.
+fn picture_redrawn(
+    board: &Board,
+    pieces: &PieceSet,
+    square: usize,
+    white_at_bottom: bool,
+    margin: u32,
+    redraw: &dyn Fn(Piece, Vec<[f32; 4]>) -> Vec<[f32; 4]>,
+) -> image::RgbaImage {
     let side = (square * 8) as u32;
     let mut image =
         image::RgbaImage::from_pixel(side + 2 * margin, side + 2 * margin, image::Rgba([255; 4]));
@@ -78,7 +97,8 @@ fn picture(
                 .find(|(drawn, _)| *drawn == piece)
                 .unwrap()
                 .1;
-            for (index, [r, g, b, a]) in draw(svg, square).unwrap().into_iter().enumerate() {
+            let drawn = redraw(piece, draw(svg, square).unwrap());
+            for (index, [r, g, b, a]) in drawn.into_iter().enumerate() {
                 let (x, y) = (
                     left + (index % square) as u32,
                     top + (index / square) as u32,
@@ -448,7 +468,7 @@ fn random_position(rng: &mut Rng) -> Board {
 /// queen's points. A scanned book's hatching is uneven at random instead, and reads better.
 #[test]
 fn printed_diagrams_are_read() {
-    // Measured 2026-11-26 over these 48 pictures: 95.57% of squares, 25.0% of positions, 88% of
+    // Measured 2026-11-27 over these 48 pictures: 96.45% of squares, 41.7% of positions, 86% of
     // the wrong squares doubtful.
     const SQUARES: f32 = 95.;
     const POSITIONS: f32 = 20.;
@@ -525,4 +545,155 @@ fn printed_diagrams_are_read() {
         doubted >= DOUBTED,
         "{doubted:.0}% of wrong squares doubtful"
     );
+}
+
+/// A way of drawing a bundled set as a set no bundled set draws.
+#[derive(Clone, Copy, Debug)]
+enum Variant {
+    /// White's pieces cream and brown, Black's blue.
+    Recoloured,
+    /// Every edge a pixel further out, in the colour of the edge.
+    Thickened,
+    /// Softened, as a smaller drawing scaled up.
+    Smoothed,
+}
+
+/// `drawn` (premultiplied RGBA, `size` square), as `variant` draws `piece`.
+fn redrawn(variant: Variant, piece: Piece, size: usize, drawn: Vec<[f32; 4]>) -> Vec<[f32; 4]> {
+    let near = |index: usize| {
+        let (x, y) = ((index % size) as isize, (index / size) as isize);
+        [
+            (-1, -1),
+            (0, -1),
+            (1, -1),
+            (-1, 0),
+            (0, 0),
+            (1, 0),
+            (-1, 1),
+            (0, 1),
+            (1, 1),
+        ]
+        .into_iter()
+        .map(move |(dx, dy)| (x + dx, y + dy))
+        .filter(move |&(x, y)| (0..size as isize).contains(&x) && (0..size as isize).contains(&y))
+        .map(move |(x, y)| y as usize * size + x as usize)
+    };
+    match variant {
+        Variant::Recoloured => {
+            let (dark, light) = if piece.color == Color::White {
+                ([70., 40., 20.], [255., 240., 205.])
+            } else {
+                ([10., 20., 60.], [110., 135., 200.])
+            };
+            drawn
+                .into_iter()
+                .map(|[r, g, b, a]| {
+                    if a <= 0. {
+                        return [0.; 4];
+                    }
+                    let tone = picture::luma([r, g, b]) / a;
+                    let mix = |c: usize| a / 255. * (dark[c] + (light[c] - dark[c]) * tone);
+                    [mix(0), mix(1), mix(2), a]
+                })
+                .collect()
+        }
+        Variant::Thickened => (0..drawn.len())
+            .map(|index| {
+                near(index)
+                    .map(|at| drawn[at])
+                    .max_by(|a, b| a[3].total_cmp(&b[3]))
+                    .unwrap_or(drawn[index])
+            })
+            .collect(),
+        Variant::Smoothed => (0..drawn.len())
+            .map(|index| {
+                let (mut sum, mut count) = ([0f32; 4], 0.);
+                for at in near(index) {
+                    for c in 0..4 {
+                        sum[c] += drawn[at][c];
+                    }
+                    count += 1.;
+                }
+                sum.map(|c| c / count)
+            })
+            .collect(),
+    }
+}
+
+/// Sets no bundled set draws: bundled sets the recogniser does not compare with, and those
+/// recoloured, thickened or smoothed, on squares of 32 to 80 pixels.
+#[test]
+fn unseen_sets_are_read() {
+    // Measured 2026-11-27 over these 48 pictures: 95.74% of squares, 41.7% of positions, all
+    // of the wrong squares doubtful; read square by square instead of a sprite at a time,
+    // 87.50% of squares and no position.
+    const SQUARES: f32 = 95.;
+    const POSITIONS: f32 = 35.;
+    const DOUBTED: f32 = 95.;
+    let sets = [
+        "chessnut",
+        "fantasy",
+        "pirouetti",
+        "spatial",
+        "celtic",
+        "mpchess",
+    ]
+    .map(set);
+    let variants = [Variant::Recoloured, Variant::Thickened, Variant::Smoothed];
+    #[derive(Default)]
+    struct Tally {
+        pictures: usize,
+        right: usize,
+        positions: usize,
+        wrong: usize,
+        doubted: usize,
+    }
+    let tally = std::cell::RefCell::new(Tally::default());
+    kchess_testkit::random::check(48, |rng: &mut Rng| {
+        let square = 32 + rng.below(49);
+        let pieces = rng.pick(&sets).unwrap();
+        let variant = rng.chance(75).then(|| *rng.pick(&variants).unwrap());
+        let board = random_position(rng);
+        let image = picture_redrawn(
+            &board,
+            pieces,
+            square,
+            rng.chance(50),
+            9,
+            &|piece, drawn| match variant {
+                Some(variant) => redrawn(variant, piece, square, drawn),
+                None => drawn,
+            },
+        );
+        let found = recogniser().read(&png(&image)).unwrap();
+        let wrong: Vec<Square> = Square::ALL
+            .into_iter()
+            .filter(|&at| found.board.piece_at(at) != board.piece_at(at))
+            .collect();
+        let mut tally = tally.borrow_mut();
+        tally.pictures += 1;
+        tally.right += 64 - wrong.len();
+        tally.positions += usize::from(wrong.is_empty());
+        tally.wrong += wrong.len();
+        tally.doubted += wrong
+            .iter()
+            .filter(|at| found.doubtful.contains(at))
+            .count();
+        eprintln!(
+            "{} {variant:?} {square}: {} of 64",
+            pieces.name,
+            64 - wrong.len()
+        );
+    });
+    let tally = tally.into_inner();
+    let squares = 100. * tally.right as f32 / (64 * tally.pictures) as f32;
+    let positions = 100. * tally.positions as f32 / tally.pictures as f32;
+    let doubted = 100. * tally.doubted as f32 / tally.wrong.max(1) as f32;
+    eprintln!(
+        "{squares:.2}% of squares, {positions:.1}% of positions, {doubted:.0}% of wrong squares \
+         doubtful"
+    );
+    assert!(squares >= SQUARES, "{squares:.2}% of squares");
+    assert!(positions >= POSITIONS, "{positions:.1}% of positions");
+    assert!(doubted >= DOUBTED, "{doubted:.0}% doubtful");
 }
