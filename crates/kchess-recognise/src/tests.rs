@@ -176,3 +176,54 @@ fn pictures_without_a_board_are_refused() {
         "That picture could not be read"
     );
 }
+
+/// Coordinate labels in the corners of the edge squares, as a website draws them in the other
+/// square's colour, are left out of the squares, a piece standing on a labelled square included.
+#[test]
+fn coordinate_labels_are_left_out() {
+    let fen = "r3k2r/pppq1ppp/2n5/8/8/2N5/PPPQ1PPP/R3K2R w KQkq - 0 1";
+    let board = fen
+        .parse::<shakmaty::fen::Fen>()
+        .unwrap()
+        .into_setup()
+        .board;
+    let pieces = set("cburnett");
+    let square = 60u32;
+    let margin = 10;
+    let mut image = picture(&board, &pieces, square as usize, true, margin);
+    let light = image::Rgba([240, 217, 181, 255]);
+    let dark = image::Rgba([181, 136, 99, 255]);
+    // A small mark like a digit or a letter, `width` by `height` pixels at `(left, top)`.
+    let mut mark = |left: u32, top: u32, width: u32, height: u32, row: u32, column: u32| {
+        let colour = if (row + column) % 2 == 1 { light } else { dark };
+        for y in top..top + height {
+            for x in left..left + width {
+                // A hollow box, as a digit's outline would leave the square showing inside.
+                if x == left || x + 1 == left + width || y == top || y + 1 == top + height {
+                    image.put_pixel(x, y, colour);
+                }
+            }
+        }
+    };
+    for row in 0..8 {
+        // The ranks down the left edge, in each square's top left corner.
+        mark(margin + 3, margin + row * square + 3, 7, 11, row, 0);
+    }
+    for column in 0..8 {
+        // The files along the bottom edge, in each square's bottom right corner.
+        mark(
+            margin + column * square + square - 10,
+            margin + 7 * square + square - 12,
+            7,
+            9,
+            7,
+            column,
+        );
+    }
+    let read = recogniser()
+        .read_image(&image::DynamicImage::ImageRgba8(image))
+        .unwrap();
+    assert_eq!(read.fen, fen);
+    assert!(read.white_at_bottom);
+    assert!(read.doubtful.is_empty(), "{:?}", read.doubtful);
+}

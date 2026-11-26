@@ -347,4 +347,42 @@ mod tests {
         assert_eq!(recognised.doubtful, vec![Square::D1, Square::A8]);
         assert_eq!(recognised.turn, Color::Black);
     }
+
+    /// A side read without a king takes it from the piece that came closest to being its king,
+    /// a ninth pawn is read as its next likeliest piece, and a square read as doubtfully empty
+    /// stays marked.
+    #[test]
+    fn a_missing_king_and_a_ninth_pawn_are_settled() {
+        let mut reads: Vec<Read> = (0..64).map(|_| Read::Empty { doubtful: false }).collect();
+        // e8: a black queen that is nearly the black king; b8 a black rook that is less so.
+        reads[4] = read(
+            piece(Color::Black, Role::Queen),
+            &[(piece(Color::Black, Role::King), 0.2)],
+        );
+        reads[1] = read(
+            piece(Color::Black, Role::Rook),
+            &[(piece(Color::Black, Role::King), 0.4)],
+        );
+        reads[60] = read(piece(Color::White, Role::King), &[]);
+        // Eight white pawns on the second rank and a ninth on c4, the least certain of them,
+        // nearly a white bishop.
+        for index in 48..56 {
+            reads[index] = read(piece(Color::White, Role::Pawn), &[]);
+        }
+        reads[34] = Read::Piece {
+            ranked: vec![
+                (piece(Color::White, Role::Pawn), 0.3),
+                (piece(Color::White, Role::Bishop), 0.35),
+            ],
+            doubtful: false,
+        };
+        // h5: doubtfully empty.
+        reads[31] = Read::Empty { doubtful: true };
+        let recognised = assemble(&reads);
+        assert_eq!(recognised.fen, "1r2k3/8/8/8/2B5/8/PPPPPPPP/4K3 w - - 0 1");
+        assert_eq!(recognised.doubtful, vec![Square::C4, Square::H5, Square::E8]);
+        assert!(doubtful_ranking(&[]));
+        assert!(!doubtful_ranking(&[(piece(Color::White, Role::Pawn), 0.1)]));
+        assert!(doubtful_ranking(&[(piece(Color::White, Role::Pawn), 0.5)]));
+    }
 }
