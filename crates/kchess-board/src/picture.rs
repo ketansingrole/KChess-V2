@@ -210,7 +210,7 @@ mod tests {
     #[test]
     #[ignore = "reads files named in KCHESS_RECOGNISE_FILES"]
     fn read_files() {
-        let files = std::env::var("KCHESS_RECOGNISE_FILES").unwrap_or_default();
+        let files = kchess_host::env::var("KCHESS_RECOGNISE_FILES").unwrap_or_default();
         for path in files.split(':').filter(|path| !path.is_empty()) {
             let bytes = std::fs::read(path).unwrap();
             match super::read_board_picture(&bytes) {
