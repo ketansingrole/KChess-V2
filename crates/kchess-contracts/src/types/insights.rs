@@ -19,6 +19,37 @@ pub struct InsightsQuery {
     pub variant: Option<Variant>,
 }
 
+/// The insights filter of a game database's player (`gameDbInsights`): `InsightsQuery`'s, with
+/// no account, since the database names its player.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightsFilters {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<ExplorerSpeed>,
+    /// Games whose rating the database cannot tell are left out when this is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rated: Option<bool>,
+    /// Only games from the last this-many days; a game without a date is left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub days: Option<u64>,
+    /// Standard chess when left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<Variant>,
+}
+
+impl InsightsFilters {
+    /// The same filters over `account`'s games.
+    pub fn of(&self, account: &str) -> InsightsQuery {
+        InsightsQuery {
+            account: account.to_string(),
+            speed: self.speed,
+            rated: self.rated,
+            days: self.days,
+            variant: self.variant,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Streaks {

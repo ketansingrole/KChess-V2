@@ -91,9 +91,13 @@ pub fn time_control(text: &str) -> Option<(f64, f64)> {
 /// A game's clock use from its PGN; None without a real-time control, without a clock on any
 /// move, or with a main-line move that is not legal.
 pub fn time_use(pgn: &str) -> Option<TimeUse> {
-    let game = parse_pgn(pgn).into_iter().next()?;
+    time_use_of(&parse_pgn(pgn).into_iter().next()?)
+}
+
+/// `time_use` of a game already read.
+pub fn time_use_of(game: &Game) -> Option<TimeUse> {
     let (initial, increment) = time_control(game.header("TimeControl")?)?;
-    let (sans, clocks) = main_line(&game);
+    let (sans, clocks) = main_line(game);
     if clocks.iter().all(Option::is_none) {
         return None;
     }

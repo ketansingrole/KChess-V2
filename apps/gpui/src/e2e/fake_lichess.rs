@@ -897,11 +897,17 @@ pub const MASTER_GAMES: &str = "[Event \"Grand Open\"]\n[Date \"2026.10.04\"]\n\
 
 /// The player whose games the Database page downloads, and their games.
 pub const SCOUTED: &str = "Scouted_Player";
+/// Their games as Lichess exports them with clocks and evals: both clocked, the first analysed.
 pub const SCOUTED_GAMES: &str = "[Event \"Rated blitz game\"]\n[Date \"2026.11.02\"]\n\
      [White \"Scouted_Player\"]\n[Black \"Rival\"]\n[Result \"1-0\"]\n\
-     [WhiteElo \"2210\"]\n[BlackElo \"2190\"]\n\n1. e4 c5 2. Nf3 1-0\n\n\n\
+     [UTCDate \"2026.11.02\"]\n[UTCTime \"18:00:00\"]\n\
+     [WhiteElo \"2210\"]\n[BlackElo \"2190\"]\n[TimeControl \"180+2\"]\n\n\
+     1. e4 { [%eval 0.3] [%clk 0:03:00] } 1... c5 { [%eval 0.3] [%clk 0:03:00] } \
+     2. Nf3 { [%eval 0.2] [%clk 0:02:55] } 1-0\n\n\n\
      [Event \"Rated blitz game\"]\n[Date \"2026.11.03\"]\n[White \"Rival\"]\n\
-     [Black \"Scouted_Player\"]\n[Result \"0-1\"]\n\n1. d4 Nf6 0-1\n\n\n";
+     [Black \"Scouted_Player\"]\n[Result \"0-1\"]\n[UTCDate \"2026.11.03\"]\n\
+     [UTCTime \"18:00:00\"]\n[TimeControl \"180+2\"]\n\n\
+     1. d4 { [%clk 0:03:00] } 1... Nf6 { [%clk 0:02:58] } 0-1\n\n\n";
 
 /// A file of the broadcast games archive: its list of months, their digests, or a month's games
 /// packed as the archive packs them.

@@ -39,7 +39,7 @@ pub fn opening_name(opening: Option<&str>, eco: Option<&str>, first: &[String]) 
 }
 
 /// A game's first two moves in SAN, when it starts from the standard position.
-fn first_moves(fen: Option<&str>, moves: &[u8]) -> Vec<String> {
+pub(super) fn first_moves(fen: Option<&str>, moves: &[u8]) -> Vec<String> {
     if fen.is_some() {
         return Vec::new();
     }

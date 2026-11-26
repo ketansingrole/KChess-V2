@@ -334,10 +334,11 @@ pub fn changes_pawns(m: &shakmaty::Move) -> bool {
 }
 
 /// The time control's speed as Lichess counts it: the base time and forty increments, in
-/// seconds (`-` is correspondence). None for one it cannot read.
+/// seconds (`-`, and Chess.com's daily `1/86400`, a day a move, are correspondence). None for one
+/// it cannot read.
 pub fn speed(time_control: &str) -> Option<Speed> {
     let time_control = time_control.trim();
-    if time_control == "-" {
+    if time_control == "-" || time_control.starts_with("1/") {
         return Some(Speed::Correspondence);
     }
     // FIDE's classical controls are written as periods ("40/7200:1800+30"): the first period's
@@ -367,6 +368,20 @@ pub enum Speed {
     Rapid,
     Classical,
     Correspondence,
+}
+
+impl Speed {
+    /// Lichess's key for the speed (`ultraBullet`, `blitz`), as synced games name theirs.
+    pub fn key(self) -> &'static str {
+        match self {
+            Speed::UltraBullet => "ultraBullet",
+            Speed::Bullet => "bullet",
+            Speed::Blitz => "blitz",
+            Speed::Rapid => "rapid",
+            Speed::Classical => "classical",
+            Speed::Correspondence => "correspondence",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -564,6 +579,8 @@ mod tests {
         assert_eq!(speed("5400+30"), Some(Speed::Classical));
         assert_eq!(speed("40/7200:1800+30"), Some(Speed::Classical));
         assert_eq!(speed("-"), Some(Speed::Correspondence));
+        // Chess.com's daily games: a day a move, not one 24-hour classical game.
+        assert_eq!(speed("1/86400"), Some(Speed::Correspondence));
         assert_eq!(speed("?"), None);
     }
 }

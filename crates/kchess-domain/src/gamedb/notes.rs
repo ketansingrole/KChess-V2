@@ -485,15 +485,15 @@ fn take_headers(stored: &Stored, input: &mut In) -> Option<Vec<(String, String)>
     Some(headers)
 }
 
-/// The value of the header `name` that is not a column's (`TimeControl`, say), read from packed
-/// notes without unpacking the game; None when it has none.
-pub(super) fn header(notes: &[u8], name: &str) -> Option<String> {
+/// The value of the header `name` (`TimeControl`, say), read from packed notes without unpacking
+/// the game; None when it has none. A header whose value is a column's is read from `stored`'s
+/// columns: without them, it and a header written as sharing its start with it are unknown.
+pub(super) fn header(notes: &[u8], name: &str, stored: Option<&Stored>) -> Option<String> {
     let mut input = In(notes);
     if input.byte()? != FORMAT {
         return None;
     }
     let count = input.count()?;
-    // A column's value is not read here: only a header sharing its start with one is lost.
     let mut values: Vec<Option<String>> = Vec::with_capacity(count);
     for _ in 0..count {
         let header = match input.uint()? {
@@ -501,12 +501,16 @@ pub(super) fn header(notes: &[u8], name: &str) -> Option<String> {
             at => NAMES.get(usize::try_from(at - 1).ok()?)?.to_string(),
         };
         let value = match input.uint()? {
-            0 => None,
+            0 => stored.and_then(|stored| column(stored, &header)),
             1 => Some(input.text()?),
             at => {
-                let other = values.get(usize::try_from(at - 2).ok()?)?.as_deref()?;
+                let other = values.get(usize::try_from(at - 2).ok()?)?.clone();
                 let length = usize::try_from(input.uint()?).ok()?;
-                Some(format!("{}{}", other.get(..length)?, input.text()?))
+                // Read whether or not it is known, so the headers after it are: a Lichess game's
+                // `UTCDate` shares its start with its `Date`, a column, and hid its
+                // `TimeControl` when this stopped at it.
+                let rest = input.text()?;
+                other.and_then(|other| Some(format!("{}{rest}", other.get(..length)?)))
             }
         };
         if header == name {

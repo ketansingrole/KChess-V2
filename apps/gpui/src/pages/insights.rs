@@ -1,19 +1,23 @@
 //! Insights: an account's synced games (Lichess or Chess.com) broken down by colour,
 //! speed, opponent, length, clock, day, time of day, ending and opening, with time use from the
 //! games' clocks and the endgames the tablebases decide, filtered by speed, period and rated or
-//! casual.
+//! casual. A player whose games were downloaded (Database → Player's games) is offered beside
+//! the accounts, and their report is worked out from that database (`gameDbInsights`).
 
 use crate::loading::Loading;
 use crate::pages::PageView;
+use futures::FutureExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
+use kchess_contracts::check::DatabaseId;
 use kchess_contracts::types::{
     Blunders, DatabaseSource, EndgameRecord, EndgameReport, ExplorerSpeed, GameRecord,
-    InsightsQuery, InsightsReport, OpeningRecord, StructureRecord, StructureReport, TimeUseReport,
+    InsightsFilters, InsightsQuery, InsightsReport, OpeningRecord, StructureRecord,
+    StructureReport, TimeUseReport,
 };
 use kchess_domain::perf::Speed;
 use kchess_domain::variant::Variant;
@@ -47,6 +51,9 @@ const RATED: [(&str, &str); 3] = [
     ("rated", "Rated only"),
     ("casual", "Casual only"),
 ];
+/// How the account choice names a downloaded player: before their database's id, which no
+/// account name can start with.
+const PLAYER: &str = "db:";
 const WEEKDAYS: [&str; 7] = [
     "Sunday",
     "Monday",
@@ -122,8 +129,9 @@ fn blunder_rate(entry: &Blunders) -> Option<f64> {
     (entry.moves > 0).then(|| 100. * entry.blunders as f64 / entry.moves as f64)
 }
 
-/// Time use: the clock against the opponent's, blunders short of time, and time by phase.
-fn time_use(time: Option<&TimeUseReport>, palette: &Palette) -> Option<AnyElement> {
+/// Time use: the clock against the opponent's, blunders short of time, and time by phase;
+/// `theirs` for a downloaded player's.
+fn time_use(time: Option<&TimeUseReport>, theirs: bool, palette: &Palette) -> Option<AnyElement> {
     let time = time?;
     let games = time.games as f64;
     let clock_at = time.clock_at.iter().map(|entry| {
@@ -160,7 +168,8 @@ fn time_use(time: Option<&TimeUseReport>, palette: &Palette) -> Option<AnyElemen
         };
         let mut detail = format!("{} a move", seconds(entry.seconds));
         if let Some(share) = entry.share {
-            detail.push_str(&format!(" · {}% of your time", share.round()));
+            let whose = if theirs { "their" } else { "your" };
+            detail.push_str(&format!(" · {}% of {whose} time", share.round()));
         }
         h_flex()
             .justify_between()
@@ -211,7 +220,10 @@ type Choices = Entity<SelectState<Vec<Choice>>>;
 pub struct InsightsPage {
     /// The breakdowns' width at the last layout.
     area: Measured,
+    /// The account, or the downloaded player (`PLAYER` and their database's id), reported on.
     account: String,
+    /// The accounts and players the choice offers, with their labels.
+    offered: Vec<(String, String)>,
     account_select: Choices,
     speed: Choices,
     period: Choices,
@@ -284,9 +296,15 @@ impl InsightsPage {
                 }
             }),
         );
+        // A player's games downloaded, or their database deleted, changes what can be chosen.
+        let databases = cx.global::<kchess_board::game_db::GameDbHandle>().0.clone();
+        subscriptions.push(cx.observe_in(&databases, window, |this, _, window, cx| {
+            this.sync_accounts(window, cx)
+        }));
         let mut page = InsightsPage {
             area: Measured::default(),
             account: String::new(),
+            offered: Vec::new(),
             account_select,
             speed,
             period,
@@ -303,9 +321,20 @@ impl InsightsPage {
         page
     }
 
-    /// The accounts with synced games: Lichess players, then Chess.com ones (`name@chess.com`).
-    fn names(cx: &App) -> Vec<String> {
+    /// What a report can be of: the accounts with synced games, Lichess players, then Chess.com
+    /// ones (`name@chess.com`), then the players whose games were downloaded (`db:` and their
+    /// database's id), each with its label.
+    fn sources(cx: &App) -> Vec<(String, String)> {
         let accounts = crate::accounts::handle(cx).read(cx);
+        let players = cx
+            .global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .iter()
+            .filter(|database| database.player.is_some())
+            .map(|database| (format!("{PLAYER}{}", database.id), database.name.clone()))
+            .collect::<Vec<_>>();
         accounts
             .all()
             .iter()
@@ -316,21 +345,38 @@ impl InsightsPage {
                     .iter()
                     .map(|player| kchess_domain::chesscom::account_of(&player.username)),
             )
+            .map(|name| {
+                let label = match kchess_domain::chesscom::username_of(&name) {
+                    Some(player) => format!("@{player} · Chess.com"),
+                    None => format!("@{name}"),
+                };
+                (name, label)
+            })
+            .chain(players)
             .collect()
     }
 
-    /// The accounts offered; the active one first time, or the first.
+    /// The player's database the report is of, when it is of a downloaded player's games.
+    fn player_database(&self) -> Option<&str> {
+        self.account.strip_prefix(PLAYER)
+    }
+
+    /// The accounts and players offered; the active account first time, or the first.
     fn sync_accounts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let names = Self::names(cx);
-        let items: Vec<Choice> = names
+        let sources = Self::sources(cx);
+        // The databases change with every import's progress: the choice only when they add or
+        // remove a player.
+        if sources == self.offered {
+            return;
+        }
+        let items: Vec<Choice> = sources
             .iter()
-            .map(|name| match kchess_domain::chesscom::username_of(name) {
-                Some(player) => Choice::new(name.clone(), format!("@{player} · Chess.com")),
-                None => Choice::new(name.clone(), format!("@{name}")),
-            })
+            .map(|(value, label)| Choice::new(value.clone(), label.clone()))
             .collect();
         self.account_select
             .update(cx, |select, cx| select.set_items(items, window, cx));
+        let names: Vec<String> = sources.iter().map(|(value, _)| value.clone()).collect();
+        self.offered = sources;
         if !names.contains(&self.account) {
             self.account = crate::accounts::handle(cx)
                 .read(cx)
@@ -355,9 +401,13 @@ impl InsightsPage {
 
     /// `InsightsQuery`: unset filters are left out.
     pub(crate) fn query(&self, cx: &App) -> InsightsQuery {
+        self.filters(cx).of(&self.account)
+    }
+
+    /// The filters chosen; unset ones are left out.
+    fn filters(&self, cx: &App) -> InsightsFilters {
         let speed = Self::chosen(&self.speed, cx);
-        InsightsQuery {
-            account: self.account.clone(),
+        InsightsFilters {
             speed: ExplorerSpeed::ALL
                 .iter()
                 .copied()
@@ -381,9 +431,20 @@ impl InsightsPage {
             cx.notify();
             return;
         }
-        let call = cx.global::<AppCore>().request(calls::Insights {
-            query: self.query(cx),
-        });
+        let core = cx.global::<AppCore>();
+        let call = match self.player_database() {
+            Some(database) => core
+                .request(calls::GameDbInsights {
+                    database: DatabaseId(database.to_string()),
+                    filters: self.filters(cx),
+                })
+                .boxed_local(),
+            None => core
+                .request(calls::Insights {
+                    query: self.query(cx),
+                })
+                .boxed_local(),
+        };
         self.loading.load(
             cx,
             "insights",
@@ -457,6 +518,12 @@ impl InsightsPage {
     #[cfg(test)]
     pub(crate) fn report_total(&self) -> Option<f64> {
         self.report.as_ref().map(|report| report.total as f64)
+    }
+
+    /// The last report.
+    #[cfg(test)]
+    pub(crate) fn report(&self) -> Option<&InsightsReport> {
+        self.report.as_ref()
     }
 
     /// As if the last report had named `variants` as played.
@@ -679,11 +746,13 @@ fn opening_row(
 }
 
 /// The pawn structures the player had and played against, each a result row that opens its
-/// games in Your games on the Database page (`own`, when there is one).
+/// games on the Database page in `own`: Your games, when there is one, or the downloaded
+/// player's database (`theirs`).
 fn structure_parts(
     structures: Option<&StructureReport>,
     own: Option<&str>,
     player: &str,
+    theirs: bool,
     palette: &Palette,
 ) -> Vec<(&'static str, Vec<AnyElement>)> {
     let Some(structures) = structures else {
@@ -720,13 +789,16 @@ fn structure_parts(
             })
             .collect()
     };
+    // A downloaded player's are theirs, and their opponents' the others.
+    let (mine, others) = if theirs {
+        ("Their pawn structures", "Opponents' pawn structures")
+    } else {
+        ("Your pawn structures", "Their pawn structures")
+    };
     [
+        (mine, rows(&structures.yours, "insights-structure-yours")),
         (
-            "Your pawn structures",
-            rows(&structures.yours, "insights-structure-yours"),
-        ),
-        (
-            "Their pawn structures",
+            others,
             rows(&structures.theirs, "insights-structure-theirs"),
         ),
     ]
@@ -736,10 +808,12 @@ fn structure_parts(
 }
 
 /// The endgames the tablebases decide, won ones and drawn ones, each kind of endgame a result
-/// row; one whose win or draw a move of yours let go opens those positions in Your endgames.
-/// Without the tablebases, the way to them.
+/// row; one whose win or draw a move of yours let go opens those positions in Your endgames
+/// (a downloaded player's, `theirs`, are no positions of yours to practise). Without the
+/// tablebases, the way to them.
 fn endgame_parts(
     endgames: Option<&EndgameReport>,
+    theirs: bool,
     palette: &Palette,
 ) -> Vec<(&'static str, Vec<AnyElement>)> {
     let Some(endgames) = endgames else {
@@ -767,7 +841,7 @@ fn endgame_parts(
                     record(&line.record),
                     palette,
                 );
-                if let_go == 0 {
+                if let_go == 0 || theirs {
                     return div().child(row).into_any_element();
                 }
                 let positions = line.let_go.clone();
@@ -796,14 +870,14 @@ fn endgame_parts(
 impl Render for InsightsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let names = Self::names(cx);
+        let offered = self.offered.len();
         self.sync_variants(window, cx);
         let variant_label =
             crate::game::variant_label(&Self::chosen(&self.variant, cx)).to_string();
         let filters = h_flex()
             .gap(px(8.))
             .flex_wrap()
-            .when(names.len() > 1, |row| {
+            .when(offered > 1, |row| {
                 row.child(
                     div().w(px(160.)).child(
                         Select::new(&self.account_select)
@@ -852,14 +926,14 @@ impl Render for InsightsPage {
         // it. Filters wait for games to filter.
         let header = v_flex()
             .gap(px(16.))
-            .when(!names.is_empty(), |header| header.child(filters))
+            .when(offered > 0, |header| header.child(filters))
             .children(
                 report
                     .as_ref()
                     .filter(|_| total > 0. && self.loading.error().is_none())
                     .map(|report| headline(report, &palette)),
             );
-        let body: AnyElement = if names.is_empty() {
+        let body: AnyElement = if offered == 0 {
             widgets::card(&palette)
                 .child(
                     widgets::empty_state(
@@ -911,6 +985,16 @@ impl Render for InsightsPage {
                 .into_any_element()
         } else if self.loading.busy() && report.is_none() {
             widgets::loading("Loading insights…", &palette).into_any_element()
+        } else if report.is_some() && total <= 0. && self.player_database().is_some() {
+            // A downloaded player's games come from the Database page, not History.
+            widgets::card(&palette)
+                .child(widgets::empty_state(
+                    icon("chart-pie"),
+                    "No finished games match",
+                    None,
+                    &palette,
+                ))
+                .into_any_element()
         } else if report.is_some() && total <= 0. {
             widgets::card(&palette)
                 .child(
@@ -933,14 +1017,18 @@ impl Render for InsightsPage {
                 )
                 .into_any_element()
         } else if let Some(report) = self.report.clone() {
-            let own = cx
-                .global::<kchess_board::game_db::GameDbHandle>()
-                .0
-                .read(cx)
-                .databases()
-                .iter()
-                .find(|database| database.source == DatabaseSource::Own)
-                .map(|database| database.id.clone());
+            // A structure's games open in Your games, or in the downloaded player's database.
+            let own = match self.player_database() {
+                Some(database) => Some(database.to_string()),
+                None => cx
+                    .global::<kchess_board::game_db::GameDbHandle>()
+                    .0
+                    .read(cx)
+                    .databases()
+                    .iter()
+                    .find(|database| database.source == DatabaseSource::Own)
+                    .map(|database| database.id.clone()),
+            };
             self.breakdowns(
                 &report,
                 own.as_deref(),
@@ -978,6 +1066,8 @@ impl InsightsPage {
         width: Pixels,
         palette: &Palette,
     ) -> Div {
+        // A downloaded player's report is theirs, not yours.
+        let theirs = self.player_database().is_some();
         let bands = |bands: &[kchess_contracts::types::BandRecord]| -> Rows {
             bands
                 .iter()
@@ -1035,11 +1125,12 @@ impl InsightsPage {
             .into_iter()
             .filter(|(title, rows)| *title != "By clock" || !rows.is_empty())
             .map(|(title, rows)| (title, result_rows(rows, palette)))
-            .chain(endgame_parts(report.endgames.as_ref(), palette))
+            .chain(endgame_parts(report.endgames.as_ref(), theirs, palette))
             .chain(structure_parts(
                 report.structures.as_ref(),
                 own,
                 kchess_domain::chesscom::username_of(&report.account).unwrap_or(&report.account),
+                theirs,
                 palette,
             ))
             .collect();
@@ -1068,7 +1159,7 @@ impl InsightsPage {
         v_flex()
             .gap(px(28.))
             .child(h_flex().items_start().gap(px(40.)).children(column_list))
-            .children(time_use(report.time_use.as_ref(), palette))
+            .children(time_use(report.time_use.as_ref(), theirs, palette))
             .child(
                 v_flex()
                     .gap(px(8.))

@@ -13,6 +13,7 @@ pub mod endgames;
 pub mod event;
 pub mod explore;
 pub mod import;
+pub mod insights;
 pub mod lichess;
 pub mod master;
 pub mod names;
@@ -1174,6 +1175,47 @@ impl GameDbService {
         drop(stop);
         self.inner
             .logged("repertoire check of a player's games", result)
+    }
+
+    /// Insights over the games of player's database `database`, as an account's, of the games
+    /// `filters` keep; endgames are decided with `tablebases` when they are on this computer.
+    pub async fn insights(
+        &self,
+        database: String,
+        filters: kchess_contracts::types::InsightsFilters,
+        tablebases: crate::tablebase::Tablebases,
+    ) -> Result<kchess_contracts::types::InsightsReport> {
+        let Some(info) = self.inner.info(&database).await? else {
+            return Err(CoreError::new("That database is gone."));
+        };
+        let Some(player) = info.player else {
+            return Err(CoreError::new("Choose a player's games."));
+        };
+        let file = self.inner.file(&database);
+        let host = Arc::clone(&self.inner.host);
+        let now = crate::time::now_ms() as f64;
+        // Dropped by its caller (the page moved on), the report stops at its next game.
+        let stop = StopOnDrop(Arc::new(AtomicBool::new(false)));
+        let stopped = Arc::clone(&stop.0);
+        let result = tokio::task::spawn_blocking(move || {
+            // Opening the tables reads their folder: off the async threads.
+            let tables = tablebases.tables();
+            let db = schema::open_read(&file)?;
+            insights::insights(
+                &*host,
+                &db,
+                &filters.of(&player.username),
+                player.rated,
+                now,
+                tables.as_deref(),
+                &stopped,
+            )
+        })
+        .await
+        .map_err(|_| CoreError::new("The player's games could not be read. Try again."))
+        .and_then(|report| report);
+        drop(stop);
+        self.inner.logged("player insights", result)
     }
 
     /// The endgames of Your games, whose player is any of `names`, where a move gave away a win
