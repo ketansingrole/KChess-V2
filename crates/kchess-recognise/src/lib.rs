@@ -381,7 +381,7 @@ impl Recogniser {
                 home: matches!(index / 8, 0 | 7),
             })
             .collect();
-        sprites::together(&mut seen);
+        sprites::together(&mut seen, blur > 0.);
         for ((index, shape, ..), seen) in found.iter().zip(&seen) {
             let mut ranked: Vec<(Piece, f32)> = seen
                 .best

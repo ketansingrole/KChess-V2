@@ -34,6 +34,10 @@ const MORE: f32 = 1.;
 const QUEENS: f32 = 0.5;
 /// What a pawn costs on a square of a sprite with a square on the first or last rank.
 const PAWN_HOME: f32 = 1.;
+/// What a side's king and queen cost read the other way round from their crowns: a queen's
+/// crown shows more points across its top than a king's cross (in four pictures of five where
+/// they differ, over the online corpus).
+const CROWN: f32 = 0.3;
 /// The least difference in tone (0 to 1) between the two sides' pieces for it to tell them.
 const SIDES_APART: f32 = 0.12;
 
@@ -53,11 +57,15 @@ struct Sprite {
     members: Vec<usize>,
     cost: [f32; 12],
     tone: f32,
+    /// How many points its top shows (`points`), on average over its squares; `None` where
+    /// they are not to be read.
+    points: Option<f32>,
 }
 
 /// The pieces of one picture read together: each square's `best` becomes its sprite's, the
-/// piece the sprites and the rules choose for it first.
-pub(crate) fn together(seen: &mut [Seen]) {
+/// piece the sprites and the rules choose for it first. A `printed` picture's pieces' tops are
+/// not read: on hatched squares the hatching's lines join a piece's top as points of its own.
+pub(crate) fn together(seen: &mut [Seen], printed: bool) {
     let n = seen.len();
     if n == 0 {
         return;
@@ -103,10 +111,14 @@ pub(crate) fn together(seen: &mut [Seen]) {
                     }
                 }
             }
+            let points = (!printed).then(|| {
+                members.iter().map(|&i| points(seen[i].shape)).sum::<f32>() / members.len() as f32
+            });
             Sprite {
                 members,
                 cost,
                 tone,
+                points,
             }
         })
         .collect();
@@ -158,6 +170,23 @@ pub(crate) fn together(seen: &mut [Seen]) {
             seen[i].best = cost;
         }
     }
+}
+
+/// How many points a piece's top shows: the separate parts of its outline across it, a
+/// twenty-fifth and a twelfth of its height down, together.
+fn points(shape: &Silhouette) -> f32 {
+    let size = shape.size;
+    let [_, top, _, bottom] = shape.bounds;
+    let height = (bottom - top) as f32;
+    [0.04f32, 0.08]
+        .iter()
+        .map(|part| {
+            let row = &shape.inside[(top + (height * part) as usize) * size..][..size];
+            (0..size)
+                .filter(|&x| row[x] && (x == 0 || !row[x - 1]))
+                .count() as f32
+        })
+        .sum()
 }
 
 /// How light a piece is inside, 0 to 1.
@@ -253,6 +282,18 @@ fn assign(sprites: &[Sprite], outlines: &[Vec<f32>]) -> Vec<usize> {
                 kings[piece / 6] += members;
             }
             counts[piece / 6][piece % 6] += members;
+        }
+        // A king with more points to its top than a queen of its side.
+        for (k, king) in sprites.iter().enumerate() {
+            for (q, queen) in sprites.iter().enumerate() {
+                if chosen[k] % 6 == 5
+                    && chosen[q] == chosen[k] - 1
+                    && let (Some(king), Some(queen)) = (king.points, queen.points)
+                    && king > queen + 0.5
+                {
+                    sum += CROWN;
+                }
+            }
         }
         for side in 0..2 {
             sum += KINGS * kings[side].abs_diff(1) as f32;
@@ -442,8 +483,8 @@ mod tests {
     const LIGHT: [f32; 3] = [240., 217., 181.];
     const DARK: [f32; 3] = [181., 136., 99.];
 
-    /// A piece of `kind` (0 a pawn's round head on a base, 1 a tower, 2 a tall pointed one)
-    /// filled with `fill` and outlined black, on a square of `square`.
+    /// A piece of `kind` (0 a pawn's round head on a base, 1 a tower, 2 a tall pointed one, 3 a
+    /// crown of three points) filled with `fill` and outlined black, on a square of `square`.
     fn piece(kind: usize, fill: [f32; 3], square: [f32; 3]) -> Cell {
         let inside = |x: f32, y: f32| -> bool {
             match kind {
@@ -452,7 +493,12 @@ mod tests {
                         || ((14. ..34.).contains(&x) && (28. ..40.).contains(&y))
                 }
                 1 => (12. ..36.).contains(&x) && (8. ..40.).contains(&y),
-                _ => (y - 6.) > 2.2 * (x - 24.).abs() && y < 42.,
+                2 => (y - 6.) > 2.2 * (x - 24.).abs() && y < 42.,
+                _ => {
+                    ((12. ..36.).contains(&x) && (18. ..42.).contains(&y))
+                        || ([14., 24., 34.].iter().any(|point| (x - point).abs() < 2.5)
+                            && (6. ..18.).contains(&y))
+                }
             }
         };
         let rgb = (0..SIZE * SIZE)
@@ -539,7 +585,7 @@ mod tests {
                 home: false,
             })
             .collect();
-        together(&mut seen);
+        together(&mut seen, false);
         let chosen: Vec<usize> = seen
             .iter()
             .map(|seen| {
@@ -549,6 +595,50 @@ mod tests {
             })
             .collect();
         assert_eq!(chosen, [0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 5]);
+    }
+
+    /// Of a side's king and queen, close to either as the sets read them, the one whose top
+    /// shows more points is the queen; not in a printed picture.
+    #[test]
+    fn a_queens_crown_shows_more_points_than_a_kings_cross() {
+        let white = [250.; 3];
+        let cells = [piece(2, white, LIGHT), piece(3, white, DARK)];
+        let shapes: Vec<Silhouette> = cells.iter().map(shape).collect();
+        assert!(points(&shapes[1]) > points(&shapes[0]) + 2.);
+        let found: Vec<Features> = cells
+            .iter()
+            .zip(&shapes)
+            .map(|(cell, shape)| features(shape, &cell.rgb))
+            .collect();
+        // Read alone, the cross is a queen by a little and the crown a king; White's pieces
+        // alone are drawn.
+        let mut cross = [f32::MAX; 12];
+        cross[..6].copy_from_slice(&[0.8, 0.8, 0.8, 0.8, 0.3, 0.32]);
+        let mut crown = [f32::MAX; 12];
+        crown[..6].copy_from_slice(&[0.8, 0.8, 0.8, 0.8, 0.32, 0.3]);
+        let read = |printed: bool| {
+            let mut seen: Vec<Seen> = [cross, crown]
+                .into_iter()
+                .enumerate()
+                .map(|(k, best)| Seen {
+                    cell: &cells[k],
+                    shape: &shapes[k],
+                    features: &found[k],
+                    best,
+                    home: false,
+                })
+                .collect();
+            together(&mut seen, printed);
+            seen.iter()
+                .map(|seen| {
+                    (0..12)
+                        .min_by(|&a, &b| seen.best[a].total_cmp(&seen.best[b]))
+                        .unwrap()
+                })
+                .collect::<Vec<usize>>()
+        };
+        assert_eq!(read(false), [5, 4]);
+        assert_eq!(read(true), [4, 5]);
     }
 
     /// A sprite with a square on the first or last rank is no pawn, however near a pawn it
@@ -578,7 +668,7 @@ mod tests {
                     home: home[k],
                 })
                 .collect();
-            together(&mut seen);
+            together(&mut seen, false);
             seen.iter()
                 .map(|seen| {
                     (0..12)
@@ -602,6 +692,7 @@ mod tests {
                 members: vec![k],
                 cost: [0.; 12],
                 tone,
+                points: None,
             })
             .collect();
         assert_eq!(sides(&sprites), Some(vec![true, true, true, false, false]));
