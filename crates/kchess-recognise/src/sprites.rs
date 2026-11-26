@@ -1,10 +1,10 @@
 //! One reading per sprite. A picture draws every piece of a kind alike: the squares that show the
-//! same drawing (a sprite) are read together, as one piece, and the sprites are read together
-//! too, within what a position allows (one king a side, no more than eight pawns and none on the
-//! first or last rank, two of a minor piece or a rook and one queen but by promotion). A white piece and a black piece of one kind
-//! share their outline, so a kind can be tried for every sprite of an outline at once. A set no
-//! bundled set draws then reads by what most of its squares and the rules say, not each square
-//! by its own nearest bundled drawing.
+//! same drawing (a sprite) are read together, as one piece, and the sprites are read together too,
+//! within what a position allows (one king a side, no more than eight pawns and none on the first
+//! or last rank, two of a minor piece or a rook and one queen but by promotion). A white piece and
+//! a black piece of one kind share their outline, so a kind can be tried for every sprite of an
+//! outline at once. A set no bundled set draws then reads by what most of its squares and the rules
+//! say, not each square by its own nearest bundled drawing.
 //!
 //! The sides are told apart by the sprites' own tones in this picture, the lighter White's,
 //! where the bundled sets do not clearly say otherwise.
