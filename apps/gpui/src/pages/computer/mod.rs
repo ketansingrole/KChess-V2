@@ -4,8 +4,8 @@
 //! unfinished game in the profile, to resume it.
 
 use crate::pages::PageView;
-use kchess_contracts::calls;
 use kchess_app::log::ResultExt as _;
+use kchess_contracts::calls;
 use kchess_contracts::check::{Fen, Moves};
 use kchess_contracts::types::{EngineLevel, LookupOptions, PositionLookupKind};
 use kchess_domain::games::archive::Snapshot;
@@ -426,7 +426,12 @@ impl ComputerPage {
 
     /// The imitated player's move here, drawn from their games as often as they played it; the
     /// engine searches instead when they have none.
-    fn move_from_games(&mut self, request: SearchRequest, sparring: Sparring, cx: &mut Context<Self>) {
+    fn move_from_games(
+        &mut self,
+        request: SearchRequest,
+        sparring: Sparring,
+        cx: &mut Context<Self>,
+    ) {
         let fen = self
             .position_at(request.count)
             .as_ref()

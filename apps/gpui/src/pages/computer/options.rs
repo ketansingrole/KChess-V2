@@ -14,11 +14,11 @@ use shakmaty::Color;
 
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
-use crate::game::chess960;
-use crate::theme::Palette;
-use crate::game_db::GameDbHandle;
-use crate::widgets;
 use crate::core::AppCore;
+use crate::game::chess960;
+use crate::game_db::GameDbHandle;
+use crate::theme::Palette;
+use crate::widgets;
 use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{DatabaseId, PlayerName};
@@ -293,7 +293,8 @@ impl GameOptions {
                 return;
             };
             this.update_in(cx, |this, window, cx| {
-                let Some(level) = kchess_domain::training::engine_levels::nearest(&this.levels, rating)
+                let Some(level) =
+                    kchess_domain::training::engine_levels::nearest(&this.levels, rating)
                 else {
                     return;
                 };
