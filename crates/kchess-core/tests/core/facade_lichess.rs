@@ -12,7 +12,7 @@ const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 /// The requests a call sent: without the account's event stream, which the core opens for every
 /// signed-in account on its own schedule, so its opening lands in whichever call is running
-/// (`cloudEval` and the timeline on macOS CI).
+/// (`cloudEval` and both timeline reads on macOS CI).
 fn own_requests(seen: &[fixtures::Request]) -> Vec<fixtures::Request> {
     seen.iter()
         .filter(|seen| seen.path() != "/api/stream/event")
@@ -275,7 +275,7 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
     // Read again soon, Bob's activity comes from the cache; Carol's failure is asked again.
     let before = fixture.requests().len();
     core.call("timeline", vec![]).await.unwrap();
-    let asked: Vec<String> = fixture.requests()[before..]
+    let asked: Vec<String> = own_requests(&fixture.requests()[before..])
         .iter()
         .map(|seen| format!("{} {}", seen.method, seen.target))
         .collect();

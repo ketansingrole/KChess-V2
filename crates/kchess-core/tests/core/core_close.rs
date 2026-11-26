@@ -130,6 +130,38 @@ async fn closing_twice_is_harmless_and_frees_the_profile() {
     assert!(reopened.is_ok(), "a closed profile reopens");
 }
 
+/// The close leaves `kchess.db`'s and `puzzles.db`'s write-ahead logs for the next open and
+/// does not checkpoint them. Each checkpoint flushed two files to disk, and on a loaded Windows
+/// runner each close took up to 1.9 s, so closing the core overran 2 s
+/// (`engine_admission::close_drains_and_cancels_a_pending_analysis_start`, 2026-11-26). What
+/// the session wrote is read back from the logs.
+#[tokio::test]
+async fn closing_leaves_the_write_ahead_logs_for_the_next_open() {
+    let dir = tempfile::tempdir().expect("profile");
+    let host = TestHost::new();
+    let core = open(dir.path(), &host);
+    core.call("loadData", vec![]).await.expect("opened");
+    core.call("puzzleDbStatus", vec![])
+        .await
+        .expect("puzzles opened");
+    support::save_engine_path(&core, "/kept/engine");
+    core.close().await;
+    for name in ["kchess.db-wal", "puzzles.db-wal"] {
+        let size = std::fs::metadata(dir.path().join(name)).map_or(0, |meta| meta.len());
+        assert!(
+            size > 0,
+            "{name} was checkpointed away when the core closed"
+        );
+    }
+    let reopened = open(dir.path(), &host);
+    let settings = reopened
+        .database_for_tests()
+        .read(|c| kchess_core::store::games::get_settings(c.db))
+        .expect("settings");
+    assert_eq!(settings.core.engine_path, "/kept/engine");
+    reopened.close().await;
+}
+
 #[tokio::test]
 async fn a_closed_core_refuses_later_calls() {
     // A late call must not start the battery and review services again, or reopen the database.
