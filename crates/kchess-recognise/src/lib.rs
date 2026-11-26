@@ -95,6 +95,9 @@ const KEPT_SIZES: usize = 3;
 const LARGEST_CELL: f32 = 72.;
 /// The smallest: a thumbnail's squares are enlarged to this.
 const SMALLEST_CELL: f32 = 24.;
+/// The least `squares::inkiness` of a black piece: below it a piece is less likely Black's the
+/// less ink it has, until 0.3 below it, where it is White's.
+const BLACK_INK: f32 = 0.8;
 
 /// Reads board pictures against a fixed list of piece sets.
 pub struct Recogniser {
@@ -136,37 +139,43 @@ impl Recogniser {
         // averaged over the texture's period.
         let period = texture::period(&original.luma(), original.width, original.height);
         let averaged;
-        let (picture, window) = match period {
+        let picture = match period {
             Some(period) => {
-                let window = (period.round() as usize).max(2);
-                averaged = texture::smooth(original, window);
-                (&averaged, window)
+                averaged = texture::smooth(original, period);
+                &averaged
             }
-            None => (original, 0),
+            None => original,
         };
-        let (grid, colours) = grid::candidates(picture, 1 + window / 2)
+        // An edge averaged over the period is a ramp that wide: the flat stretches either side
+        // of it start beyond it.
+        let skip = 1 + period.map_or(0, |period| (period / 2.) as usize);
+        let (grid, colours) = grid::candidates(picture, skip)
             .into_iter()
             .take(6)
             .find_map(|grid| {
                 let probe = cell_size(&grid);
-                let cells = squares::cells(picture, &grid, probe, 0);
+                let cells = squares::cells(picture, &grid, probe, 0.);
                 squares::checkered(&cells).map(|colours| (grid, colours))
             })
             .ok_or(Refusal::NoBoard)?;
         let size = cell_size(&grid);
         // The texture's period in the cells' pixels.
-        let blur = period.map_or(0, |period| {
-            (period * size as f32 / ((grid.width + grid.height) / 2.)).round() as usize
+        let blur = period.map_or(0., |period| {
+            period * size as f32 / ((grid.width + grid.height) / 2.)
         });
         let mut cells = squares::cells(picture, &grid, size, blur);
+        let colours = if blur > 0. {
+            squares::even_out(&mut cells, colours)
+        } else {
+            colours
+        };
         // Paper and ink, on a textured picture: what is lighter than halfway between the light
         // squares and the texture's tone is paper.
         let paper = (picture::luma(colours[0]) + picture::luma(colours[1])) / 2.;
-        if blur > 0 {
-            squares::even_out(&mut cells, colours);
+        if blur > 0. {
             for (cell, drawn) in cells
                 .iter_mut()
-                .zip(squares::cells(original, &grid, size, 0))
+                .zip(squares::cells(original, &grid, size, 0.))
             {
                 cell.crisp = drawn
                     .rgb
@@ -177,7 +186,7 @@ impl Recogniser {
             }
         }
         let reads = self.read_squares(&cells, size, colours, blur, paper);
-        Ok(position::assemble(&reads))
+        Ok(position::assemble(&reads, blur > 0.))
     }
 
     /// The bundled pieces drawn at `size`, drawn once per size.
@@ -210,18 +219,18 @@ impl Recogniser {
         art
     }
 
-    /// Every bundled piece over `background`, read as a square of the picture with that colour
-    /// and `spread` is: on a textured picture (`blur` > 0), averaged as the picture was, its
-    /// paper lighter than `paper`.
-    fn references(
-        &self,
-        art: &[Art],
-        size: usize,
-        background: [f32; 3],
-        spread: f32,
-        blur: usize,
-        paper: f32,
-    ) -> Vec<Reference> {
+    /// Every bundled piece over `square`'s colour, read as `square` is: with its spread, and on
+    /// a textured picture (its `blur` above 0) averaged as the picture was, its paper and its
+    /// texture's floor `square`'s. Of `square` its pixels are not read.
+    fn references(&self, art: &[Art], size: usize, square: &Cell) -> Vec<Reference> {
+        let Cell {
+            background,
+            spread,
+            blur,
+            paper,
+            floor,
+            ..
+        } = *square;
         art.iter()
             .filter_map(|art| {
                 let mut rgb: Vec<[f32; 3]> = art
@@ -237,7 +246,7 @@ impl Recogniser {
                     })
                     .collect();
                 let mut crisp = Vec::new();
-                if blur > 0 {
+                if blur > 0. {
                     crisp = rgb.iter().map(|&c| picture::luma(c)).collect();
                     let drawn = picture::Picture {
                         width: size,
@@ -253,6 +262,7 @@ impl Recogniser {
                     blur,
                     crisp,
                     paper,
+                    floor,
                 };
                 let shape = squares::silhouette(size, &cell, &[]).ok()?;
                 Some(Reference {
@@ -269,7 +279,7 @@ impl Recogniser {
         cells: &[Cell],
         size: usize,
         colours: [[f32; 3]; 2],
-        blur: usize,
+        blur: f32,
         paper: f32,
     ) -> Vec<position::Read> {
         let art = self.art(size);
@@ -281,7 +291,7 @@ impl Recogniser {
                 (
                     colour,
                     0.,
-                    self.references(&art, size, colour, 0., blur, paper),
+                    self.references(&art, size, &plain(colour, blur, paper)),
                 )
             })
             .collect();
@@ -307,8 +317,7 @@ impl Recogniser {
             let index = match nearest {
                 Some((index, apart)) if apart <= 24. => index,
                 _ => {
-                    let references =
-                        self.references(&art, size, cell.background, cell.spread, blur, paper);
+                    let references = self.references(&art, size, cell);
                     palette.push((cell.background, cell.spread, references));
                     palette.len() - 1
                 }
@@ -318,6 +327,18 @@ impl Recogniser {
             for reference in &palette[index].2 {
                 let slot = piece_index(reference.piece);
                 best[slot] = best[slot].min(squares::unlike(&features, &reference.features));
+            }
+            // Printed, a piece mostly paper inside is White's, however its outline is drawn: a
+            // black piece is solid ink. Much ink is no sign of Black's: a small white piece's
+            // outline leaves little paper inside it. (Drawn in colour, a black piece may be
+            // shaded grey, so this holds for a printed diagram alone.)
+            if blur > 0. {
+                let ink = squares::inkiness(&shape, cell);
+                for apart in &mut best[6..] {
+                    if *apart < f32::MAX {
+                        *apart += ((BLACK_INK - ink) / 0.3).clamp(0., 1.);
+                    }
+                }
             }
             let mut ranked: Vec<(Piece, f32)> = best
                 .iter()
@@ -335,6 +356,20 @@ impl Recogniser {
             reads.push(position::Read::Piece { ranked, doubtful });
         }
         reads
+    }
+}
+
+/// A square of `colour` alone, with no grain, on a picture averaged over `blur` whose paper is
+/// lighter than `paper`.
+fn plain(colour: [f32; 3], blur: f32, paper: f32) -> Cell {
+    Cell {
+        rgb: Vec::new(),
+        background: colour,
+        spread: 0.,
+        blur,
+        crisp: Vec::new(),
+        paper,
+        floor: 0.,
     }
 }
 

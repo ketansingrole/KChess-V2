@@ -227,3 +227,267 @@ fn coordinate_labels_are_left_out() {
     assert!(read.white_at_bottom);
     assert!(read.doubtful.is_empty(), "{:?}", read.doubtful);
 }
+
+/// How a printed diagram is drawn: dark squares hatched with lines `spacing` pixels apart along
+/// a row and `thickness` thick, rising (`/`) or falling (`\`), on squares of `square` pixels,
+/// White's figurines outlined `outline` of a square thick; in black and white alone (a 1-bit
+/// scan) or with grey edges.
+#[derive(Clone, Copy, Debug)]
+struct Print {
+    square: usize,
+    spacing: f32,
+    thickness: f32,
+    rising: bool,
+    outline: f32,
+    one_bit: bool,
+}
+
+/// How much finer than the picture a printed diagram is drawn, for its grey edges.
+const FINE: usize = 4;
+
+/// `piece` of `pieces` as a book's figurine at `size` pixels: which pixels are ink and which
+/// are the piece at all. White's is an outline `outline` pixels wide filled white, Black's
+/// solid ink.
+fn figurine(
+    pieces: &PieceSet,
+    piece: Piece,
+    size: usize,
+    outline: usize,
+) -> (Vec<bool>, Vec<bool>) {
+    let svg = &pieces
+        .pieces
+        .iter()
+        .find(|(drawn, _)| *drawn == piece)
+        .unwrap()
+        .1;
+    let inside: Vec<bool> = draw(svg, size)
+        .unwrap()
+        .iter()
+        .map(|p| p[3] > 127.)
+        .collect();
+    if piece.color == Color::Black {
+        return (inside.clone(), inside);
+    }
+    // White's: the piece less itself shrunk by the outline's width.
+    let shrink = |on: &[bool], across: bool| -> Vec<bool> {
+        (0..size * size)
+            .map(|index| {
+                let (x, y) = (index % size, index / size);
+                let (along, line) = if across { (x, y) } else { (y, x) };
+                let low = along.saturating_sub(outline);
+                let high = (along + outline).min(size - 1);
+                (low..=high).all(|at| {
+                    let (x, y) = if across { (at, line) } else { (line, at) };
+                    on[y * size + x]
+                }) && along >= outline
+                    && along + outline < size
+            })
+            .collect()
+    };
+    let shrunk = shrink(&shrink(&inside, true), false);
+    let ink = inside
+        .iter()
+        .zip(&shrunk)
+        .map(|(on, filled)| *on && !filled)
+        .collect();
+    (ink, inside)
+}
+
+/// `board` printed as a book prints a diagram, White at the bottom: white light squares,
+/// hatched dark ones, a thick frame, the files' and ranks' marks outside it, and the pieces of
+/// `pieces` as figurines; on a white page.
+fn printed(board: &Board, pieces: &PieceSet, print: Print) -> image::GrayImage {
+    let Print {
+        square, spacing, ..
+    } = print;
+    let margin = square;
+    let side = 8 * square + 2 * margin;
+    let fine = side * FINE;
+    let mut ink = vec![false; fine * fine];
+    let frame = (square / 12).max(2) as f32;
+    let outline = ((square * FINE) as f32 * print.outline).ceil() as usize;
+    let mut figurines = std::collections::HashMap::new();
+    for y in 0..fine {
+        for x in 0..fine {
+            // Where this fine pixel's middle is, in the picture's pixels from the board's corner.
+            let u = (x as f32 + 0.5) / FINE as f32 - margin as f32;
+            let v = (y as f32 + 0.5) / FINE as f32 - margin as f32;
+            let board_side = (8 * square) as f32;
+            let on_board = (0. ..board_side).contains(&u) && (0. ..board_side).contains(&v);
+            if !on_board {
+                let framed = (-frame..board_side + frame).contains(&u)
+                    && (-frame..board_side + frame).contains(&v);
+                ink[y * fine + x] = framed;
+                continue;
+            }
+            let (column, row) = ((u as usize) / square, (v as usize) / square);
+            let at = Square::from_coords(
+                shakmaty::File::new(column as u32),
+                shakmaty::Rank::new(7 - row as u32),
+            );
+            if let Some(piece) = board.piece_at(at) {
+                let size = square * FINE;
+                let (drawn, whole) = figurines
+                    .entry(piece)
+                    .or_insert_with(|| figurine(pieces, piece, size, outline));
+                let (fx, fy) = (
+                    x - (margin + column * square) * FINE,
+                    y - (margin + row * square) * FINE,
+                );
+                if whole[fy * size + fx] {
+                    ink[y * fine + x] = drawn[fy * size + fx];
+                    continue;
+                }
+            }
+            if (row + column) % 2 == 1 {
+                let along = if print.rising {
+                    u + v
+                } else {
+                    u - v + board_side
+                };
+                ink[y * fine + x] = along % spacing < print.thickness;
+            }
+        }
+    }
+    let mut image = image::GrayImage::from_pixel(side as u32, side as u32, image::Luma([255]));
+    for y in 0..side {
+        for x in 0..side {
+            let inked = (0..FINE * FINE)
+                .filter(|k| ink[(y * FINE + k / FINE) * fine + x * FINE + k % FINE])
+                .count();
+            let mut grey = 255. * (1. - inked as f32 / (FINE * FINE) as f32);
+            if print.one_bit {
+                grey = if grey < 128. { 0. } else { 255. };
+            }
+            image.put_pixel(x as u32, y as u32, image::Luma([grey.round() as u8]));
+        }
+    }
+    // The files under the frame and the ranks right of it: marks the size of a small letter.
+    let (wide, high) = ((square / 4).max(3) as u32, (square / 3).max(4) as u32);
+    let stroke = (square / 20).max(1) as u32;
+    let mut mark = |left: u32, top: u32| {
+        for y in top..top + high {
+            for x in left..left + wide {
+                if x < left + stroke || y < top + stroke || y + stroke >= top + high {
+                    image.put_pixel(x, y, image::Luma([0]));
+                }
+            }
+        }
+    };
+    let gap = (square / 4) as u32;
+    let (margin, square) = (margin as u32, square as u32);
+    for k in 0..8 {
+        mark(
+            margin + k * square + square / 2 - wide / 2,
+            margin + 8 * square + gap,
+        );
+        mark(
+            margin + 8 * square + gap,
+            margin + k * square + square / 2 - high / 2,
+        );
+    }
+    image
+}
+
+/// A random position from a random game of 4 to 70 moves, fewer if it ends.
+fn random_position(rng: &mut Rng) -> Board {
+    use shakmaty::Position as _;
+    let mut position = shakmaty::Chess::default();
+    for _ in 0..4 + rng.below(67) {
+        let legal = position.legal_moves();
+        let Some(chosen) = rng.pick(&legal).copied() else {
+            break;
+        };
+        position.play_unchecked(chosen);
+    }
+    position.board().clone()
+}
+
+/// Printed diagrams, as books print them: hatched dark squares at several spacings and line
+/// widths, a frame with the coordinates outside it and figurines no bundled set draws (White's
+/// an outline filled white, Black's solid), in black and white or with grey edges, on squares of
+/// 22 to 64 pixels. Every board is found. The squares read wrongly are on hatched squares and
+/// mostly in black and white alone: there each line is drawn a whole number of pixels thick,
+/// so the hatching, averaged, stays uneven (by a third of its tone on 4-pixel lines), and only
+/// what differs more than that is read, which rounds off small parts of a piece such as a
+/// queen's points. A scanned book's hatching is uneven at random instead, and reads better.
+#[test]
+fn printed_diagrams_are_read() {
+    // Measured 2026-11-26 over these 48 pictures: 95.57% of squares, 25.0% of positions, 88% of
+    // the wrong squares doubtful.
+    const SQUARES: f32 = 95.;
+    const POSITIONS: f32 = 20.;
+    const DOUBTED: f32 = 85.;
+    let sets = [set("cburnett"), set("merida")];
+    #[derive(Default)]
+    struct Tally {
+        pictures: usize,
+        found: usize,
+        right: usize,
+        positions: usize,
+        wrong: usize,
+        doubted: usize,
+    }
+    let tally = std::cell::RefCell::new(Tally::default());
+    kchess_testkit::random::check(48, |rng: &mut Rng| {
+        let square = 22 + rng.below(43);
+        let one_bit = rng.chance(50);
+        // Lines closer than 3.5 pixels in black and white alone are not a tone: each is one
+        // pixel or two thick, and which slowly changes across the board, so the dark squares
+        // of one part of it are twice as dark as another's.
+        let spacing =
+            (square as f32 / (6. + rng.below(50) as f32 / 10.)).max(if one_bit { 3.5 } else { 2. });
+        let print = Print {
+            square,
+            spacing,
+            thickness: (spacing * (0.3 + rng.below(30) as f32 / 100.)).max(1.),
+            rising: rng.chance(70),
+            outline: 1. / (16 + rng.below(11)) as f32,
+            one_bit,
+        };
+        let board = random_position(rng);
+        let pieces = rng.pick(&sets).unwrap();
+        let image = printed(&board, pieces, print);
+        let found = recogniser().read_image(&image::DynamicImage::ImageLuma8(image));
+        let mut tally = tally.borrow_mut();
+        tally.pictures += 1;
+        let Ok(found) = found else {
+            eprintln!("{print:?} {}: no board", pieces.name);
+            return;
+        };
+        tally.found += 1;
+        let wrong: Vec<Square> = Square::ALL
+            .into_iter()
+            .filter(|&at| found.board.piece_at(at) != board.piece_at(at))
+            .collect();
+        tally.right += 64 - wrong.len();
+        tally.positions += usize::from(wrong.is_empty());
+        tally.wrong += wrong.len();
+        tally.doubted += wrong
+            .iter()
+            .filter(|at| found.doubtful.contains(at))
+            .count();
+        eprintln!(
+            "{print:?} {}: {} of 64 {}",
+            pieces.name,
+            64 - wrong.len(),
+            found.fen
+        );
+    });
+    let tally = tally.into_inner();
+    let squares = 100. * tally.right as f32 / (64 * tally.pictures) as f32;
+    let positions = 100. * tally.positions as f32 / tally.pictures as f32;
+    let doubted = 100. * tally.doubted as f32 / tally.wrong.max(1) as f32;
+    eprintln!(
+        "{} of {} boards found, {squares:.2}% of squares, {positions:.1}% of positions, \
+         {doubted:.0}% of wrong squares doubtful",
+        tally.found, tally.pictures
+    );
+    assert_eq!(tally.found, tally.pictures, "a board was not found");
+    assert!(squares >= SQUARES, "{squares:.2}% of squares");
+    assert!(positions >= POSITIONS, "{positions:.1}% of positions");
+    assert!(
+        doubted >= DOUBTED,
+        "{doubted:.0}% of wrong squares doubtful"
+    );
+}

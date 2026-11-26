@@ -25,22 +25,25 @@ pub(crate) struct Cell {
     /// may reach into the band): a textured board's grain.
     pub spread: f32,
     /// The width over which the picture was averaged, in the cell's pixels (`texture`).
-    pub blur: usize,
+    pub blur: f32,
     /// On a textured picture, each pixel's brightness before averaging; else empty.
     pub crisp: Vec<f32>,
     /// On a textured picture, the brightness below which a pixel of `crisp` is ink.
     pub paper: f32,
+    /// On a textured picture, the least brightness its squares' texture shows once averaged,
+    /// however unevenly its lines are drawn; else 0.
+    pub floor: f32,
 }
 
 /// How far in from a cell's edges its neighbours' colours reach: a pixel when the board is
 /// placed a pixel off, and half the width a textured picture was averaged over.
-fn inset(size: usize, blur: usize) -> usize {
-    ((size as f32 * 0.03).round() as usize).max(1) + blur / 2
+fn inset(size: usize, blur: f32) -> usize {
+    ((size as f32 * 0.03).round() as usize).max(1) + (blur / 2.) as usize
 }
 
 /// Whether a pixel of a `size`-pixel cell is in the band its colour is taken from, `inset` to
 /// `inset + width` in from its edges, and how far in it is.
-fn band(size: usize, index: usize, blur: usize) -> (bool, usize) {
+fn band(size: usize, index: usize, blur: f32) -> (bool, usize) {
     let (x, y) = (index % size, index / size);
     let from_edge = x.min(y).min(size - 1 - x).min(size - 1 - y);
     let inset = inset(size, blur);
@@ -49,7 +52,7 @@ fn band(size: usize, index: usize, blur: usize) -> (bool, usize) {
 }
 
 /// The 64 squares `grid` places in `picture`, from the top left, row by row.
-pub(crate) fn cells(picture: &Picture, grid: &Grid, size: usize, blur: usize) -> Vec<Cell> {
+pub(crate) fn cells(picture: &Picture, grid: &Grid, size: usize, blur: f32) -> Vec<Cell> {
     let mut cells = Vec::with_capacity(64);
     // Several samples a pixel when the picture's squares are larger than `size`.
     let samples = ((grid.width.max(grid.height) / size as f32).ceil() as usize).clamp(1, 4);
@@ -88,7 +91,7 @@ pub(crate) fn cells(picture: &Picture, grid: &Grid, size: usize, blur: usize) ->
 }
 
 impl Cell {
-    pub fn new(size: usize, rgb: Vec<[f32; 3]>, blur: usize) -> Cell {
+    pub fn new(size: usize, rgb: Vec<[f32; 3]>, blur: f32) -> Cell {
         let ring = || {
             rgb.iter()
                 .enumerate()
@@ -109,6 +112,7 @@ impl Cell {
             blur,
             crisp: Vec::new(),
             paper: 0.,
+            floor: 0.,
         }
     }
 }
@@ -155,11 +159,14 @@ pub(crate) fn checkered(cells: &[Cell]) -> Option<[[f32; 3]; 2]> {
     })
 }
 
-/// On a textured picture every square takes its colour from the board: the one of `colours`
-/// its parity's squares show, with the grain they typically show. Averaged over the texture,
-/// a large piece reaches into the band a square's own colour is taken from, and next to the
-/// board's frame so does the frame; a printed diagram highlights no square.
-pub(crate) fn even_out(cells: &mut [Cell], colours: [[f32; 3]; 2]) {
+/// On a textured picture every square takes its colour from the board: the colour its
+/// parity's squares typically show, with the grain they show. Averaged over the texture, a
+/// large piece reaches into the band a square's own colour is taken from, and next to the
+/// board's frame so does the frame; a printed diagram highlights no square. Returns `colours`
+/// (the board's, light and dark, as `checkered` found them nearer the squares' edges) as the
+/// squares now have them.
+pub(crate) fn even_out(cells: &mut [Cell], colours: [[f32; 3]; 2]) -> [[f32; 3]; 2] {
+    let mut evened = colours;
     for parity in 0..2 {
         let of_parity = |index: &usize| (index / 8 + index % 8) % 2 == parity;
         let Some(typical) = median_colour(
@@ -169,21 +176,50 @@ pub(crate) fn even_out(cells: &mut [Cell], colours: [[f32; 3]; 2]) {
         ) else {
             continue;
         };
-        let colour = if distance(typical, colours[0]) <= distance(typical, colours[1]) {
-            colours[0]
-        } else {
-            colours[1]
-        };
-        let mut spreads: Vec<f32> = (0..cells.len())
+        let colour = typical;
+        let nearest = usize::from(distance(typical, colours[1]) < distance(typical, colours[0]));
+        evened[nearest] = typical;
+        // The grain over every square's band at once: what averaging leaves of a texture
+        // varies across a square slower than one band shows.
+        let mut strays: Vec<f32> = (0..cells.len())
             .filter(of_parity)
-            .map(|index| cells[index].spread)
+            .flat_map(|index| {
+                let cell = &cells[index];
+                let size = cell.rgb.len().isqrt();
+                cell.rgb
+                    .iter()
+                    .enumerate()
+                    .filter(move |(at, _)| band(size, *at, cell.blur).0)
+                    .map(move |(_, &c)| distance(c, colour))
+            })
             .collect();
-        let grain = median(&mut spreads).unwrap_or_default();
+        strays.sort_by(f32::total_cmp);
+        let grain = strays
+            .get(strays.len() * 6 / 10)
+            .copied()
+            .unwrap_or_default();
+        // How dark the texture gets: a little of the bands is a large piece reaching in.
+        let mut shades: Vec<f32> = (0..cells.len())
+            .filter(of_parity)
+            .flat_map(|index| {
+                let cell = &cells[index];
+                let size = cell.rgb.len().isqrt();
+                cell.rgb
+                    .iter()
+                    .enumerate()
+                    .filter(move |(at, _)| band(size, *at, cell.blur).0)
+                    .map(|(_, &c)| luma(c))
+            })
+            .collect();
+        shades.sort_by(f32::total_cmp);
+        let floor = shades.get(shades.len() / 20).copied().unwrap_or_default();
         for index in (0..cells.len()).filter(of_parity) {
             cells[index].background = colour;
             cells[index].spread = grain;
+            cells[index].floor = floor;
         }
     }
+    evened
 }
 
 /// What stands on a square: which of its pixels it covers.
@@ -250,12 +286,16 @@ fn differing(size: usize, cell: &Cell, labels: &[Label]) -> Vec<bool> {
             });
             // On a textured picture, paper and ink: what is drawn on a square is ink, and
             // lighter than the square only where an outline encloses it.
-            let apart = if blur > 0 {
+            let apart = if blur > 0. {
                 luma(background) - luma(colour)
             } else {
                 distance(colour, background)
             };
-            !label && band(size, index, blur).1 >= inset && (apart > threshold || enclosed[index])
+            // Darker than the texture ever is, however much it strays.
+            let darker = luma(colour) < cell.floor - DIFFERENT;
+            !label
+                && band(size, index, blur).1 >= inset
+                && (apart > threshold || darker || enclosed[index])
         })
         .collect();
     (0..size * size)
@@ -610,7 +650,27 @@ pub(crate) fn silhouette(size: usize, cell: &Cell, labels: &[Label]) -> Result<S
     }
     // Its parts: a piece, perhaps in pieces, and marks such as a coordinate in a corner.
     let inner: Vec<bool> = outside.iter().map(|out| !out).collect();
-    let parts = parts(size, &inner);
+    let mut parts = parts(size, &inner);
+    // On a textured picture, what averaging leaves of the texture where its lines are unevenly
+    // spaced (a one-bit picture's lines a pixel thicker here and there) is long and thinner
+    // than the width it was averaged over; anything drawn on a square is wider somewhere.
+    if blur > 0. {
+        let reach = (blur / 2.).ceil() as usize;
+        let mut owner = vec![usize::MAX; size * size];
+        for (part, (pixels, _)) in parts.iter().enumerate() {
+            for &index in pixels {
+                owner[index] = part;
+            }
+        }
+        let mut part = 0;
+        parts.retain(|(pixels, _)| {
+            let wide = pixels
+                .iter()
+                .any(|&index| around(size, index, reach).all(|near| owner[near] == part));
+            part += 1;
+            wide
+        });
+    }
     let whole = (size * size) as f32;
     // A mark: small, in a corner, or a thin strip along an edge (the next square's colour, where
     // the board was placed a little off).
@@ -622,19 +682,10 @@ pub(crate) fn silhouette(size: usize, cell: &Cell, labels: &[Label]) -> Result<S
             && ((left as f32) < near || (right as f32) > size as f32 - near);
         flat || tall
     };
-    // Or along two edges at once, the board's frame in a corner square.
-    let along_edges = |pixels: &Vec<usize>| {
-        let thin = size as f32 * 0.1;
-        pixels.iter().all(|&index| {
-            let (x, y) = (index % size, index / size);
-            (x.min(y).min(size - 1 - x).min(size - 1 - y) as f32) < thin
-        })
-    };
     let mark = |pixels: &Vec<usize>, bounds: Bounds| {
         (pixels.len() as f32) < MARK_AREA * whole
             || corner_of(size, bounds).is_some()
             || strip(bounds)
-            || along_edges(pixels)
     };
     let largest = parts
         .iter()
@@ -662,6 +713,57 @@ pub(crate) fn silhouette(size: usize, cell: &Cell, labels: &[Label]) -> Result<S
         area,
         bounds,
     })
+}
+
+/// How much of what stands on a square is ink rather than paper, from 0 to 1: of the pixels deep
+/// inside either (an outline's width from the other and from the square), the part that is
+/// ink. A black piece is mostly solid dark, however its details are drawn; a white piece is an
+/// outline around a light inside, however thick the outline. Ink is what is darker than halfway
+/// from the piece's darkest to the square's own colour; on a textured picture it is read before
+/// averaging, where the texture's lines are too thin to be deep in anything.
+pub(crate) fn inkiness(silhouette: &Silhouette, cell: &Cell) -> f32 {
+    let size = silhouette.size;
+    let value = |index: usize| {
+        if cell.crisp.is_empty() {
+            luma(cell.rgb[index])
+        } else {
+            cell.crisp[index]
+        }
+    };
+    let mut inside: Vec<f32> = (0..size * size)
+        .filter(|&index| silhouette.inside[index])
+        .map(value)
+        .collect();
+    inside.sort_by(f32::total_cmp);
+    let Some(&darkest) = inside.get(inside.len() / 20) else {
+        return 0.5;
+    };
+    let square = luma(cell.background);
+    let threshold = (darkest + square.max(darkest + 2. * DIFFERENT)) / 2.;
+    // 0 outside, 1 ink, 2 light.
+    let kind: Vec<u8> = (0..size * size)
+        .map(|index| match silhouette.inside[index] {
+            false => 0,
+            true if value(index) < threshold => 1,
+            true => 2,
+        })
+        .collect();
+    let reach = ((size as f32 * 0.04).round() as usize).max(1);
+    let (mut ink, mut light) = (0usize, 0usize);
+    for index in 0..size * size {
+        let own = kind[index];
+        if own != 0 && around(size, index, reach).all(|near| kind[near] == own) {
+            if own == 1 {
+                ink += 1;
+            } else {
+                light += 1;
+            }
+        }
+    }
+    if ink + light == 0 {
+        return 0.5;
+    }
+    ink as f32 / (ink + light) as f32
 }
 
 /// A silhouette as compared: its shape scaled to fit `FEATURE` × `FEATURE`, centred, the
@@ -760,7 +862,7 @@ mod tests {
                 }
             }
         }
-        let cell = Cell::new(size, rgb.clone(), 0);
+        let cell = Cell::new(size, rgb.clone(), 0.);
         assert_eq!(cell.background, light);
         let shape = silhouette(size, &cell, &[]).unwrap();
         assert_eq!(shape.bounds, [12, 10, 28, 30]);
@@ -774,9 +876,126 @@ mod tests {
                 marked[y * size + x] = [0.; 3];
             }
         }
-        let found = silhouette(size, &Cell::new(size, marked, 0), &[])
+        let found = silhouette(size, &Cell::new(size, marked, 0.), &[])
             .err()
             .unwrap();
         assert!(found > 0. && found < PIECE_AREA);
+    }
+
+    /// A `size`-pixel dark square of a printed diagram, read as a textured square is: rising
+    /// lines `spacing` apart and `thickness` thick in black and white, with what `drawn` puts
+    /// over them (ink 0, paper 255, `None` the hatching), averaged over the period.
+    fn printed(
+        size: usize,
+        spacing: usize,
+        thickness: usize,
+        drawn: impl Fn(usize, usize) -> Option<f32>,
+    ) -> Cell {
+        let crisp: Vec<f32> = (0..size * size)
+            .map(|index| {
+                let (x, y) = (index % size, index / size);
+                drawn(x, y).unwrap_or(if (x + y) % spacing < thickness {
+                    0.
+                } else {
+                    255.
+                })
+            })
+            .collect();
+        let picture = Picture {
+            width: size,
+            height: size,
+            rgb: crisp.iter().map(|&v| [v; 3]).collect(),
+        };
+        let blur = spacing as f32;
+        let mut cell = Cell::new(size, crate::texture::smooth(&picture, blur).rgb, blur);
+        let tone = 255. * (1. - thickness as f32 / spacing as f32);
+        cell.background = [tone; 3];
+        cell.paper = (255. + tone) / 2.;
+        cell.floor = (0..size * size)
+            .filter(|&index| band(size, index, blur).0)
+            .map(|index| luma(cell.rgb[index]))
+            .fold(f32::MAX, f32::min);
+        cell.crisp = crisp;
+        cell
+    }
+
+    /// A white figurine on a hatched square, an outline around paper, is a piece mostly paper
+    /// inside; a black one, solid ink, is a piece of ink.
+    #[test]
+    fn figurines_on_hatching_are_pieces_white_or_black() {
+        let size = 48;
+        let inside = |x: usize, y: usize| (14..34).contains(&x) && (10..38).contains(&y);
+        let edge =
+            |x: usize, y: usize| inside(x, y) && !((16..32).contains(&x) && (12..36).contains(&y));
+        let white = printed(size, 6, 3, |x, y| {
+            inside(x, y).then(|| if edge(x, y) { 0. } else { 255. })
+        });
+        let shape = silhouette(size, &white, &[]).unwrap();
+        let [left, top, right, bottom] = shape.bounds;
+        assert!(
+            left.abs_diff(14) <= 4 && right.abs_diff(34) <= 4,
+            "{:?}",
+            shape.bounds
+        );
+        assert!(
+            top.abs_diff(10) <= 4 && bottom.abs_diff(38) <= 4,
+            "{:?}",
+            shape.bounds
+        );
+        assert!(inkiness(&shape, &white) < 0.3);
+
+        let black = printed(size, 6, 3, |x, y| inside(x, y).then_some(0.));
+        let shape = silhouette(size, &black, &[]).unwrap();
+        assert!(shape.area > 0.2, "{}", shape.area);
+        assert!(inkiness(&shape, &black) > 0.9);
+    }
+
+    /// Hatching alone is no piece: evenly drawn, with one line a pixel thicker than the rest
+    /// (as a one-bit picture draws lines a fraction of a pixel apart), or with a stretch of a
+    /// line missing (a worn print); nor is the board's frame reaching into a corner square.
+    #[test]
+    fn hatching_and_the_frame_are_no_piece() {
+        let size = 48;
+        let empty = printed(size, 6, 3, |_, _| None);
+        assert!(silhouette(size, &empty, &[]).is_err());
+        let thicker = printed(size, 6, 3, |x, y| ((x + y) % 48 == 3).then_some(0.));
+        assert!(silhouette(size, &thicker, &[]).is_err());
+        let worn = printed(size, 6, 3, |x, y| {
+            ((x + y) % 6 < 3 && (x + y) / 6 == 8 && (18..30).contains(&x)).then_some(255.)
+        });
+        assert!(silhouette(size, &worn, &[]).is_err());
+        let framed = printed(size, 6, 3, |x, y| (x < 4 || y < 4).then_some(0.));
+        assert!(silhouette(size, &framed, &[]).is_err());
+    }
+
+    /// On a textured board every square takes the colour and grain its parity's squares
+    /// typically show, a square a large piece reaches into the band of included.
+    #[test]
+    fn a_textured_boards_squares_take_their_paritys_colour() {
+        let size = 30;
+        let (light, dark) = ([250.; 3], [120.; 3]);
+        let mut cells: Vec<Cell> = (0..64)
+            .map(|index| {
+                let colour = if (index / 8 + index % 8) % 2 == 0 {
+                    light
+                } else {
+                    dark
+                };
+                Cell::new(size, square(size, colour), 4.)
+            })
+            .collect();
+        cells[9] = Cell::new(size, square(size, [60.; 3]), 4.);
+        let evened = even_out(&mut cells, [[240.; 3], [126.; 3]]);
+        assert_eq!(evened, [light, dark]);
+        for (index, cell) in cells.iter().enumerate() {
+            let colour = if (index / 8 + index % 8) % 2 == 0 {
+                light
+            } else {
+                dark
+            };
+            assert_eq!(cell.background, colour);
+            assert_eq!(cell.spread, 0.);
+        }
+        assert!((cells[1].floor - 120.).abs() < 0.01);
     }
 }

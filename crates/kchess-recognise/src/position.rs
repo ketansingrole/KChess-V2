@@ -64,9 +64,16 @@ impl Placed {
     }
 }
 
+/// How much the pieces of a printed diagram must tell of White at the top (in rows a pawn
+/// stands past the middle) before it is read so: books print their diagrams from White's side,
+/// and in an endgame both kings may stand far up the board. A board on a screen is as often
+/// seen from Black's side.
+const PRINTED_WHITE_BELOW: f32 = 3.;
+
 /// Whether White sat at the bottom: where each side's pawns and king stand, from the picture's
-/// top (row 0) down. With nothing to tell, White is at the bottom.
-fn white_at_bottom(reads: &[Read]) -> bool {
+/// top (row 0) down. With nothing to tell, or on a `printed` diagram little, White is at the
+/// bottom.
+fn white_at_bottom(reads: &[Read], printed: bool) -> bool {
     let mut lower = 0f32;
     for (index, read) in reads.iter().enumerate() {
         let Read::Piece { ranked, .. } = read else {
@@ -83,12 +90,13 @@ fn white_at_bottom(reads: &[Read]) -> bool {
         let down = (index / 8) as f32 - 3.5;
         lower += weight * down * if piece.color == Color::White { 1. } else { -1. };
     }
-    lower >= 0.
+    lower >= if printed { -PRINTED_WHITE_BELOW } else { 0. }
 }
 
-/// The position `reads` (the picture's squares from its top left, row by row) show.
-pub(crate) fn assemble(reads: &[Read]) -> Recognised {
-    let white_at_bottom = white_at_bottom(reads);
+/// The position `reads` (the picture's squares from its top left, row by row) show, on a
+/// `printed` diagram or not.
+pub(crate) fn assemble(reads: &[Read], printed: bool) -> Recognised {
+    let white_at_bottom = white_at_bottom(reads, printed);
     let square_of = |index: usize| {
         let (column, row) = ((index % 8) as u32, (index / 8) as u32);
         let (file, rank) = if white_at_bottom {
@@ -310,7 +318,7 @@ mod tests {
                 .collect()
         };
         for flipped in [false, true] {
-            let recognised = assemble(&reads(flipped));
+            let recognised = assemble(&reads(flipped), false);
             assert_eq!(
                 recognised.fen,
                 "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
@@ -318,6 +326,32 @@ mod tests {
             assert_eq!(recognised.white_at_bottom, !flipped);
             assert!(recognised.doubtful.is_empty());
         }
+    }
+
+    /// An endgame whose kings stand far up the board, White's further than Black's, is read
+    /// from White's side when printed, as books print it, and from Black's on a screen.
+    #[test]
+    fn a_printed_endgame_with_advanced_kings_is_read_from_whites_side() {
+        let board: Board = "8/8/2K5/8/P4k2/8/8/8"
+            .parse::<shakmaty::fen::Fen>()
+            .unwrap()
+            .into_setup()
+            .board;
+        let reads: Vec<Read> = (0..64)
+            .map(|index| {
+                let (column, row) = ((index % 8) as u32, (index / 8) as u32);
+                let square =
+                    Square::from_coords(shakmaty::File::new(column), shakmaty::Rank::new(7 - row));
+                match board.piece_at(square) {
+                    Some(piece) => read(piece, &[]),
+                    None => Read::Empty { doubtful: false },
+                }
+            })
+            .collect();
+        let recognised = assemble(&reads, true);
+        assert!(recognised.white_at_bottom);
+        assert_eq!(recognised.fen, "8/8/2K5/8/P4k2/8/8/8 w - - 0 1");
+        assert!(!assemble(&reads, false).white_at_bottom);
     }
 
     /// A second white king is read as its next likeliest piece, a pawn on the last rank too, and
@@ -342,7 +376,7 @@ mod tests {
             doubtful: false,
         };
         reads[52] = read(piece(Color::White, Role::Pawn), &[]);
-        let recognised = assemble(&reads);
+        let recognised = assemble(&reads, false);
         assert_eq!(recognised.fen, "Q3k3/8/8/8/8/8/4P3/3RK3 b - - 0 1");
         assert_eq!(recognised.doubtful, vec![Square::D1, Square::A8]);
         assert_eq!(recognised.turn, Color::Black);
@@ -378,7 +412,7 @@ mod tests {
         };
         // h5: doubtfully empty.
         reads[31] = Read::Empty { doubtful: true };
-        let recognised = assemble(&reads);
+        let recognised = assemble(&reads, false);
         assert_eq!(recognised.fen, "1r2k3/8/8/8/2B5/8/PPPPPPPP/4K3 w - - 0 1");
         assert_eq!(
             recognised.doubtful,

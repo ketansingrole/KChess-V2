@@ -78,14 +78,14 @@ fn dips(values: &[f32]) -> Vec<usize> {
     found
 }
 
-/// `picture` averaged over a `window`-pixel square around each pixel.
-pub(crate) fn smooth(picture: &Picture, window: usize) -> Picture {
+/// `picture` averaged over a `window`-pixel square around each pixel. The window may be a
+/// fraction of a pixel wider than whole pixels, as a texture's period is.
+pub(crate) fn smooth(picture: &Picture, window: f32) -> Picture {
     let (width, height) = (picture.width, picture.height);
-    let half = window / 2;
     let mut rows = vec![[0f32; 3]; width * height];
     for y in 0..height {
         let row = &picture.rgb[y * width..(y + 1) * width];
-        box_line(row, &mut rows[y * width..(y + 1) * width], half, window);
+        box_line(row, &mut rows[y * width..(y + 1) * width], window);
     }
     let mut out = vec![[0f32; 3]; width * height];
     let mut column = vec![[0f32; 3]; height];
@@ -94,7 +94,7 @@ pub(crate) fn smooth(picture: &Picture, window: usize) -> Picture {
         for y in 0..height {
             column[y] = rows[y * width + x];
         }
-        box_line(&column, &mut smoothed, half, window);
+        box_line(&column, &mut smoothed, window);
         for y in 0..height {
             out[y * width + x] = smoothed[y];
         }
@@ -106,9 +106,9 @@ pub(crate) fn smooth(picture: &Picture, window: usize) -> Picture {
     }
 }
 
-/// `line` averaged over `window` values, `half` before each and the rest after; the ends
-/// average what lies within the line.
-fn box_line(line: &[[f32; 3]], out: &mut [[f32; 3]], half: usize, window: usize) {
+/// `line` averaged over `window` around each value's middle, each value weighed by how much of
+/// it the window covers; the ends average what lies within the line.
+fn box_line(line: &[[f32; 3]], out: &mut [[f32; 3]], window: f32) {
     let n = line.len();
     let mut prefix = vec![[0f32; 3]; n + 1];
     for (at, colour) in line.iter().enumerate() {
@@ -116,12 +116,105 @@ fn box_line(line: &[[f32; 3]], out: &mut [[f32; 3]], half: usize, window: usize)
             prefix[at + 1][c] = prefix[at][c] + colour[c];
         }
     }
+    // The sum of the line from its start to `t`, a value covered in part counted in part.
+    let sum = |t: f32, c: usize| {
+        let whole = (t.floor() as usize).min(n);
+        let part = if whole < n {
+            (t - whole as f32) * line[whole][c]
+        } else {
+            0.
+        };
+        prefix[whole][c] + part
+    };
     for (at, slot) in out.iter_mut().enumerate() {
-        let low = at.saturating_sub(half);
-        let high = (at + window - half).min(n);
-        let count = (high - low) as f32;
-        for c in 0..3 {
-            slot[c] = (prefix[high][c] - prefix[low][c]) / count;
+        let middle = at as f32 + 0.5;
+        let low = (middle - window / 2.).max(0.);
+        let high = (middle + window / 2.).min(n as f32);
+        for (c, value) in slot.iter_mut().enumerate() {
+            *value = (sum(high, c) - sum(low, c)) / (high - low);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `side`-pixel white picture hatched with rising lines `spacing` pixels apart along a row
+    /// and `thickness` thick, their edges grey where they cross a pixel in part.
+    fn hatched(side: usize, spacing: f32, thickness: f32) -> Picture {
+        const FINE: usize = 4;
+        let rgb = (0..side * side)
+            .map(|index| {
+                let (x, y) = (index % side, index / side);
+                let mut ink = 0;
+                for sy in 0..FINE {
+                    for sx in 0..FINE {
+                        let u = x as f32 + (sx as f32 + 0.5) / FINE as f32;
+                        let v = y as f32 + (sy as f32 + 0.5) / FINE as f32;
+                        ink += usize::from((u + v).rem_euclid(spacing) < thickness);
+                    }
+                }
+                [255. * (1. - ink as f32 / (FINE * FINE) as f32); 3]
+            })
+            .collect();
+        Picture {
+            width: side,
+            height: side,
+            rgb,
+        }
+    }
+
+    /// The darkest and lightest of `picture` away from its edges.
+    fn range(picture: &Picture, away: usize) -> (f32, f32) {
+        let mut low = f32::MAX;
+        let mut high = f32::MIN;
+        for y in away..picture.height - away {
+            for x in away..picture.width - away {
+                let v = crate::picture::luma(picture.rgb[y * picture.width + x]);
+                low = low.min(v);
+                high = high.max(v);
+            }
+        }
+        (low, high)
+    }
+
+    /// Hatching is found at its spacing, a fraction of a pixel included, from fine to coarse;
+    /// a plain page and a board of plain squares have no texture.
+    #[test]
+    fn hatching_is_found_at_its_period() {
+        for spacing in [3.4, 5.35, 8., 12.5] {
+            let picture = hatched(160, spacing, spacing * 0.4);
+            let found = period(&picture.luma(), 160, 160);
+            assert!(
+                found.is_some_and(|found| (found - spacing).abs() < 0.25),
+                "{spacing}: {found:?}"
+            );
+        }
+        let plain = vec![255.; 100 * 100];
+        assert_eq!(period(&plain, 100, 100), None);
+        let board: Vec<f32> = (0..160 * 160)
+            .map(|index| {
+                let (x, y) = (index % 160 / 20, index / 160 / 20);
+                if (x + y) % 2 == 0 { 240. } else { 120. }
+            })
+            .collect();
+        assert_eq!(period(&board, 160, 160), None);
+    }
+
+    /// Averaged over its period, a fraction of a pixel included, hatching is a tone: of the
+    /// page's whole range from ink to paper, a few levels are left.
+    #[test]
+    fn averaging_over_the_period_leaves_a_tone() {
+        for spacing in [4.6, 5.35, 7.3] {
+            let picture = hatched(120, spacing, spacing * 0.4);
+            let (low, high) = range(&smooth(&picture, spacing), 8);
+            assert!(high - low < 15., "{spacing}: {low} to {high}");
+            let tone = 255. * 0.6;
+            assert!(
+                (low + high) / 2. - tone < 6. && tone - (low + high) / 2. < 6.,
+                "{spacing}: {low} to {high} against {tone}"
+            );
         }
     }
 }
