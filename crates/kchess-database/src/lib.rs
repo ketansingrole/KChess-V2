@@ -94,11 +94,10 @@ const STRUCTURES: [(&str, &str); 6] = [
 ];
 /// The most moves a moves field takes.
 const MOST_MOVES: u32 = 600;
-/// The master games: Lichess's broadcast archive, some 770 MB to download in all (2026-11).
-const MASTERS_LABEL: &str = "Master games · 770 MB";
+/// The broadcast games: Lichess's broadcast archive, some 770 MB to download in all (2026-11).
+const MASTERS_LABEL: &str = "Broadcast games · 770 MB";
 const MASTERS_BYTES: u64 = 770 * 1024 * 1024;
-const MASTERS_TIP: &str =
-    "Games from top over-the-board events since 2020, from Lichess's broadcasts";
+const MASTERS_TIP: &str = "Games of the top over-the-board events Lichess has broadcast since 2020";
 /// TCEC's engine games: its compact release, some 27 MB to download (2026-06).
 const TCEC_LABEL: &str = "Engine games · 27 MB";
 const TCEC_BYTES: u64 = 27 * 1024 * 1024;
@@ -1403,7 +1402,7 @@ impl Render for DatabasePage {
                         .small()
                         .icon(icon("download"))
                         .label(if masters {
-                            SharedString::new_static("Update master games")
+                            SharedString::new_static("Update broadcast games")
                         } else {
                             SharedString::new_static(MASTERS_LABEL)
                         })
@@ -1602,7 +1601,7 @@ impl PageAction for Action {
             ),
             Action::Masters => ActionInfo::new(
                 "database:masters",
-                "Download master games",
+                "Download broadcast games",
                 "download",
                 "masters broadcasts otb grandmaster update",
             ),
@@ -1776,7 +1775,7 @@ pub fn import_dropped(path: std::path::PathBuf, window: &mut Window, cx: &mut Ap
     game_db::import_with_room(path, window, cx);
 }
 
-/// Download the master games (or their newer months), once the disk has room for them.
+/// Download the broadcast games (or their newer months), once the disk has room for them.
 pub(crate) fn install_masters(window: &mut Window, cx: &mut App) {
     game_db::with_room(
         Some(MASTERS_BYTES),

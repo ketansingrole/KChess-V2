@@ -1,4 +1,4 @@
-//! The master games download through the core's methods, against a local copy of Lichess's
+//! The broadcast games download through the core's methods, against a local copy of Lichess's
 //! broadcast archive: `list.txt`, `sha256sums.txt` and tiny monthly `.pgn.zst` files.
 
 use std::collections::HashMap;
@@ -222,7 +222,7 @@ async fn the_master_games_install_by_month_and_a_later_call_brings_only_new_mont
     assert_eq!(installed["added"], 4);
     let database = &installed["database"];
     assert_eq!(database["id"], "master");
-    assert_eq!(database["name"], "Master games");
+    assert_eq!(database["name"], "Broadcast games");
     assert_eq!(database["source"], "master");
     assert_eq!(database["games"], 4);
     assert_eq!(
@@ -330,7 +330,7 @@ async fn a_month_that_fails_its_checksum_is_removed_and_the_months_in_are_kept()
         .expect_err("the digest does not match");
     assert_eq!(
         failed.message,
-        "The master games of 2026-10 did not arrive intact. Try again."
+        "The broadcast games of 2026-10 did not arrive intact. Try again."
     );
     assert_eq!(month_requests(&fixture, "2026-10"), 1);
     assert!(leftovers(profile.path()).is_empty());

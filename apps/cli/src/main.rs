@@ -92,7 +92,7 @@ commands! {
     Db "db" ["database"] {
         "[list]" => "List the game databases on this computer as JSON",
         "import <file> [--into id] [--name name]" => "Import a .pgn, .pgn.zst, .pgn.bz2, .zip or .7z file into a new database, or into one",
-        "masters [--months n]" => "Download the master games (Lichess's broadcasts), or only their newest months",
+        "broadcasts [--months n]" => "Download the games Lichess has broadcast from top events, or only their newest months",
         "tcec" => "Download TCEC's engine games, or their latest season",
         "player lichess|chesscom <name> [--months n] [--speed s,…] [--rated]" => "Download a player's games into their own database, to prepare against them",
         "lichess [--rating n] [--month YYYY-MM]" => "Download a month of Lichess's rated games, keeping those of two players rated at least n (2400), no bullet or bots",

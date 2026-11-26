@@ -463,7 +463,7 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
     // Broadcasts are public: a listing whose covers are KChess's icons, as Lichess names its
     // pictures (`image.lichess.org`, which the app reads here); and a tournament of two rounds,
     // which a round's link finds.
-    // The master games archive (`database.lichess.org/broadcast/`): one month of two games.
+    // The broadcast games archive (`database.lichess.org/broadcast/`): one month of two games.
     if let Some(name) = request.path().strip_prefix("/database/broadcast/") {
         return match master_archive(name) {
             Some(body) => kchess_testkit::respond(out, 200, "application/octet-stream", &body),
@@ -876,7 +876,7 @@ fn unauthorized(out: &mut TcpStream) -> std::io::Result<()> {
     kchess_testkit::json(out, 401, &json!({ "error": "No such token" }))
 }
 
-/// The month the master games archive lists, and its games.
+/// The month the broadcast games archive lists, and its games.
 pub const MASTER_MONTH: &str = "2026-10";
 pub const MASTER_GAMES: &str = "[Event \"Grand Open\"]\n[Date \"2026.10.04\"]\n\
      [White \"Firouzja, Alireza\"]\n[Black \"Caruana, Fabiano\"]\n[Result \"1-0\"]\n\
@@ -892,7 +892,7 @@ pub const SCOUTED_GAMES: &str = "[Event \"Rated blitz game\"]\n[Date \"2026.11.0
      [Event \"Rated blitz game\"]\n[Date \"2026.11.03\"]\n[White \"Rival\"]\n\
      [Black \"Scouted_Player\"]\n[Result \"0-1\"]\n\n1. d4 Nf6 0-1\n\n\n";
 
-/// A file of the master games archive: its list of months, their digests, or a month's games
+/// A file of the broadcast games archive: its list of months, their digests, or a month's games
 /// packed as the archive packs them.
 fn master_archive(name: &str) -> Option<Vec<u8>> {
     use sha2::Digest as _;

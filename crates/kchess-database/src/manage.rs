@@ -18,7 +18,7 @@ fn source_label(source: DatabaseSource) -> &'static str {
     match source {
         DatabaseSource::Imported => "Imported",
         DatabaseSource::Own => "Your games",
-        DatabaseSource::Master => "Master games",
+        DatabaseSource::Master => "Broadcast games",
         DatabaseSource::Player => "Player's games",
         DatabaseSource::Lichess => "Lichess games",
         DatabaseSource::Tcec => "Engine games",

@@ -35,7 +35,7 @@ pub struct GameDb {
     _events: Subscription,
 }
 
-/// The master games' database, as the core names it.
+/// The broadcast games' database, as the core names it.
 const MASTER: &str = "master";
 /// The engine games' database.
 const TCEC: &str = "tcec";
@@ -202,7 +202,7 @@ impl GameDb {
         self.run(GameDbPhase::Reading, "", import, |_, _| {}, cx);
     }
 
-    /// Downloads the master games the master database lacks: every month at first, then the
+    /// Downloads the broadcast games their database lacks: every month at first, then the
     /// months published since.
     pub fn install_masters(&mut self, cx: &mut Context<Self>) {
         let install = cx
@@ -498,8 +498,10 @@ pub fn import_card(cx: &App, palette: &Palette) -> impl IntoElement + use<> {
                         "Downloading Lichess games · {month} · {}",
                         widgets::format_counted(progress.games as f64, "game", "games")
                     ),
-                    Some(month) => format!("Downloading master games · {month}"),
-                    None if progress.database == MASTER => "Downloading master games…".to_string(),
+                    Some(month) => format!("Downloading broadcast games · {month}"),
+                    None if progress.database == MASTER => {
+                        "Downloading broadcast games…".to_string()
+                    }
                     None if progress.database == TCEC => "Downloading engine games…".to_string(),
                     // A player's games, counted as they arrive.
                     None if progress.games > 0 => format!(

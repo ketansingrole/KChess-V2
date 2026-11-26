@@ -68,7 +68,7 @@ pub struct LichessHeld {
 }
 
 union!(#[doc = "Progress stage of a game database import; `downloading` while a month of the \
-    master games arrives, before it is read."] GameDbPhase {
+    broadcast games arrives, before it is read."] GameDbPhase {
     Downloading = "downloading",
     Reading = "reading",
     Indexing = "indexing",
@@ -137,7 +137,7 @@ pub struct GameDbProgress {
     /// The file's size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_bytes: Option<u64>,
-    /// Why it failed; while the master games arrive, the month being brought in (`2026-10`).
+    /// Why it failed; while the broadcast games arrive, the month being brought in (`2026-10`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }

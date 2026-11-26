@@ -229,7 +229,7 @@ impl SettingsPage {
             )
         };
         if count == 0 {
-            return row("Master, engine and players' games to search".into()).action(
+            return row("Broadcast, engine and players' games to search".into()).action(
                 Button::new("storage-databases-open")
                     .outline()
                     .small()
