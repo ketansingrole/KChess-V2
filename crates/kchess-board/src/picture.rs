@@ -204,4 +204,19 @@ mod tests {
             assert_reads_well(&outcomes);
         }
     }
+
+    /// Reads the pictures `KCHESS_RECOGNISE_FILES` names (separated by `:`), printing each one's
+    /// position or refusal: for trying the reader on pictures that cannot be in the repository.
+    #[test]
+    #[ignore = "reads files named in KCHESS_RECOGNISE_FILES"]
+    fn read_files() {
+        let files = std::env::var("KCHESS_RECOGNISE_FILES").unwrap_or_default();
+        for path in files.split(':').filter(|path| !path.is_empty()) {
+            let bytes = std::fs::read(path).unwrap();
+            match super::read_board_picture(&bytes) {
+                Ok(read) => println!("{path}\t{}\tdoubtful {:?}", read.fen, read.doubtful),
+                Err(refusal) => println!("{path}\trefused: {refusal}"),
+            }
+        }
+    }
 }
