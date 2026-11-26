@@ -1,0 +1,7 @@
+{
+  "com.apple.security.device.audio-input": "Same voice input feature: audio is captured from the default input device through Core Audio, only while voice input is on.",
+  "com.apple.security.device.microphone": "Optional voice input: players say their chess moves and the app recognizes them on the Mac with an offline speech model. No audio is recorded, stored or sent. Play with computer > Voice button beside the board.",
+  "com.apple.security.files.user-selected.read-write": "Saves exports where the user chooses in the save panel: Export > PGN file / PNG of this position, and Settings > Data & storage > Export diagnostics.",
+  "com.apple.security.network.client": "Lichess online play, sign-in and game data; one-time downloads of the puzzle database and the speech model; the optional ChatGPT coach.",
+  "com.apple.security.network.server": "OAuth loopback redirect (RFC 8252) for the Lichess and ChatGPT sign-in: listens on 127.0.0.1 only while a sign-in is in progress, accepts one callback with the expected state, then closes (5 minutes at most)."
+}

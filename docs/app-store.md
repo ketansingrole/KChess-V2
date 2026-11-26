@@ -36,6 +36,32 @@ ad hoc in the sandbox and leaves it in `apps/gpui/dist/mas/KChess.app`.
    released) it submits nothing, so that review never restarts: once that version is out, run
    Publish to the App Store by hand with the newest tag.
 
+## What App Review reads
+
+App Review asks how the app uses each sandbox entitlement (guideline 2.4.5), and holds the review
+until it hears. Two places answer it, and both belong to each version:
+
+- **App Review Information** notes: `app-store/review-information.json`. Publish to the App Store
+  writes them (`asc review details set`) after staging the version. Only the file's fields are
+  written; the contact (name, phone, email) stays as App Store Connect has it, so it never goes in
+  this public repository.
+- **App Sandbox Information**: one row per entitlement, in `app-store/sandbox-information.json`.
+  App Store Connect takes these only through an Apple Account sign-in, which CI doesn't have, so
+  the run's notice names the version to check. Before Apple reviews it, list the rows and set any
+  that are missing or different:
+
+  ```bash
+  asc web review sandbox-entitlements list --version-id VERSION_ID
+  ```
+
+  ```bash
+  asc web review sandbox-entitlements set --version-id VERSION_ID --entitlement KEY --justification "TEXT" --confirm
+  ```
+
+An entitlement added to the store build (`app_entitlements` in `tooling/xtask/src/package/mas.rs`)
+needs its row in `app-store/sandbox-information.json`: xtask's tests fail without one. Change the
+reviewer's notes in `app-store/review-information.json` when a feature they describe changes.
+
 A failed upload: rerun the tag's `app-store` job; a build number is accepted once, so a build that
 reached App Store Connect needs no rerun. A failed submission: rerun Publish to the App Store, or
 run it by hand with the tag.
