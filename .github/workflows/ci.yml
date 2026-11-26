@@ -385,6 +385,10 @@ jobs:
         with:
           name: vendor-headless
       - uses: ./.github/actions/headless-tests
+      # TEMPORARY (claude/close-under-load): every core close that took over 250 ms.
+      - if: always()
+        shell: pwsh
+        run: Get-Content (Join-Path $env:TEMP 'kchess-close-timing.log') -ErrorAction SilentlyContinue
       - if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         uses: ./.github/actions/drop-caches
         with:

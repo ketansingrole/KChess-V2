@@ -42,7 +42,24 @@ async fn closing_ends_a_lichess_request_in_flight() {
         let core = Arc::clone(&core);
         tokio::spawn(async move { core.call("profile", vec![json!("someone")]).await })
     };
+    let __asking = std::time::Instant::now();
     let _asked = crate::support::accepted(&silent).await;
+    {
+        // TEMPORARY timing (claude/close-under-load).
+        use std::io::Write as _;
+        let report = format!(
+            "TEST-TIMING lichess: connected after {:?}\n",
+            __asking.elapsed()
+        );
+        eprint!("{report}");
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(std::env::temp_dir().join("kchess-close-timing.log"))
+        {
+            let _ = file.write_all(report.as_bytes());
+        }
+    }
 
     tokio::time::timeout(LIMIT, core.close())
         .await

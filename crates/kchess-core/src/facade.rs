@@ -288,33 +288,69 @@ impl Core {
     }
 
     async fn shutdown(&self) {
+        // TEMPORARY close timing (claude/close-under-load): measured on Windows CI.
+        let __t0 = std::time::Instant::now();
+        let mut __tl = __t0;
+        let mut __steps: Vec<String> = Vec::new();
+        macro_rules! step {
+            ($n:expr) => {{
+                let now = std::time::Instant::now();
+                __steps.push(format!(
+                    "{:>9.1}ms {}",
+                    (now - __tl).as_secs_f64() * 1000.0,
+                    $n
+                ));
+                __tl = now;
+            }};
+        }
         self.closed.store(true, Ordering::SeqCst);
+        step!("self.closed.store(true, Ordering::SeqCst);");
         self.ai.lifetime().cancel();
+        step!("self.ai.lifetime().cancel();");
         // A renewal OpenAI is answering ends with its save, while the keychain and the database
         // are still open: its old refresh token is used up.
         self.ai.close_renewals();
+        step!("self.ai.close_renewals();");
         self.ai.renewals.wait().await;
+        step!("self.ai.renewals.wait().await;");
         self.services.spectator().stop();
+        step!("self.services.spectator().stop();");
         self.services.online().close();
+        step!("self.services.online().close();");
         self.analysis.stop_analysis(true);
+        step!("self.analysis.stop_analysis(true);");
         // Stops and closes the computer's engine too.
         self.search.reset_engine();
+        step!("self.search.reset_engine();");
         self.reviews.stop_reviews().await;
+        step!("self.reviews.stop_reviews().await;");
         self.voice.stop().await;
+        step!("self.voice.stop().await;");
         // A model being prepared stops writing the voice folder before the profile is released.
         self.voice_model.shutdown().await;
+        step!("self.voice_model.shutdown().await;");
         // Likewise a tablebase download, writing the tablebases folder.
         self.tablebases.shutdown().await;
+        step!("self.tablebases.shutdown().await;");
         self.usage.flush().await;
+        step!("self.usage.flush().await;");
         // Cancel what is in flight: installs, pending host requests, lookups, downloads, streams.
         self.capabilities.close();
+        step!("self.capabilities.close();");
         self.battery.close();
+        step!("self.battery.close();");
         self.cancel_installs();
+        step!("self.cancel_installs();");
         self.puzzles.cancel();
+        step!("self.puzzles.cancel();");
         self.gamedb.stop();
+        step!("self.gamedb.stop();");
         self.services.abort();
+        step!("self.services.abort();");
         self.chesscom.abort();
+        step!("self.chesscom.abort();");
         self.tracker.close();
+        step!("self.tracker.close();");
         if let Err(cause) = self.ctx.hub.close_engines().await {
             self.host.log(
                 Level::Warn,
@@ -322,6 +358,7 @@ impl Core {
                 &format!("Engine shutdown failed: {}", cause.message),
             );
         }
+        step!("block");
         // The stopped analysis also ends (its final `interrupted` update sent, no longer running)
         // before close returns: on a busy Windows runner it was still current after close
         // (2026-11-10). Bounded: with its engine gone it ends at once.
@@ -330,17 +367,46 @@ impl Core {
             self.analysis.settled(),
         )
         .await;
+        step!(".await;");
         self.tracker.wait().await;
+        step!("self.tracker.wait().await;");
         self.services.reset();
+        step!("self.services.reset();");
         self.usage.close();
+        step!("self.usage.close();");
         self.puzzles.close().await;
+        step!("self.puzzles.close().await;");
         self.gamedb.close().await;
+        step!("self.gamedb.close().await;");
         self.database.close_async().await;
+        step!("self.database.close_async().await;");
         let before_release = std::mem::take(&mut *lock(&self.before_release));
+        step!("let before_release = std::mem::take(&mut *lock(&self.before_");
         for cleanup in before_release {
             cleanup();
         }
+        step!("block");
         self.claim.release();
+        step!("claim.release");
+        let __total = __t0.elapsed();
+        if __total > std::time::Duration::from_millis(250) {
+            let report = format!(
+                "CLOSE-TIMING total {:.1}ms in {:?} (thread {:?})\n{}\n",
+                __total.as_secs_f64() * 1000.0,
+                self.data_dir,
+                std::thread::current().name(),
+                __steps.join("\n")
+            );
+            eprint!("{report}");
+            use std::io::Write as _;
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(std::env::temp_dir().join("kchess-close-timing.log"))
+            {
+                let _ = file.write_all(report.as_bytes());
+            }
+        }
     }
 }
 

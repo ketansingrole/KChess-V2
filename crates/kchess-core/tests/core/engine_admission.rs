@@ -92,7 +92,24 @@ async fn stopping_cancels_analysis_waiting_for_settings() {
 async fn recovery_cancels_analysis_waiting_for_settings() {
     let dir = tempfile::tempdir().unwrap();
     let host = support::host();
+    let __t = std::time::Instant::now();
     let core = prepared(dir.path(), &host).await;
+    let __prepared = __t.elapsed();
+    // TEMPORARY: the longest the test's runtime thread went without running a 5 ms ticker.
+    let __gap = Arc::new(std::sync::Mutex::new(Duration::ZERO));
+    let __ticker = tokio::spawn({
+        let gap = Arc::clone(&__gap);
+        async move {
+            let mut last = std::time::Instant::now();
+            loop {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                let now = std::time::Instant::now();
+                let mut gap = gap.lock().unwrap();
+                *gap = (*gap).max(now - last);
+                last = now;
+            }
+        }
+    });
     let storage = core.hold_storage_for_tests().await.unwrap();
     let start = core.call(
         "startAnalysis",
@@ -140,7 +157,24 @@ async fn stopping_cancels_computer_search_waiting_for_settings() {
 async fn close_drains_and_cancels_a_pending_analysis_start() {
     let dir = tempfile::tempdir().unwrap();
     let host = support::host();
+    let __t = std::time::Instant::now();
     let core = prepared(dir.path(), &host).await;
+    let __prepared = __t.elapsed();
+    // TEMPORARY: the longest the test's runtime thread went without running a 5 ms ticker.
+    let __gap = Arc::new(std::sync::Mutex::new(Duration::ZERO));
+    let __ticker = tokio::spawn({
+        let gap = Arc::clone(&__gap);
+        async move {
+            let mut last = std::time::Instant::now();
+            loop {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                let now = std::time::Instant::now();
+                let mut gap = gap.lock().unwrap();
+                *gap = (*gap).max(now - last);
+                last = now;
+            }
+        }
+    });
     let storage = core.hold_storage_for_tests().await.unwrap();
     let start = core.call(
         "startAnalysis",
@@ -149,11 +183,31 @@ async fn close_drains_and_cancels_a_pending_analysis_start() {
     tokio::pin!(start);
     assert!(poll!(&mut start).is_pending());
     drop(storage);
-    let (_, result) = tokio::time::timeout(Duration::from_secs(2), async {
+    let __closing = std::time::Instant::now();
+    let timed = tokio::time::timeout(Duration::from_secs(2), async {
         tokio::join!(core.close(), start)
     })
-    .await
-    .expect("close must cancel a pending start");
+    .await;
+    let report = format!(
+        "TEST-TIMING close_drains: prepared {:?}, close+start {:?} ({}), longest runtime stall {:?}\n",
+        __prepared,
+        __closing.elapsed(),
+        if timed.is_ok() { "ok" } else { "timed out" },
+        *__gap.lock().unwrap()
+    );
+    __ticker.abort();
+    eprint!("{report}");
+    {
+        use std::io::Write as _;
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(std::env::temp_dir().join("kchess-close-timing.log"))
+        {
+            let _ = file.write_all(report.as_bytes());
+        }
+    }
+    let (_, result) = timed.expect("close must cancel a pending start");
     assert!(result.unwrap_err().aborted);
     assert!(host.named("engine:analysis").is_empty());
 }
