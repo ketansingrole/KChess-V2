@@ -95,8 +95,8 @@ fn white_at_bottom(reads: &[Read], printed: bool) -> bool {
 
 /// The position `reads` (the picture's squares from its top left, row by row) show, on a
 /// `printed` diagram or not.
-pub(crate) fn assemble(reads: &[Read], printed: bool) -> Recognised {
-    let white_at_bottom = white_at_bottom(reads, printed);
+pub(crate) fn assemble(reads: &[Read], printed: bool, numbered: Option<bool>) -> Recognised {
+    let white_at_bottom = numbered.unwrap_or_else(|| white_at_bottom(reads, printed));
     let square_of = |index: usize| {
         let (column, row) = ((index % 8) as u32, (index / 8) as u32);
         let (file, rank) = if white_at_bottom {
@@ -318,7 +318,7 @@ mod tests {
                 .collect()
         };
         for flipped in [false, true] {
-            let recognised = assemble(&reads(flipped), false);
+            let recognised = assemble(&reads(flipped), false, None);
             assert_eq!(
                 recognised.fen,
                 "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
@@ -348,10 +348,10 @@ mod tests {
                 }
             })
             .collect();
-        let recognised = assemble(&reads, true);
+        let recognised = assemble(&reads, true, None);
         assert!(recognised.white_at_bottom);
         assert_eq!(recognised.fen, "8/8/2K5/8/P4k2/8/8/8 w - - 0 1");
-        assert!(!assemble(&reads, false).white_at_bottom);
+        assert!(!assemble(&reads, false, None).white_at_bottom);
     }
 
     /// A second white king is read as its next likeliest piece, a pawn on the last rank too, and
@@ -376,7 +376,7 @@ mod tests {
             doubtful: false,
         };
         reads[52] = read(piece(Color::White, Role::Pawn), &[]);
-        let recognised = assemble(&reads, false);
+        let recognised = assemble(&reads, false, None);
         assert_eq!(recognised.fen, "Q3k3/8/8/8/8/8/4P3/3RK3 b - - 0 1");
         assert_eq!(recognised.doubtful, vec![Square::D1, Square::A8]);
         assert_eq!(recognised.turn, Color::Black);
@@ -412,7 +412,7 @@ mod tests {
         };
         // h5: doubtfully empty.
         reads[31] = Read::Empty { doubtful: true };
-        let recognised = assemble(&reads, false);
+        let recognised = assemble(&reads, false, None);
         assert_eq!(recognised.fen, "1r2k3/8/8/8/2B5/8/PPPPPPPP/4K3 w - - 0 1");
         assert_eq!(
             recognised.doubtful,

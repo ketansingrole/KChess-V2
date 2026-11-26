@@ -25,6 +25,7 @@ use kchess_hack as _;
 mod grid;
 mod picture;
 mod position;
+mod sprites;
 mod squares;
 mod texture;
 
@@ -149,15 +150,35 @@ impl Recogniser {
         // An edge averaged over the period is a ramp that wide: the flat stretches either side
         // of it start beyond it.
         let skip = 1 + period.map_or(0, |period| (period / 2.) as usize);
-        let (grid, colours) = grid::candidates(picture, skip)
-            .into_iter()
-            .take(6)
-            .find_map(|grid| {
+        // Lines drawn between the squares are passed over as the ramp is: a line wider than
+        // that gap (a large board's) shows as two weaker edges, one either side of it, and
+        // passed over whole as one edge at its middle, half again as strong as both. (A
+        // textured picture's gap is already the texture's.)
+        let find = |cut: f32| {
+            let first = |skip| -> Vec<grid::Grid> {
+                grid::candidates(picture, skip, cut)
+                    .into_iter()
+                    .take(6)
+                    .collect()
+            };
+            let mut grids = first(skip);
+            if period.is_none() {
+                let wider = first(skip + 2);
+                let best = |grids: &[grid::Grid]| grids.first().map_or(0., |grid| grid.score);
+                if best(&wider) > 1.5 * best(&grids) {
+                    grids = wider;
+                } else {
+                    grids.extend(wider);
+                }
+            }
+            grids.into_iter().find_map(|grid| {
                 let probe = cell_size(&grid);
                 let cells = squares::cells(picture, &grid, probe, 0.);
                 squares::checkered(&cells).map(|colours| (grid, colours))
             })
-            .ok_or(Refusal::NoBoard)?;
+        };
+        let (mut grid, colours) = find(grid::CUT).ok_or(Refusal::NoBoard)?;
+        grid.gap = grid::gap(picture, &grid, colours);
         let size = cell_size(&grid);
         // The texture's period in the cells' pixels.
         let blur = period.map_or(0., |period| {
@@ -186,7 +207,10 @@ impl Recogniser {
             }
         }
         let reads = self.read_squares(&cells, size, colours, blur, paper);
-        Ok(position::assemble(&reads, blur > 0.))
+        // Coordinates printed in the edge squares say which way up the board is where they
+        // can be read; else the pieces do.
+        let numbered = squares::ones_at_bottom(&cells, size);
+        Ok(position::assemble(&reads, blur > 0., numbered))
     }
 
     /// The bundled pieces drawn at `size`, drawn once per size.
@@ -297,6 +321,9 @@ impl Recogniser {
             .collect();
         let labels = squares::labels(cells, size);
         let mut reads = Vec::with_capacity(cells.len());
+        // Each square's piece as it reads on its own: where it is in `reads`, its silhouette,
+        // its features, and how unlike each piece it is.
+        let mut found = Vec::new();
         for cell in cells {
             let shape = match squares::silhouette(size, cell, &labels[reads.len()]) {
                 Ok(shape) => shape,
@@ -340,7 +367,24 @@ impl Recogniser {
                     }
                 }
             }
-            let mut ranked: Vec<(Piece, f32)> = best
+            found.push((reads.len(), shape, features, best, cell));
+            reads.push(position::Read::Empty { doubtful: true });
+        }
+        // Then all together, a sprite read as one.
+        let mut seen: Vec<sprites::Seen> = found
+            .iter()
+            .map(|(index, shape, features, best, cell)| sprites::Seen {
+                features,
+                cell,
+                shape,
+                best: *best,
+                home: matches!(index / 8, 0 | 7),
+            })
+            .collect();
+        sprites::together(&mut seen, blur > 0.);
+        for ((index, shape, ..), seen) in found.iter().zip(&seen) {
+            let mut ranked: Vec<(Piece, f32)> = seen
+                .best
                 .iter()
                 .enumerate()
                 .filter(|(_, apart)| **apart < f32::MAX)
@@ -348,12 +392,11 @@ impl Recogniser {
                 .collect();
             ranked.sort_by(|a, b| a.1.total_cmp(&b.1));
             if ranked.is_empty() {
-                reads.push(position::Read::Empty { doubtful: true });
                 continue;
             }
             let doubtful =
                 shape.area < squares::PIECE_AREA * 1.5 || position::doubtful_ranking(&ranked);
-            reads.push(position::Read::Piece { ranked, doubtful });
+            reads[*index] = position::Read::Piece { ranked, doubtful };
         }
         reads
     }

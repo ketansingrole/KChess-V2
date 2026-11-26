@@ -189,8 +189,12 @@ fn an_earlier_releases_window_and_interface_size_move_into_the_core(
         .expect("the profile")
         .path()
         .to_path_buf();
-    assert!(!profile.join("window-state.json").exists());
-    assert!(!profile.join("interface-zoom.json").exists());
+    // Each file is removed once the core has saved its value, off the main thread: after the
+    // value reads back, not with it. Looked at straight away, a busy macOS runner still had
+    // `window-state.json` (2026-11-27).
+    app.wait_for_app("the earlier release's files to be removed", |_| {
+        !profile.join("window-state.json").exists() && !profile.join("interface-zoom.json").exists()
+    });
 }
 
 /// A resized window is saved through the core, and opens at that size again.

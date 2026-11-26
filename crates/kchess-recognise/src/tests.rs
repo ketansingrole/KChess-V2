@@ -46,6 +46,25 @@ fn picture(
     white_at_bottom: bool,
     margin: u32,
 ) -> image::RgbaImage {
+    picture_redrawn(
+        board,
+        pieces,
+        square,
+        white_at_bottom,
+        margin,
+        &|_, drawn| drawn,
+    )
+}
+
+/// `picture`, each piece's drawing passed through `redraw` first.
+fn picture_redrawn(
+    board: &Board,
+    pieces: &PieceSet,
+    square: usize,
+    white_at_bottom: bool,
+    margin: u32,
+    redraw: &dyn Fn(Piece, Vec<[f32; 4]>) -> Vec<[f32; 4]>,
+) -> image::RgbaImage {
     let side = (square * 8) as u32;
     let mut image =
         image::RgbaImage::from_pixel(side + 2 * margin, side + 2 * margin, image::Rgba([255; 4]));
@@ -78,7 +97,8 @@ fn picture(
                 .find(|(drawn, _)| *drawn == piece)
                 .unwrap()
                 .1;
-            for (index, [r, g, b, a]) in draw(svg, square).unwrap().into_iter().enumerate() {
+            let drawn = redraw(piece, draw(svg, square).unwrap());
+            for (index, [r, g, b, a]) in drawn.into_iter().enumerate() {
                 let (x, y) = (
                     left + (index % square) as u32,
                     top + (index / square) as u32,
@@ -177,6 +197,41 @@ fn pictures_without_a_board_are_refused() {
     );
 }
 
+/// A screenshot cut a little into the board, its outer squares narrower than the rest, and a
+/// board with lines drawn between its squares wider than a scaled edge's blur, are read.
+#[test]
+fn a_cut_board_and_a_board_with_lines_between_squares_are_read() {
+    let fen = "r1bq1rk1/pp2bppp/2n1pn2/3p4/2PP4/2N1PN2/PP1B1PPP/R2QKB1R w KQ - 0 1";
+    let board = fen
+        .parse::<shakmaty::fen::Fen>()
+        .unwrap()
+        .into_setup()
+        .board;
+    let pieces = set("cburnett");
+    for (square, cut) in [(60, 7), (60, 9), (45, 5), (90, 12)] {
+        let whole = picture(&board, &pieces, square, true, 0);
+        let side = whole.width() - 2 * cut;
+        let cut_into = image::imageops::crop_imm(&whole, cut, cut, side, side).to_image();
+        let read = recogniser().read(&png(&cut_into)).unwrap();
+        assert_eq!(read.fen, fen, "{square} pixels cut by {cut}");
+    }
+    for (square, line) in [(90, 3), (90, 4), (64, 3)] {
+        let mut lined = picture(&board, &pieces, square, true, 6);
+        let colour = image::Rgba([231, 196, 106, 255]);
+        for k in 1..8 {
+            let at = 6 + (k * square) as u32 - line / 2;
+            for along in 6..6 + 8 * square as u32 {
+                for across in at..at + line {
+                    lined.put_pixel(across, along, colour);
+                    lined.put_pixel(along, across, colour);
+                }
+            }
+        }
+        let read = recogniser().read(&png(&lined)).unwrap();
+        assert_eq!(read.fen, fen, "{square} pixels, lines {line} wide");
+    }
+}
+
 /// Coordinate labels in the corners of the edge squares, as a website draws them in the other
 /// square's colour, are left out of the squares, a piece standing on a labelled square included.
 #[test]
@@ -226,6 +281,98 @@ fn coordinate_labels_are_left_out() {
     assert_eq!(read.fen, fen);
     assert!(read.white_at_bottom);
     assert!(read.doubtful.is_empty(), "{:?}", read.doubtful);
+}
+
+/// A board drawn from Black's side with only its kings, each on the other's home rank, reads
+/// as White's from the pieces alone; its coordinates tell which way up it is: along the side,
+/// the "8" with two holes and the narrow "1", or along the bottom, the "a" with a hole and the
+/// "h" with none.
+#[test]
+fn coordinates_tell_which_way_up_a_board_is() {
+    let fen = "4K3/8/8/8/8/8/8/4k3 w - - 0 1";
+    let board = fen
+        .parse::<shakmaty::fen::Fen>()
+        .unwrap()
+        .into_setup()
+        .board;
+    let pieces = set("cburnett");
+    let square = 60u32;
+    let margin = 10;
+    let plain = picture(&board, &pieces, square as usize, false, margin);
+    let read = |image: image::RgbaImage| {
+        recogniser()
+            .read_image(&image::DynamicImage::ImageRgba8(image))
+            .unwrap()
+    };
+    assert!(read(plain.clone()).white_at_bottom);
+    // A glyph of `width` by `height` pixels at `(left, top)`, in strokes two pixels thick: a box
+    // (one hole), a box with a bar across (two, an "8"), a bar (none, a "1"), or a box open at
+    // the bottom (none, an "h").
+    #[derive(Clone, Copy, PartialEq)]
+    enum Glyph {
+        Box,
+        Eight,
+        One,
+        Arch,
+    }
+    let draw =
+        |image: &mut image::RgbaImage, glyph: Glyph, at: (u32, u32), row: u32, column: u32| {
+            let colour = if (row + column) % 2 == 1 {
+                image::Rgba([240, 217, 181, 255])
+            } else {
+                image::Rgba([181, 136, 99, 255])
+            };
+            let (left, top) = at;
+            let (width, height) = if glyph == Glyph::One {
+                (3, 16)
+            } else {
+                (10, 16)
+            };
+            for y in 0..height {
+                for x in 0..width {
+                    let side = x < 2 || x + 2 >= width;
+                    let on = match glyph {
+                        Glyph::One => true,
+                        Glyph::Box => side || y < 2 || y + 2 >= height,
+                        Glyph::Eight => side || y < 2 || y + 2 >= height || (7..9).contains(&y),
+                        Glyph::Arch => side || y < 2,
+                    };
+                    if on {
+                        image.put_pixel(left + x, top + y, colour);
+                    }
+                }
+            }
+        };
+    // From Black's side the top row is rank 1 and the left column the h-file.
+    let mut ranks = plain.clone();
+    for row in 0..8 {
+        let glyph = match row {
+            0 => Glyph::One,
+            7 => Glyph::Eight,
+            _ => Glyph::Box,
+        };
+        draw(
+            &mut ranks,
+            glyph,
+            (margin + 3, margin + row * square + 3),
+            row,
+            0,
+        );
+    }
+    assert!(!read(ranks).white_at_bottom);
+    let mut files = plain;
+    for column in 0..8 {
+        let glyph = match column {
+            0 => Glyph::Arch,
+            _ => Glyph::Box,
+        };
+        let at = (
+            margin + column * square + square - 13,
+            margin + 8 * square - 19,
+        );
+        draw(&mut files, glyph, at, 7, column);
+    }
+    assert!(!read(files).white_at_bottom);
 }
 
 /// How a printed diagram is drawn: dark squares hatched with lines `spacing` pixels apart along
@@ -413,7 +560,7 @@ fn random_position(rng: &mut Rng) -> Board {
 /// queen's points. A scanned book's hatching is uneven at random instead, and reads better.
 #[test]
 fn printed_diagrams_are_read() {
-    // Measured 2026-11-26 over these 48 pictures: 95.57% of squares, 25.0% of positions, 88% of
+    // Measured 2026-11-27 over these 48 pictures: 96.19% of squares, 43.8% of positions, 87% of
     // the wrong squares doubtful.
     const SQUARES: f32 = 95.;
     const POSITIONS: f32 = 20.;
@@ -490,4 +637,155 @@ fn printed_diagrams_are_read() {
         doubted >= DOUBTED,
         "{doubted:.0}% of wrong squares doubtful"
     );
+}
+
+/// A way of drawing a bundled set as a set no bundled set draws.
+#[derive(Clone, Copy, Debug)]
+enum Variant {
+    /// White's pieces cream and brown, Black's blue.
+    Recoloured,
+    /// Every edge a pixel further out, in the colour of the edge.
+    Thickened,
+    /// Softened, as a smaller drawing scaled up.
+    Smoothed,
+}
+
+/// `drawn` (premultiplied RGBA, `size` square), as `variant` draws `piece`.
+fn redrawn(variant: Variant, piece: Piece, size: usize, drawn: Vec<[f32; 4]>) -> Vec<[f32; 4]> {
+    let near = |index: usize| {
+        let (x, y) = ((index % size) as isize, (index / size) as isize);
+        [
+            (-1, -1),
+            (0, -1),
+            (1, -1),
+            (-1, 0),
+            (0, 0),
+            (1, 0),
+            (-1, 1),
+            (0, 1),
+            (1, 1),
+        ]
+        .into_iter()
+        .map(move |(dx, dy)| (x + dx, y + dy))
+        .filter(move |&(x, y)| (0..size as isize).contains(&x) && (0..size as isize).contains(&y))
+        .map(move |(x, y)| y as usize * size + x as usize)
+    };
+    match variant {
+        Variant::Recoloured => {
+            let (dark, light) = if piece.color == Color::White {
+                ([70., 40., 20.], [255., 240., 205.])
+            } else {
+                ([10., 20., 60.], [110., 135., 200.])
+            };
+            drawn
+                .into_iter()
+                .map(|[r, g, b, a]| {
+                    if a <= 0. {
+                        return [0.; 4];
+                    }
+                    let tone = picture::luma([r, g, b]) / a;
+                    let mix = |c: usize| a / 255. * (dark[c] + (light[c] - dark[c]) * tone);
+                    [mix(0), mix(1), mix(2), a]
+                })
+                .collect()
+        }
+        Variant::Thickened => (0..drawn.len())
+            .map(|index| {
+                near(index)
+                    .map(|at| drawn[at])
+                    .max_by(|a, b| a[3].total_cmp(&b[3]))
+                    .unwrap_or(drawn[index])
+            })
+            .collect(),
+        Variant::Smoothed => (0..drawn.len())
+            .map(|index| {
+                let (mut sum, mut count) = ([0f32; 4], 0.);
+                for at in near(index) {
+                    for c in 0..4 {
+                        sum[c] += drawn[at][c];
+                    }
+                    count += 1.;
+                }
+                sum.map(|c| c / count)
+            })
+            .collect(),
+    }
+}
+
+/// Sets no bundled set draws: bundled sets the recogniser does not compare with, and those
+/// recoloured, thickened or smoothed, on squares of 32 to 80 pixels.
+#[test]
+fn unseen_sets_are_read() {
+    // Measured 2026-11-27 over these 48 pictures: 96.68% of squares, 54.2% of positions, 99% of
+    // the wrong squares doubtful; read square by square instead of a sprite at a time, 87.50%
+    // of squares and no position.
+    const SQUARES: f32 = 96.;
+    const POSITIONS: f32 = 45.;
+    const DOUBTED: f32 = 95.;
+    let sets = [
+        "chessnut",
+        "fantasy",
+        "pirouetti",
+        "spatial",
+        "celtic",
+        "mpchess",
+    ]
+    .map(set);
+    let variants = [Variant::Recoloured, Variant::Thickened, Variant::Smoothed];
+    #[derive(Default)]
+    struct Tally {
+        pictures: usize,
+        right: usize,
+        positions: usize,
+        wrong: usize,
+        doubted: usize,
+    }
+    let tally = std::cell::RefCell::new(Tally::default());
+    kchess_testkit::random::check(48, |rng: &mut Rng| {
+        let square = 32 + rng.below(49);
+        let pieces = rng.pick(&sets).unwrap();
+        let variant = rng.chance(75).then(|| *rng.pick(&variants).unwrap());
+        let board = random_position(rng);
+        let image = picture_redrawn(
+            &board,
+            pieces,
+            square,
+            rng.chance(50),
+            9,
+            &|piece, drawn| match variant {
+                Some(variant) => redrawn(variant, piece, square, drawn),
+                None => drawn,
+            },
+        );
+        let found = recogniser().read(&png(&image)).unwrap();
+        let wrong: Vec<Square> = Square::ALL
+            .into_iter()
+            .filter(|&at| found.board.piece_at(at) != board.piece_at(at))
+            .collect();
+        let mut tally = tally.borrow_mut();
+        tally.pictures += 1;
+        tally.right += 64 - wrong.len();
+        tally.positions += usize::from(wrong.is_empty());
+        tally.wrong += wrong.len();
+        tally.doubted += wrong
+            .iter()
+            .filter(|at| found.doubtful.contains(at))
+            .count();
+        eprintln!(
+            "{} {variant:?} {square}: {} of 64",
+            pieces.name,
+            64 - wrong.len()
+        );
+    });
+    let tally = tally.into_inner();
+    let squares = 100. * tally.right as f32 / (64 * tally.pictures) as f32;
+    let positions = 100. * tally.positions as f32 / tally.pictures as f32;
+    let doubted = 100. * tally.doubted as f32 / tally.wrong.max(1) as f32;
+    eprintln!(
+        "{squares:.2}% of squares, {positions:.1}% of positions, {doubted:.0}% of wrong squares \
+         doubtful"
+    );
+    assert!(squares >= SQUARES, "{squares:.2}% of squares");
+    assert!(positions >= POSITIONS, "{positions:.1}% of positions");
+    assert!(doubted >= DOUBTED, "{doubted:.0}% doubtful");
 }
