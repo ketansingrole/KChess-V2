@@ -46,10 +46,10 @@ pub(crate) struct Grid {
 
 /// How strongly a square's edge runs down each boundary between columns (`0..=width`), within
 /// `rows`.
-pub(crate) fn edges(luma: &[f32], width: usize, rows: Range<usize>) -> Vec<f32> {
+pub(crate) fn edges(luma: &[f32], width: usize, rows: Range<usize>, skip: usize) -> Vec<f32> {
     let mut rise = vec![0f32; width + 1];
     let mut fall = vec![0f32; width + 1];
-    if width < 2 * SPAN + 2 {
+    if width < 2 * (SPAN + skip) {
         return rise;
     }
     let flat = |stretch: &[f32]| {
@@ -64,10 +64,10 @@ pub(crate) fn edges(luma: &[f32], width: usize, rows: Range<usize>) -> Vec<f32> 
         let Some(row) = luma.get(y * width..(y + 1) * width) else {
             break;
         };
-        for boundary in SPAN + 1..=width - SPAN - 1 {
+        for boundary in SPAN + skip..=width - SPAN - skip {
             let (Some(left), Some(right)) = (
-                flat(&row[boundary - 1 - SPAN..boundary - 1]),
-                flat(&row[boundary + 1..boundary + 1 + SPAN]),
+                flat(&row[boundary - skip - SPAN..boundary - skip]),
+                flat(&row[boundary + skip..boundary + skip + SPAN]),
             ) else {
                 continue;
             };
@@ -243,16 +243,17 @@ struct Axes<'a> {
     across: &'a [f32],
     width: usize,
     height: usize,
+    skip: usize,
 }
 
 /// From lines found along one axis, the board: the lines across it within the columns they span,
 /// then along again within those rows.
 fn follow(axes: &Axes, first: Lines) -> Vec<(Lines, Lines)> {
     let mut found = Vec::new();
-    let across = edges(axes.across, axes.height, span(first, axes.width));
+    let across = edges(axes.across, axes.height, span(first, axes.width), axes.skip);
     for second in search(&across, (first.step * 0.92, first.step * 1.08), 0.25, 2) {
         let second = refine(&across, second);
-        let along = edges(axes.along, axes.width, span(second, axes.height));
+        let along = edges(axes.along, axes.width, span(second, axes.height), axes.skip);
         if let Some(&again) =
             search(&along, (second.step * 0.95, second.step * 1.05), 0.25, 1).first()
         {
@@ -270,7 +271,7 @@ fn follow(axes: &Axes, first: Lines) -> Vec<(Lines, Lines)> {
 }
 
 /// Where the board may be, most likely first: from the columns' edges first, and from the rows'.
-pub(crate) fn candidates(picture: &Picture) -> Vec<Grid> {
+pub(crate) fn candidates(picture: &Picture, skip: usize) -> Vec<Grid> {
     let (width, height) = (picture.width, picture.height);
     let luma = picture.luma();
     let turned = transpose(&luma, width, height);
@@ -281,15 +282,17 @@ pub(crate) fn candidates(picture: &Picture) -> Vec<Grid> {
         across: &turned,
         width,
         height,
+        skip,
     };
     let rows = Axes {
         along: &turned,
         across: &luma,
         width: height,
         height: width,
+        skip,
     };
     for first in search(
-        &edges(&luma, width, 0..height),
+        &edges(&luma, width, 0..height, skip),
         (MIN_SQUARE, largest),
         0.5,
         3,
@@ -305,7 +308,7 @@ pub(crate) fn candidates(picture: &Picture) -> Vec<Grid> {
         }
     }
     for first in search(
-        &edges(&turned, height, 0..width),
+        &edges(&turned, height, 0..width, skip),
         (MIN_SQUARE, largest),
         0.5,
         3,
@@ -361,7 +364,7 @@ mod tests {
     #[test]
     fn a_board_on_a_page_is_found_to_the_pixel() {
         let picture = checkerboard((500, 420), 37, 21, 45);
-        let grid = candidates(&picture)[0];
+        let grid = candidates(&picture, 1)[0];
         assert!((grid.x - 37.).abs() < 0.5, "{grid:?}");
         assert!((grid.y - 21.).abs() < 0.5, "{grid:?}");
         assert!((grid.width - 45.).abs() < 0.1, "{grid:?}");
@@ -395,7 +398,7 @@ mod tests {
             height: 200,
             rgb: vec![[250.; 3]; 200 * 200],
         };
-        assert!(candidates(&picture).is_empty());
+        assert!(candidates(&picture, 1).is_empty());
         assert_eq!(
             transpose(&[1., 2., 3., 4., 5., 6.], 3, 2),
             [1., 4., 2., 5., 3., 6.]
