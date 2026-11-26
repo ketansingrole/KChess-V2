@@ -144,6 +144,23 @@ jobs:
           asc release stage --app "$ASC_APP_ID" --platform MAC_OS \
             --version "$VERSION" --build-id "$BUILD_ID" \
             --metadata-dir "$METADATA_DIR" --confirm --output table
+      # The reviewer's notes (`app-store/review-information.json`), which say how the app uses
+      # the entitlements App Review asks about (guideline 2.4.5). Only the file's fields are
+      # written; the contact stays as App Store Connect has it. App Sandbox Information needs an
+      # Apple Account sign-in, not this key, so the run names the command for it.
+      - name: Write App Review Information
+        if: steps.review.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.build.outputs.version }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          version_id="$(asc versions list --app "$ASC_APP_ID" --platform MAC_OS --paginate --output json \
+            | python3 -c 'import json, os, sys; print(next(v["id"] for v in json.load(sys.stdin)["data"] if v["attributes"]["versionString"] == os.environ["VERSION"]))')"
+          asc review details set --app "$ASC_APP_ID" --version-id "$version_id" \
+            --file app-store/review-information.json --output table
+          echo "::notice::Check $VERSION's App Sandbox Information: asc web review sandbox-entitlements list --version-id $version_id (docs/app-store.md)"
       - name: Submit for review
         if: steps.review.outputs.skip != 'true'
         env:

@@ -252,6 +252,33 @@ mod tests {
         assert!(!app_entitlements("com.kchess.app", None).contains("application-identifier"));
     }
 
+    /// App Review asks how each sandbox entitlement is used (guideline 2.4.5), so every one the
+    /// store build has needs its explanation in `app-store/sandbox-information.json`, which is
+    /// copied into each version's App Sandbox Information (docs/app-store.md).
+    #[test]
+    fn every_store_entitlement_is_explained_to_app_review() {
+        let path = crate::util::root().join("app-store/sandbox-information.json");
+        let text = std::fs::read_to_string(&path).expect("app-store/sandbox-information.json");
+        let explained: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&text).expect("an object of entitlement keys");
+        let plist = app_entitlements("com.kchess.app", None);
+        let mut granted: Vec<&str> = plist
+            .split("<key>")
+            .skip(1)
+            .filter_map(|rest| rest.split("</key>").next())
+            // The sandbox itself is not one App Review asks about.
+            .filter(|key| *key != "com.apple.security.app-sandbox")
+            .collect();
+        granted.sort_unstable();
+        let mut listed: Vec<&str> = explained.keys().map(String::as_str).collect();
+        listed.sort_unstable();
+        assert_eq!(listed, granted, "app-store/sandbox-information.json");
+        for (key, value) in &explained {
+            let text = value.as_str().unwrap_or_default().trim();
+            assert!(!text.is_empty(), "{key} has no explanation");
+        }
+    }
+
     #[test]
     fn the_programs_it_starts_only_inherit_the_sandbox() {
         let plist = inherited_entitlements();
