@@ -110,7 +110,21 @@ impl Lane {
             return Err(CoreError::new(self.messages.closed));
         }
         if db.is_none() {
+            let __opening = Instant::now();
             let connection = (self.open)(self.host.as_ref())?;
+            // TEMPORARY (claude/close-under-load)
+            if __opening.elapsed() > Duration::from_millis(250) {
+                let report = format!("OPEN-TIMING {} {:?}\n", self.scope, __opening.elapsed());
+                eprint!("{report}");
+                use std::io::Write as _;
+                if let Ok(mut file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(std::env::temp_dir().join("kchess-close-timing.log"))
+                {
+                    let _ = file.write_all(report.as_bytes());
+                }
+            }
             // A close that began while the file opened keeps it released.
             if self.closed.load(Ordering::SeqCst) {
                 return Err(CoreError::new(self.messages.closed));
@@ -197,26 +211,47 @@ impl Lane {
         let released = tokio::task::spawn_blocking(move || {
             let t = std::time::Instant::now();
             let taken = usable_connection(&lane.connection, lane.host.as_ref(), lane.scope).take();
-            let mut checkpoint = None;
-            let mut wal = None;
             if let Some(db) = taken {
-                wal = db
-                    .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
+                let path = db.path().map(std::path::PathBuf::from);
+                let frames = db
+                    .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))
                     .ok();
+                let _ = frames;
+                // Copy the WAL into the database without flushing it, then flush each file.
+                let _ = db.execute_batch("PRAGMA synchronous = OFF;");
                 let c = std::time::Instant::now();
-                let _ = db.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
-                    row.get::<_, i64>(1)
-                });
-                checkpoint = Some(c.elapsed());
+                let counted: Option<(i64, i64)> = db
+                    .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                        Ok((row.get(1)?, row.get(2)?))
+                    })
+                    .ok();
+                let written = c.elapsed();
+                let size = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+                let flush = |p: &std::path::Path| {
+                    let f = std::time::Instant::now();
+                    let ok = std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(p)
+                        .and_then(|file| file.sync_all())
+                        .is_ok();
+                    (f.elapsed(), ok)
+                };
+                let (db_flush, wal_flush, sizes) = match &path {
+                    Some(p) => {
+                        let wal = std::path::PathBuf::from(format!("{}-wal", p.display()));
+                        (flush(p), flush(&wal), (size(p), size(&wal)))
+                    }
+                    None => ((Duration::ZERO, false), (Duration::ZERO, false), (0, 0)),
+                };
                 let d = std::time::Instant::now();
                 drop(db);
                 return format!(
-                    "{wal:?} checkpoint {checkpoint:?} then drop {:?}, all {:?}",
+                    "frames {counted:?} sizes {sizes:?}: checkpoint unflushed {written:?}, flush db {db_flush:?}, flush wal {wal_flush:?}, drop {:?}, all {:?}",
                     d.elapsed(),
                     t.elapsed()
                 );
             }
-            format!("no connection {checkpoint:?} {wal:?} {:?}", t.elapsed())
+            format!("no connection {:?}", t.elapsed())
         })
         .await;
         // TEMPORARY (claude/close-under-load)
