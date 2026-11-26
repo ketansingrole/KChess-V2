@@ -66,6 +66,8 @@ fn every_trainer_opens_without_an_account(cx: &mut gpui_kit::TestAppContext) {
     app.find("square-colors-start");
     tab(&mut app, crate::pages::practice::Tab::Knight);
     app.find("knight-start");
+    tab(&mut app, crate::pages::practice::Tab::Visualise);
+    app.find("visualise-start");
     tab(&mut app, crate::pages::practice::Tab::Endgames);
     app.find("card-checkmate-patterns-1");
     tab(&mut app, crate::pages::practice::Tab::Openings);
@@ -305,6 +307,82 @@ fn a_knight_run_asks_for_a_path_and_a_skip_shows_the_shortest(cx: &mut gpui_kit:
     app.click("knight-end");
     assert_eq!(app.status(), "0 shortest paths · 0 reached");
     assert!(app.enabled("knight-start"));
+}
+
+/// The Visualise drill on screen.
+fn visualise(app: &mut Harness) -> gpui_kit::Entity<crate::pages::practice::visualise::Visualise> {
+    app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).visualise())
+            .expect("the visualise drill")
+    })
+}
+
+/// Answer the Visualise round on screen, rightly or not: a choice by its number key when right
+/// and by its button when wrong, or a square clicked on the board.
+fn answer_visualise(app: &mut Harness, right: bool) {
+    use crate::pages::practice::visualise::Expected;
+    let drill = visualise(app);
+    let expected = app
+        .cx
+        .update(|cx| drill.read(cx).expected_for_test())
+        .expect("a round");
+    match expected {
+        Expected::Choice {
+            right: index,
+            count,
+        } if right => {
+            app.press(&(index + 1).to_string());
+            assert!(count >= 2, "{count} choices");
+        }
+        Expected::Choice {
+            right: index,
+            count,
+        } => {
+            app.click(("visualise-choice", (index + 1) % count));
+        }
+        Expected::Square(square) if right => app.click_square(&square, true),
+        Expected::Square(square) => {
+            app.click_square(if square == "a1" { "h8" } else { "a1" }, true)
+        }
+    }
+}
+
+/// Visualise reads the moves without playing them, scores a round answered right and not one
+/// answered wrong, plays the moves out, and goes on to the next round by itself.
+#[gpui_kit::test]
+fn a_visualise_run_scores_the_rounds_answered_right(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Visualise);
+    app.click("visualise-start");
+    let moves = app.find("visualise-moves").label().unwrap().to_string();
+    assert!(moves.starts_with(|c: char| c.is_ascii_digit()), "{moves:?}");
+    let question = app.find("visualise-question").label().unwrap().to_string();
+    assert!(question.ends_with('?'), "{question:?}");
+    assert_eq!(app.find("run-score").label(), Some("0"));
+
+    answer_visualise(&mut app, true);
+    wait_for_label(&mut app, "run-score", "1");
+    assert_eq!(app.status(), "Correct");
+    let drill = visualise(&mut app);
+    let asked = app.cx.update(|cx| drill.read(cx).asked_for_test());
+    app.click("visualise-next");
+    assert_eq!(
+        app.cx.update(|cx| drill.read(cx).asked_for_test()),
+        asked + 1
+    );
+
+    answer_visualise(&mut app, false);
+    assert_eq!(app.status(), "Wrong");
+    assert_eq!(app.find("run-score").label(), Some("1"));
+    // The moves play out on the board, then the next round starts.
+    app.wait_for("the next round", |_, cx| {
+        drill.read(cx).asked_for_test() == asked + 2
+    });
+
+    app.click("visualise-end");
+    assert_eq!(app.status(), "1 correct · 50% accuracy");
+    assert!(app.enabled("visualise-start"));
 }
 
 #[gpui_kit::test]

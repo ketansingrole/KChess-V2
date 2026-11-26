@@ -1218,8 +1218,8 @@ impl Render for GuessMoves {
     }
 }
 
-/// A PGN's moves and start as guessing would play them through, or why it cannot be guessed.
-#[cfg(any(test, feature = "test-support"))]
+/// A PGN's moves and start as guessing would play them through, or why it cannot be guessed;
+/// Visualise reads the famous games with it too.
 pub fn loaded(pgn: &str) -> Result<(Vec<String>, Setup), &'static str> {
     Game::from_pgn(pgn).map(|game| (game.moves, game.setup))
 }

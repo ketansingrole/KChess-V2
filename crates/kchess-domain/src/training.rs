@@ -1,6 +1,6 @@
 //! Training: puzzle runs (Storm, Streak, Rush), puzzle solving, endgame drills, openings, the
-//! client clock, engine levels, UCI `info` lines and Guess the move's scoring. Their constants
-//! are data (`crates/kchess-domain/data/`).
+//! client clock, engine levels, UCI `info` lines, Guess the move's scoring and Visualise's
+//! rounds. Their constants are data (`crates/kchess-domain/data/`).
 
 pub mod board_vision;
 pub mod clock;
@@ -15,6 +15,7 @@ pub mod repertoire_check;
 pub mod repetition;
 pub mod rush;
 pub mod uci_info;
+pub mod visualise;
 
 pub use clock::low_time_threshold;
 

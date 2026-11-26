@@ -9,6 +9,7 @@ wire_enum!(#[doc = "Everything the runs table (local scores) records."] RunKind,
     Coordinates = "coordinates",
     SquareColor = "squareColor",
     KnightPath = "knightPath",
+    Visualise = "visualise",
     Endgame = "endgame",
     Lesson = "lesson",
 });
