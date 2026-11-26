@@ -27,6 +27,7 @@ pub mod game_image;
 pub mod live_game;
 pub mod microphone;
 pub mod notation;
+pub mod picture;
 pub mod player_search;
 pub mod position_engine;
 pub mod puzzle_board;

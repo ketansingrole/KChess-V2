@@ -1548,6 +1548,127 @@ fn a_dropped_file_that_is_no_game_is_refused(cx: &mut gpui_kit::TestAppContext) 
     );
 }
 
+/// The export's picture of `fen` with cburnett pieces on the brown board, from `orientation`'s
+/// side: a picture of a board as a website shows one.
+fn board_picture(fen: &str, orientation: shakmaty::Color) -> Vec<u8> {
+    let options = kchess_board::game_image::ImageOptions {
+        setup: kchess_domain::variant::Setup::standard_at(fen),
+        moves: Vec::new(),
+        orientation,
+        board_theme: "brown".into(),
+        piece_set: "cburnett".into(),
+        white: String::new(),
+        black: String::new(),
+        size: 400,
+    };
+    kchess_board::game_image::position_png(&options, 0).expect("the picture")
+}
+
+/// A dropped or pasted picture of a board sets its position up in the board editor, facing as
+/// the picture did, from any page; a picture with no board leaves the page as it was.
+#[gpui_kit::test]
+fn a_picture_of_a_board_is_set_up_in_the_editor(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Puzzles");
+    let italian = "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4";
+    let png = board_picture(italian, shakmaty::Color::Black);
+    let _file = app.drop_file("board.png", &png);
+    app.wait_for_page(crate::pages::Page::Editor);
+    // The editor starts the move counters again, as for any position.
+    wait_for_fen(
+        &mut app,
+        "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 0 1",
+    );
+    let marked = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::editor::EditorPage>(cx)
+            .map(|page| page.read(cx).marked().to_vec())
+    });
+    assert_eq!(
+        marked,
+        Some(Vec::new()),
+        "a clean picture leaves nothing to check"
+    );
+    assert!(!app.shows("editor-marked"));
+    // The board faces as the picture did: Black at the bottom.
+    app.click("spare-White-Queen");
+    app.click_square("a3", false);
+    wait_for_fen(
+        &mut app,
+        "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/Q7/PPPP1PPP/RNB1K1NR w KQkq - 0 1",
+    );
+
+    app.open("Puzzles");
+    let ending = "8/5k2/8/3K4/8/8/4P3/8 w - - 0 1";
+    let png = board_picture(ending, shakmaty::Color::White);
+    app.cx
+        .write_to_clipboard(gpui_kit::ClipboardItem::new_image(
+            &gpui_kit::Image::from_bytes(gpui_kit::ImageFormat::Png, png),
+        ));
+    app.press("secondary-v");
+    app.wait_for_page(crate::pages::Page::Editor);
+    wait_for_fen(&mut app, ending);
+
+    // Pasted in Quick Pick's field, which holds no picture, it opens the same way.
+    app.open("Puzzles");
+    app.press("secondary-k");
+    app.press("secondary-v");
+    app.wait_for_page(crate::pages::Page::Editor);
+    wait_for_fen(&mut app, ending);
+
+    // The app's icon: a rook, but no board.
+    app.open("Puzzles");
+    let icon = include_bytes!("../../assets/icon.png");
+    use gpui_kit::component::WindowExt as _;
+    let notices = app.with_window(|window, cx| window.notifications(cx).len());
+    let _file = app.drop_file("icon.png", icon);
+    app.wait_for("the notice that no board was found", |window, cx| {
+        window.notifications(cx).len() > notices
+    });
+    assert_eq!(
+        app.cx.update(|cx| crate::shell::current_page(cx)),
+        Some(crate::pages::Page::Puzzles)
+    );
+}
+
+/// The squares a picture was read with little certainty are ringed with one line saying so,
+/// until a piece is put on each or the board is set up again.
+#[gpui_kit::test]
+fn the_squares_to_check_are_marked_until_changed(cx: &mut gpui_kit::TestAppContext) {
+    use shakmaty::Square;
+    let mut app = editor(cx);
+    let marked = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view::<crate::pages::editor::EditorPage>(cx)
+                .map(|page| page.read(cx).marked().to_vec())
+                .unwrap_or_default()
+        })
+    };
+    app.with_window(|window, cx| {
+        if let Some(editor) = crate::shell::view::<crate::pages::editor::EditorPage>(cx) {
+            editor.update(cx, |editor, cx| {
+                editor.set_picture_position(
+                    "4k3/8/8/8/4P3/8/8/4K3 w - - 0 1",
+                    shakmaty::Color::White,
+                    vec![Square::E4, Square::A3],
+                    window,
+                    cx,
+                )
+            });
+        }
+    });
+    wait_for_fen(&mut app, "4k3/8/8/8/4P3/8/8/4K3 w - - 0 1");
+    assert!(app.shows("editor-marked"));
+    // A piece put on a marked square has been checked.
+    app.click("spare-White-Queen");
+    app.click_square("a3", true);
+    wait_for_fen(&mut app, "4k3/8/8/8/4P3/Q7/8/4K3 w - - 0 1");
+    assert_eq!(marked(&mut app), [Square::E4]);
+    app.click("start-position");
+    wait_for_fen(&mut app, START_FEN);
+    assert!(marked(&mut app).is_empty());
+    assert!(!app.shows("editor-marked"));
+}
+
 /// The import's Open file… reads a PGN file from disk, as if it were pasted.
 #[gpui_kit::test]
 fn the_import_opens_a_pgn_file(cx: &mut gpui_kit::TestAppContext) {

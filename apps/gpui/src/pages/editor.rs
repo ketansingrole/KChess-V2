@@ -20,7 +20,7 @@ use shakmaty::{ByColor, ByRole, Color, Piece, RemainingChecks, Role};
 
 use crate::assets::icon;
 use crate::board::looks;
-use crate::board::{BoardEvent, BoardState, ChessBoard, EditTool, PieceGhost, SparePiece};
+use crate::board::{BoardEvent, BoardState, ChessBoard, Circle, EditTool, PieceGhost, SparePiece};
 use crate::game::surface::TakesKeys as _;
 use crate::game::{STANDARD_FEN, position_problem};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
@@ -156,6 +156,9 @@ pub struct EditorPage {
     undone: Vec<(Variant, String)>,
     /// The position as last recorded, which the next change is undone to.
     shown: (Variant, String),
+    /// Squares of a position read from a picture that it was unsure of, ringed until a piece is
+    /// put on or taken off each, or another position is set up.
+    marked: Vec<shakmaty::Square>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -266,6 +269,7 @@ impl EditorPage {
             edits: Vec::new(),
             undone: Vec::new(),
             shown: (Variant::Standard, String::new()),
+            marked: Vec::new(),
             _subscriptions: subscriptions,
         };
         page.shown = page.snapshot();
@@ -288,7 +292,29 @@ impl EditorPage {
         }
         self.variant = variant;
         self.orientation = orientation;
+        self.marked.clear();
         self.changed(cx);
+    }
+
+    /// The editor on a position read from a picture, facing as the picture did, with the squares
+    /// it was unsure of ringed to check.
+    pub fn set_picture_position(
+        &mut self,
+        fen: &str,
+        orientation: Color,
+        marked: Vec<shakmaty::Square>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_position(Variant::Standard, fen, orientation, window, cx);
+        self.marked = marked;
+        self.redraw(cx);
+    }
+
+    /// The squares ringed to check.
+    #[cfg(test)]
+    pub(crate) fn marked(&self) -> &[shakmaty::Square] {
+        &self.marked
     }
 
     /// Take a FEN: its board, side, castling and en passant, and a variant FEN's pockets or
@@ -365,6 +391,14 @@ impl EditorPage {
                 self.setup.castling.set(key, false);
             }
         }
+        if !self.marked.is_empty() {
+            let before = shakmaty::Board::from_ascii_board_fen(self.setup.board.as_bytes());
+            let after = shakmaty::Board::from_ascii_board_fen(board.as_bytes());
+            if let (Ok(before), Ok(after)) = (before, after) {
+                self.marked
+                    .retain(|square| before.piece_at(*square) == after.piece_at(*square));
+            }
+        }
         self.setup.board = board;
         self.changed(cx);
     }
@@ -392,6 +426,7 @@ impl EditorPage {
     }
 
     fn restore(&mut self, (variant, fen): (Variant, String), cx: &mut Context<Self>) {
+        self.marked.clear();
         if self.read_fen(&fen) {
             self.variant = variant;
         }
@@ -429,6 +464,7 @@ impl EditorPage {
         // An unfinished position is no legal one: the board draws the pieces as they stand.
         state.fen = self.setup.fen();
         state.edit = Some(self.tool);
+        state.circles = self.marked.iter().copied().map(Circle::yellow).collect();
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
         cx.notify();
@@ -441,6 +477,7 @@ impl EditorPage {
             return;
         }
         if self.read_fen(&text) {
+            self.marked.clear();
             self.changed(cx);
         } else {
             self.fen_error = Some("That is not a valid FEN".into());
@@ -518,10 +555,12 @@ impl EditorPage {
             self.checks = None;
         }
         self.variant = variant;
+        self.marked.clear();
         self.changed(cx);
     }
 
     fn clear_board(&mut self, cx: &mut Context<Self>) {
+        self.marked.clear();
         self.setup.board = EMPTY_BOARD.into();
         self.setup.ep.clear();
         self.changed(cx);
@@ -924,6 +963,17 @@ impl Render for EditorPage {
                         .into(),
                 ),
             )
+            // A position read from a picture: the squares it was unsure of are ringed.
+            .when(!self.marked.is_empty(), |panel| {
+                panel.child(
+                    div()
+                        .id("editor-marked")
+                        .test_support()
+                        .text_size(px(12.))
+                        .text_color(palette.text_muted)
+                        .child(SharedString::new_static("Check the marked squares")),
+                )
+            })
             .child(
                 v_flex().gap(px(8.)).child(label("Variant")).child(
                     Select::new(&self.variant_select)
@@ -1172,6 +1222,26 @@ pub fn edit_position(
     if let Some(editor) = crate::shell::made::<EditorPage>(window, cx) {
         editor.update(cx, |editor, cx| {
             editor.set_position(setup.variant, &setup.fen, orientation, window, cx)
+        });
+    }
+    crate::shell::open(crate::pages::Page::Editor, window, cx);
+}
+
+/// The board editor on a position read from a picture, to check before analysing or playing it.
+pub fn edit_recognised(
+    recognised: &kchess_board::picture::Recognised,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let orientation = if recognised.white_at_bottom {
+        Color::White
+    } else {
+        Color::Black
+    };
+    if let Some(editor) = crate::shell::made::<EditorPage>(window, cx) {
+        let marked = recognised.doubtful.clone();
+        editor.update(cx, |editor, cx| {
+            editor.set_picture_position(&recognised.fen, orientation, marked, window, cx)
         });
     }
     crate::shell::open(crate::pages::Page::Editor, window, cx);

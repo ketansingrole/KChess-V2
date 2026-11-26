@@ -129,6 +129,11 @@ can add them as a friend, challenge them or watch their current game.
   `kchess-cli position [--variant name] <fen|moves>` prints whose turn it is, check or mate, and the
   legal moves (with the Crazyhouse drops).
   `kchess-cli watch [channel|link]` streams a Lichess TV channel, a game or a broadcast as JSON lines.
+- **Import a position from a picture**: paste (⌘V outside a text field, or into Quick Pick) or
+  drop a picture of a 2D board, a screenshot from a website, an app or an e-book, and its position
+  opens in the board editor, facing as the picture did, with any square it is unsure of ringed to
+  check. It is read on this computer by comparing each square with the bundled piece sets
+  (`crates/kchess-recognise`); nothing is uploaded. Lichess has no such import.
 - **Export**: animated GIF of the main line, PNG of the position, or PGN. The images are drawn
   locally with your board theme and piece set; no image service is involved.
 
