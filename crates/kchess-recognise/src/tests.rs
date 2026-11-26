@@ -283,6 +283,98 @@ fn coordinate_labels_are_left_out() {
     assert!(read.doubtful.is_empty(), "{:?}", read.doubtful);
 }
 
+/// A board drawn from Black's side with only its kings, each on the other's home rank, reads
+/// as White's from the pieces alone; its coordinates tell which way up it is: along the side,
+/// the "8" with two holes and the narrow "1", or along the bottom, the "a" with a hole and the
+/// "h" with none.
+#[test]
+fn coordinates_tell_which_way_up_a_board_is() {
+    let fen = "4K3/8/8/8/8/8/8/4k3 w - - 0 1";
+    let board = fen
+        .parse::<shakmaty::fen::Fen>()
+        .unwrap()
+        .into_setup()
+        .board;
+    let pieces = set("cburnett");
+    let square = 60u32;
+    let margin = 10;
+    let plain = picture(&board, &pieces, square as usize, false, margin);
+    let read = |image: image::RgbaImage| {
+        recogniser()
+            .read_image(&image::DynamicImage::ImageRgba8(image))
+            .unwrap()
+    };
+    assert!(read(plain.clone()).white_at_bottom);
+    // A glyph of `width` by `height` pixels at `(left, top)`, in strokes two pixels thick: a box
+    // (one hole), a box with a bar across (two, an "8"), a bar (none, a "1"), or a box open at
+    // the bottom (none, an "h").
+    #[derive(Clone, Copy, PartialEq)]
+    enum Glyph {
+        Box,
+        Eight,
+        One,
+        Arch,
+    }
+    let draw =
+        |image: &mut image::RgbaImage, glyph: Glyph, at: (u32, u32), row: u32, column: u32| {
+            let colour = if (row + column) % 2 == 1 {
+                image::Rgba([240, 217, 181, 255])
+            } else {
+                image::Rgba([181, 136, 99, 255])
+            };
+            let (left, top) = at;
+            let (width, height) = if glyph == Glyph::One {
+                (3, 16)
+            } else {
+                (10, 16)
+            };
+            for y in 0..height {
+                for x in 0..width {
+                    let side = x < 2 || x + 2 >= width;
+                    let on = match glyph {
+                        Glyph::One => true,
+                        Glyph::Box => side || y < 2 || y + 2 >= height,
+                        Glyph::Eight => side || y < 2 || y + 2 >= height || (7..9).contains(&y),
+                        Glyph::Arch => side || y < 2,
+                    };
+                    if on {
+                        image.put_pixel(left + x, top + y, colour);
+                    }
+                }
+            }
+        };
+    // From Black's side the top row is rank 1 and the left column the h-file.
+    let mut ranks = plain.clone();
+    for row in 0..8 {
+        let glyph = match row {
+            0 => Glyph::One,
+            7 => Glyph::Eight,
+            _ => Glyph::Box,
+        };
+        draw(
+            &mut ranks,
+            glyph,
+            (margin + 3, margin + row * square + 3),
+            row,
+            0,
+        );
+    }
+    assert!(!read(ranks).white_at_bottom);
+    let mut files = plain;
+    for column in 0..8 {
+        let glyph = match column {
+            0 => Glyph::Arch,
+            _ => Glyph::Box,
+        };
+        let at = (
+            margin + column * square + square - 13,
+            margin + 8 * square - 19,
+        );
+        draw(&mut files, glyph, at, 7, column);
+    }
+    assert!(!read(files).white_at_bottom);
+}
+
 /// How a printed diagram is drawn: dark squares hatched with lines `spacing` pixels apart along
 /// a row and `thickness` thick, rising (`/`) or falling (`\`), on squares of `square` pixels,
 /// White's figurines outlined `outline` of a square thick; in black and white alone (a 1-bit

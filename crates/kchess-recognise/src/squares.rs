@@ -844,6 +844,99 @@ pub(crate) fn unlike(a: &Features, b: &Features) -> f32 {
     shape + 1.5 * brightness + 1.5 * ((a.height - b.height).abs() + (a.width - b.width).abs())
 }
 
+/// Which way up the board is by its coordinates, where the squares carry them: `Some(true)`
+/// when White is at the bottom, `None` when none tell. Along a side edge, the rank numbers'
+/// "8" is the one with two holes, and the "1" the narrowest by far; along the top or bottom
+/// edge, the file letters' "a" has a hole and the "h" none.
+pub(crate) fn ones_at_bottom(cells: &[Cell], size: usize) -> Option<bool> {
+    // Each cell's marks alone in a corner: the corner, the width and the holes.
+    let marks: Vec<Vec<(usize, usize, usize)>> = cells
+        .iter()
+        .map(|cell| {
+            let on = differing(size, cell, &[]);
+            parts(size, &on)
+                .into_iter()
+                .filter(|(pixels, _)| pixels.len() * 300 >= size * size)
+                .filter_map(|(pixels, bounds)| {
+                    let corner = corner_of(size, bounds)?;
+                    Some((corner, bounds[2] - bounds[0], holes(size, &pixels, bounds)))
+                })
+                .collect()
+        })
+        .collect();
+    let mark = |cell: usize, corner: usize| {
+        marks
+            .get(cell)
+            .and_then(|marks| marks.iter().find(|(at, ..)| *at == corner))
+            .map(|&(_, wide, holes)| (wide, holes))
+    };
+    let mut votes = 0i32;
+    for corner in 0..4 {
+        for column in [0, 7] {
+            let ranks: Vec<Option<(usize, usize)>> =
+                (0..8).map(|row| mark(row * 8 + column, corner)).collect();
+            if ranks.iter().flatten().count() < 4 {
+                continue;
+            }
+            // The "8", two holes, at the top or the bottom alone.
+            let eight = |row: usize| ranks[row].is_some_and(|(_, holes)| holes == 2);
+            if eight(0) && !eight(7) {
+                votes += 1;
+            } else if eight(7) && !eight(0) {
+                votes -= 1;
+            }
+            // The "1", the narrowest by two pixels and a quarter.
+            let mut widths: Vec<(usize, usize)> = ranks
+                .iter()
+                .enumerate()
+                .filter_map(|(row, mark)| mark.map(|(wide, _)| (wide, row)))
+                .collect();
+            widths.sort_unstable();
+            if let [(narrowest, row), (next, _), ..] = widths[..]
+                && narrowest + 2 <= next
+                && narrowest as f32 <= 0.75 * next as f32
+            {
+                votes += match row {
+                    7 => 1,
+                    0 => -1,
+                    _ => 0,
+                };
+            }
+        }
+        for row in [0, 7] {
+            let files: Vec<Option<(usize, usize)>> = (0..8)
+                .map(|column| mark(row * 8 + column, corner))
+                .collect();
+            if files.iter().flatten().count() < 4 {
+                continue;
+            }
+            let holes = |column: usize| files[column].map(|(_, holes)| holes);
+            match (holes(0), holes(7)) {
+                (Some(1), Some(0)) => votes += 1,
+                (Some(0), Some(1)) => votes -= 1,
+                _ => {}
+            }
+        }
+    }
+    (votes != 0).then_some(votes > 0)
+}
+
+/// How many holes a mark has: parts of its bounds it does not cover and encloses.
+fn holes(size: usize, pixels: &[usize], [left, top, right, bottom]: Bounds) -> usize {
+    // The bounds with a pixel's border all round, in a square, what the mark covers set.
+    let side = (right - left).max(bottom - top) + 2;
+    let mut open = vec![true; side * side];
+    for &index in pixels {
+        let (x, y) = (index % size - left + 1, index / size - top + 1);
+        open[y * side + x] = false;
+    }
+    // Every open part but the one around the mark.
+    parts(side, &open)
+        .iter()
+        .filter(|(part, _)| !part.contains(&0))
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

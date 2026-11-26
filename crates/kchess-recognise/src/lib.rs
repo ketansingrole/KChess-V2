@@ -207,7 +207,10 @@ impl Recogniser {
             }
         }
         let reads = self.read_squares(&cells, size, colours, blur, paper);
-        Ok(position::assemble(&reads, blur > 0.))
+        // Coordinates printed in the edge squares say which way up the board is where they
+        // can be read; else the pieces do.
+        let numbered = squares::ones_at_bottom(&cells, size);
+        Ok(position::assemble(&reads, blur > 0., numbered))
     }
 
     /// The bundled pieces drawn at `size`, drawn once per size.
