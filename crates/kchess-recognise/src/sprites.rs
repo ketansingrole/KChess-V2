@@ -38,6 +38,13 @@ const PAWN_HOME: f32 = 1.;
 /// crown shows more points across its top than a king's cross (in four pictures of five where
 /// they differ, over the online corpus).
 const CROWN: f32 = 0.3;
+/// What a square costs read as a knight while its sprite is about as wide either side of its
+/// middle, or read as another piece while it is not: of all pieces, a knight alone is lopsided
+/// (`lopsided` over `LOPSIDED.1` for nineteen knights in twenty over the online corpus, under
+/// `LOPSIDED.0` for half the other pieces). In full past either end of `LOPSIDED`.
+const KNIGHTS: f32 = 0.15;
+/// Below and above how lopsided a knight is, and other pieces are not, in full.
+const LOPSIDED: (f32, f32) = (0.06, 0.12);
 /// The least difference in tone (0 to 1) between the two sides' pieces for it to tell them.
 const SIDES_APART: f32 = 0.12;
 
@@ -60,11 +67,15 @@ struct Sprite {
     /// How many points its top shows (`points`), on average over its squares; `None` where
     /// they are not to be read.
     points: Option<f32>,
+    /// How lopsided it is (`lopsided`), on average over its squares; `None` where that is not
+    /// to be read.
+    lopsided: Option<f32>,
 }
 
 /// The pieces of one picture read together: each square's `best` becomes its sprite's, the
-/// piece the sprites and the rules choose for it first. A `printed` picture's pieces' tops are
-/// not read: on hatched squares the hatching's lines join a piece's top as points of its own.
+/// piece the sprites and the rules choose for it first. A `printed` picture's pieces' tops and
+/// sides are not read: on hatched squares the hatching's lines join a piece's top as points of
+/// its own, and slant it to one side.
 pub(crate) fn together(seen: &mut [Seen], printed: bool) {
     let n = seen.len();
     if n == 0 {
@@ -114,11 +125,19 @@ pub(crate) fn together(seen: &mut [Seen], printed: bool) {
             let points = (!printed).then(|| {
                 members.iter().map(|&i| points(seen[i].shape)).sum::<f32>() / members.len() as f32
             });
+            let lopsided = (!printed).then(|| {
+                members
+                    .iter()
+                    .map(|&i| lopsided(seen[i].shape))
+                    .sum::<f32>()
+                    / members.len() as f32
+            });
             Sprite {
                 members,
                 cost,
                 tone,
                 points,
+                lopsided,
             }
         })
         .collect();
@@ -187,6 +206,30 @@ fn points(shape: &Silhouette) -> f32 {
                 .count() as f32
         })
         .sum()
+}
+
+/// How unlike its mirror image a piece's outline is, 0 alike: the part of what either covers
+/// that the other does not, at the nearest of a pixel's shift either way.
+fn lopsided(shape: &Silhouette) -> f32 {
+    let size = shape.size;
+    let [left, top, right, bottom] = shape.bounds;
+    let mut nearest = 1f32;
+    for shift in [0, -1, 1] {
+        let (mut both, mut either) = (0usize, 0usize);
+        for y in top..bottom {
+            let row = &shape.inside[y * size..][..size];
+            for x in left..right {
+                let mirror = (left + right - 1 - x).checked_add_signed(shift);
+                let (a, b) = (row[x], mirror.is_some_and(|m| m < size && row[m]));
+                both += usize::from(a && b);
+                either += usize::from(a || b);
+            }
+        }
+        if either > 0 {
+            nearest = nearest.min(1. - both as f32 / either as f32);
+        }
+    }
+    nearest
 }
 
 /// How light a piece is inside, 0 to 1.
@@ -278,6 +321,15 @@ fn assign(sprites: &[Sprite], outlines: &[Vec<f32>]) -> Vec<usize> {
             let piece = chosen[k];
             let members = sprite.members.len();
             sum += sprite.cost[piece].min(1e6) * members as f32;
+            if let Some(lopsided) = sprite.lopsided {
+                let (even, uneven) = LOPSIDED;
+                let off = if piece % 6 == 1 {
+                    (uneven - lopsided) / (uneven - even)
+                } else {
+                    (lopsided - uneven) / (uneven - even)
+                };
+                sum += KNIGHTS * off.clamp(0., 1.) * members as f32;
+            }
             if piece % 6 == 5 {
                 kings[piece / 6] += members;
             }
@@ -484,7 +536,8 @@ mod tests {
     const DARK: [f32; 3] = [181., 136., 99.];
 
     /// A piece of `kind` (0 a pawn's round head on a base, 1 a tower, 2 a tall pointed one, 3 a
-    /// crown of three points) filled with `fill` and outlined black, on a square of `square`.
+    /// crown of three points, 4 a head turned to one side on a base) filled with `fill` and
+    /// outlined black, on a square of `square`.
     fn piece(kind: usize, fill: [f32; 3], square: [f32; 3]) -> Cell {
         let inside = |x: f32, y: f32| -> bool {
             match kind {
@@ -494,6 +547,11 @@ mod tests {
                 }
                 1 => (12. ..36.).contains(&x) && (8. ..40.).contains(&y),
                 2 => (y - 6.) > 2.2 * (x - 24.).abs() && y < 42.,
+                4 => {
+                    ((12. ..36.).contains(&x) && (30. ..42.).contains(&y))
+                        || ((20. ..34.).contains(&x) && (8. ..30.).contains(&y))
+                        || ((8. ..20.).contains(&x) && (10. ..20.).contains(&y))
+                }
                 _ => {
                     ((12. ..36.).contains(&x) && (18. ..42.).contains(&y))
                         || ([14., 24., 34.].iter().any(|point| (x - point).abs() < 2.5)
@@ -641,6 +699,51 @@ mod tests {
         assert_eq!(read(true), [4, 5]);
     }
 
+    /// Of two sprites, close to a knight and to a rook as the sets read them, the lopsided one is
+    /// the knight; not in a printed picture.
+    #[test]
+    fn a_knight_is_lopsided() {
+        let white = [250.; 3];
+        let cells = [piece(1, white, LIGHT), piece(4, white, DARK)];
+        let shapes: Vec<Silhouette> = cells.iter().map(shape).collect();
+        assert!(lopsided(&shapes[0]) < LOPSIDED.0);
+        assert!(lopsided(&shapes[1]) > 2. * LOPSIDED.1);
+        let found: Vec<Features> = cells
+            .iter()
+            .zip(&shapes)
+            .map(|(cell, shape)| features(shape, &cell.rgb))
+            .collect();
+        // Read alone, the tower is a knight by a little and the head a rook; of the pieces, White's
+        // knight, bishop and rook alone are drawn.
+        let mut tower = [f32::MAX; 12];
+        tower[1..4].copy_from_slice(&[0.3, 0.8, 0.32]);
+        let mut head = [f32::MAX; 12];
+        head[1..4].copy_from_slice(&[0.32, 0.8, 0.3]);
+        let read = |printed: bool| {
+            let mut seen: Vec<Seen> = [tower, head]
+                .into_iter()
+                .enumerate()
+                .map(|(k, best)| Seen {
+                    cell: &cells[k],
+                    shape: &shapes[k],
+                    features: &found[k],
+                    best,
+                    home: false,
+                })
+                .collect();
+            together(&mut seen, printed);
+            seen.iter()
+                .map(|seen| {
+                    (0..12)
+                        .min_by(|&a, &b| seen.best[a].total_cmp(&seen.best[b]))
+                        .unwrap()
+                })
+                .collect::<Vec<usize>>()
+        };
+        assert_eq!(read(false), [3, 1]);
+        assert_eq!(read(true), [1, 3]);
+    }
+
     /// A sprite with a square on the first or last rank is no pawn, however near a pawn it
     /// reads.
     #[test]
@@ -693,6 +796,7 @@ mod tests {
                 cost: [0.; 12],
                 tone,
                 points: None,
+                lopsided: None,
             })
             .collect();
         assert_eq!(sides(&sprites), Some(vec![true, true, true, false, false]));
