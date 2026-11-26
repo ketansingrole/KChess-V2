@@ -11,7 +11,10 @@ use serde_json::Number;
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Bitboard, Color, Move, Position, Rank};
 
-use crate::records::review::{Judgment, ReviewSide, ReviewSource, ReviewSummary, StoredReview};
+use crate::pgn::Game;
+use crate::records::review::{
+    Judgment, ReviewEval, ReviewSide, ReviewSource, ReviewSummary, StoredReview, review_key,
+};
 use crate::variant::Variant;
 use crate::{js, replay, rules};
 
@@ -863,6 +866,99 @@ pub fn lichess_line_in(
     Some((fen, uci))
 }
 
+/* ── Analysis written in a PGN ── */
+
+/// The score of the last `[%eval …]` in a comment, from White's side, as Lichess writes it in a
+/// PGN: pawns (`0.18`, `-1.5`), or a mate in so many moves (`#-3`), with the search's depth
+/// after a comma in some exports (`0.18,23`).
+pub fn comment_eval(comment: &str) -> Option<ReviewEval> {
+    let mut found = None;
+    let mut rest = comment;
+    while let Some(at) = rest.find("[%eval") {
+        let after = &rest[at + 6..];
+        rest = after;
+        if !after.starts_with(js::is_space) {
+            continue;
+        }
+        let Some((value, _)) = after.split_once(']') else {
+            continue;
+        };
+        let value = value.split(',').next().unwrap_or_default().trim();
+        let eval = match value.strip_prefix('#') {
+            Some(mate) => mate.parse::<i64>().ok().map(|mate| ReviewEval {
+                mate: Some(mate as f64),
+                ..ReviewEval::default()
+            }),
+            // `-0.0` is a score of 0: adding 0 turns its sign away.
+            None => value
+                .parse::<f64>()
+                .ok()
+                .filter(|pawns| pawns.is_finite())
+                .map(|pawns| ReviewEval {
+                    cp: Some((pawns * 100.0).round() + 0.0),
+                    ..ReviewEval::default()
+                }),
+        };
+        if eval.is_some() {
+            found = eval;
+        }
+    }
+    found
+}
+
+/// Lichess's analysis of a game as its PGN carries it, a `[%eval …]` after each move (Lichess's
+/// game exports write them when asked for evals), as a review of Lichess's (depth 0, as a synced
+/// game's is), labelled by `analyse` from the scores, since the PGN has no labels of Lichess's.
+/// None without an eval on any move, or from a start that is not a legal position.
+pub fn pgn_review(game: &Game) -> Option<StoredReview> {
+    let fen = rules::make_setup_fen(&rules::parse_fen(
+        game.header("FEN").unwrap_or(INITIAL_FEN),
+    )?);
+    rules::standard_from_fen(&fen)?;
+    let nodes: Vec<usize> = game.main_line().collect();
+    let sans: Vec<&str> = nodes
+        .iter()
+        .map(|&node| game.node(node).san.as_str())
+        .collect();
+    let moves = san_to_uci(&fen, &sans);
+    let mut evals: Vec<Option<ReviewEval>> = vec![None; moves.len() + 1];
+    for (slot, &node) in evals.iter_mut().skip(1).zip(&nodes) {
+        *slot = game
+            .node(node)
+            .comments
+            .iter()
+            .flatten()
+            .filter_map(|comment| comment_eval(comment))
+            .next_back();
+    }
+    if evals.iter().all(Option::is_none) {
+        return None;
+    }
+    // Lichess scores the standard start as +0.15 when it works out accuracy.
+    if fen == INITIAL_FEN {
+        evals[0] = Some(ReviewEval {
+            cp: Some(15.0),
+            ..ReviewEval::default()
+        });
+    }
+    Some(StoredReview {
+        key: review_key(&fen, &moves, None),
+        fen,
+        moves,
+        source: ReviewSource::Lichess,
+        engine: None,
+        evals,
+        depth: 0,
+        complete: true,
+        updated_at: 0,
+        game_id: None,
+        judgments: None,
+        accuracy: None,
+        variant: None,
+        rest: serde_json::Map::new(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1503,5 +1599,59 @@ mod tests {
         assert_eq!(move_accuracy(50.0, 60.0), 100.0);
         assert!((move_accuracy(50.0, 30.0) - 41.0).abs() < 0.5);
         assert_eq!(move_accuracy(100.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn eval_comments_read_as_lichess_writes_them() {
+        let cp = |comment: &str| comment_eval(comment).and_then(|eval| eval.cp);
+        assert_eq!(cp("[%eval 0.18] [%clk 1:30:58]"), Some(18.0));
+        assert_eq!(cp("[%eval 1.5,23]"), Some(150.0));
+        assert_eq!(
+            cp("[%eval 0.1] then [%eval -0.4]"),
+            Some(-40.0),
+            "the last one"
+        );
+        assert!(cp("[%eval -0.0]").is_some_and(|cp| cp == 0.0 && cp.is_sign_positive()));
+        assert_eq!(
+            comment_eval("[%eval #-3]").and_then(|eval| eval.mate),
+            Some(-3.0)
+        );
+        assert_eq!(comment_eval("[%evaluate 3]"), None);
+        assert_eq!(comment_eval("Blunder."), None);
+    }
+
+    /// The evals of a game Lichess analysed, in its PGN, are a review of Lichess's, labelled from
+    /// the scores: the move that lets a mate in one in is a blunder. A game without evals has none.
+    #[test]
+    fn a_pgns_evals_are_a_lichess_review() {
+        let game = crate::pgn::parse_pgn(
+            "[Event \"Rated blitz game\"]\n\n1. e4 { [%eval 0.3] [%clk 0:03:00] } \
+             1... e5 { [%eval 0.3] } 2. Qh5 { [%eval 0.0] } 2... Nc6 { [%eval 0.1] } \
+             3. Bc4 { [%eval 0.2] } 3... Nf6 { [%eval #1] } 4. Qxf7# 1-0",
+        )
+        .remove(0);
+        let review = pgn_review(&game).expect("a review");
+        assert_eq!((review.source, review.depth), (ReviewSource::Lichess, 0));
+        assert_eq!(review.moves.len(), 7);
+        assert_eq!(
+            review.evals[0].as_ref().and_then(|eval| eval.cp),
+            Some(15.0)
+        );
+        assert_eq!(
+            review.evals[1].as_ref().and_then(|eval| eval.cp),
+            Some(30.0)
+        );
+        assert_eq!(
+            review.evals[6].as_ref().and_then(|eval| eval.mate),
+            Some(1.0)
+        );
+        assert!(review.evals[7].is_none(), "the mate has no eval");
+        let analysis = analyse(&review).expect("an analysis");
+        assert_eq!(analysis.moves[5].judgment, Some(Judgment::Blunder));
+        assert_eq!((analysis.black.blunder, analysis.white.blunder), (1, 0));
+        assert!(analysis.black.accuracy.is_some());
+
+        let plain = crate::pgn::parse_pgn("1. e4 { [%clk 0:03:00] } 1... e5 *").remove(0);
+        assert!(pgn_review(&plain).is_none());
     }
 }

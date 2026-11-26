@@ -63,7 +63,8 @@ fn first_month(months: u32, now_ms: i64) -> (i64, i64) {
 
 /// What Lichess's export of a user's games is asked (`/api/games/user/{name}`): their standard
 /// games of the speeds asked, rated only when asked, from the first month asked, with their
-/// opening named and without clocks or analysis.
+/// opening named, each move's clock and, in the games Lichess analysed, its eval: what Insights
+/// reads the player's time use and mistakes from (`gamedb::insights`).
 pub fn lichess_query(request: &PlayerGames, now_ms: i64) -> Vec<(&'static str, String)> {
     let speeds = request.speeds.as_deref().unwrap_or(&LICHESS_SPEEDS);
     let speeds: Vec<&str> = speeds.iter().map(|speed| speed.as_str()).collect();
@@ -72,8 +73,8 @@ pub fn lichess_query(request: &PlayerGames, now_ms: i64) -> Vec<(&'static str, S
         ("moves", "true".to_string()),
         ("tags", "true".to_string()),
         ("opening", "true".to_string()),
-        ("clocks", "false".to_string()),
-        ("evals", "false".to_string()),
+        ("clocks", "true".to_string()),
+        ("evals", "true".to_string()),
         ("literate", "false".to_string()),
     ];
     if request.rated {
@@ -398,7 +399,9 @@ mod tests {
         );
         assert_eq!(get(&every, "rated"), None);
         assert_eq!(get(&every, "since"), None);
-        assert_eq!(get(&every, "clocks").as_deref(), Some("false"));
+        // Clocks and Lichess's evals, for the player's time use and mistakes in Insights.
+        assert_eq!(get(&every, "clocks").as_deref(), Some("true"));
+        assert_eq!(get(&every, "evals").as_deref(), Some("true"));
 
         let some = query(&request(
             Some(12),

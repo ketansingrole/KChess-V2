@@ -9,7 +9,7 @@ use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
     DatabaseSource, GameDbImported, GameDbNameGroup, GameDbNovelty, GameDbOpeningReport,
     GameDbPage, GameDbPlayerReport, GameDbQuery, GameDbSaved, GameDbStatus, GameSite,
-    LichessArchive, LichessGames, PlayerGames,
+    InsightsFilters, InsightsReport, LichessArchive, LichessGames, PlayerGames,
 };
 
 use crate::core::Core;
@@ -125,6 +125,16 @@ impl GameDbApi for Core {
         name: PlayerName,
     ) -> Result<GameDbPlayerReport> {
         self.gamedb.player_report(&database.0, name.0).await
+    }
+
+    async fn game_db_insights(
+        &self,
+        database: DatabaseId,
+        filters: InsightsFilters,
+    ) -> Result<InsightsReport> {
+        self.gamedb
+            .insights(database.0, filters, self.tablebases.clone())
+            .await
     }
 
     async fn game_db_duplicates(&self, database: DatabaseId) -> Result<u64> {

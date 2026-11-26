@@ -16,7 +16,7 @@ KChess is now a chess database too. Keep millions of games on your computer, fro
 - The Database page lists the games in your databases. Search them by player, event, year, rating or result, open any one on the analysis board, or play through it in Guess the move, guessing the winner's moves.
 - You can import a PGN file, or a .zip, .7z or .bz2 of them, however large: drop it on the Database page.
 - The Database page downloads the games of top events Lichess has broadcast since 2020, every game of the Top Chess Engine Championship, or a month of games between strong Lichess players, and brings in the new ones when you update.
-- Player's games downloads anyone's Lichess or Chess.com games, so you can see how they play as White and as Black before you face them. Then pick them as the Opponent in Play with computer to practise against their openings, at about their rating.
+- Player's games downloads anyone's Lichess or Chess.com games to prepare against them: see how they play each colour, pick them in Insights to see where they go wrong and how they use their clock, or as the Opponent in Play with computer to practise against their openings.
 - Your Lichess and Chess.com games, and the games you finish here, make a Your games database that keeps itself up to date.
 - The explorer's Database tab shows the moves played from any position in your databases, offline.
 - More → Games with this position, on the analysis board, lists every game that reached it.
