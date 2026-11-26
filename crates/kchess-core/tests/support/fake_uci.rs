@@ -22,6 +22,10 @@
 //!   shallower searches answer at once.
 //! - `quick`: `search`, but `go movetime M` waits at most `QUICK_MOVETIME_MS`: for tests that need
 //!   the computer's move, not its clock (a level's move takes a second or more).
+//! - `human`: a search with `movetime` (a depth beside it too) reports up to `MultiPV` lines at
+//!   once, each a different move and score (`HUMAN_LINES`: two good moves, a fair one, a pawn's
+//!   mistake and one that lets the opponent mate), then waits for the time or `stop`, and answers
+//!   the best.
 //!
 //! With no arguments, the name of a copy names the mode (`engine-search`), else `handshake`, and
 //! the copy logs what it receives beside itself (`engine-search.log`).
@@ -82,7 +86,24 @@ fn scripted(mode: &str, position: &str) -> (String, &'static str) {
     }
 }
 
+/// The `human` engine's lines, best first: each its score, from the side to move, and its moves.
+const HUMAN_LINES: [(&str, &str); 5] = [
+    ("score cp 40", "e2e4 e7e5"),
+    ("score cp 25", "d2d4 d7d5"),
+    ("score cp 0", "g1f3"),
+    ("score cp -60", "a2a3"),
+    ("score mate -1", "f2f3 e7e5"),
+];
+
 fn info(mode: &str, position: &str, depth: u32, rank: usize) {
+    if mode == "human" {
+        if let Some((score, pv)) = HUMAN_LINES.get(rank - 1) {
+            emit(&format!(
+                "info depth {depth} seldepth {depth} multipv {rank} {score} nodes 9 pv {pv}"
+            ));
+        }
+        return;
+    }
     // `scoreless`: searches as `search` does, but tells no score.
     if mode == "scoreless" {
         emit(&format!(
@@ -130,7 +151,11 @@ fn run_search(mode: String, position: String, multipv: usize, stop: Arc<AtomicBo
             }
         }
         Kind::MoveTime(ms) => {
-            info(&mode, &position, 1, 1);
+            // A `human` search reports every line it was asked for.
+            let ranks = if mode == "human" { multipv } else { 1 };
+            for rank in 1..=ranks {
+                info(&mode, &position, 1, rank);
+            }
             let started = Instant::now();
             while !stop.load(Ordering::SeqCst) && started.elapsed() < Duration::from_millis(ms) {
                 thread::sleep(Duration::from_millis(5));
@@ -186,9 +211,11 @@ fn search_command(mode: &str, line: &str, state: &Mutex<Search>) {
                     .and_then(|at| words.get(at + 1))
                     .and_then(|value| value.parse::<u64>().ok())
             };
+            // A `human` search takes its time even with a depth beside it.
+            let timed = mode == "human" && number("movetime").is_some();
             let kind = if words.contains(&"infinite") {
                 Kind::Infinite
-            } else if let Some(depth) = number("depth") {
+            } else if let Some(depth) = number("depth").filter(|_| !timed) {
                 Kind::Depth {
                     depth: depth as u32,
                 }
@@ -245,7 +272,7 @@ fn main() {
     });
     let searching = matches!(
         mode.as_str(),
-        "search" | "review" | "stall" | "stall-late" | "scoreless"
+        "search" | "review" | "stall" | "stall-late" | "scoreless" | "human"
     );
     let state = Mutex::new(Search::default());
 

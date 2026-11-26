@@ -6,8 +6,10 @@
 use crate::pages::PageView;
 use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
-use kchess_contracts::check::{Fen, Moves};
-use kchess_contracts::types::{EngineLevel, LookupOptions, PositionLookupKind};
+use kchess_contracts::check::{Bounded, Fen, Moves};
+use kchess_contracts::types::{
+    EngineLevel, ExplorerSpeed, LookupOptions, PositionLookup, PositionLookupKind,
+};
 use kchess_domain::games::archive::Snapshot;
 use kchess_domain::training::clock::format_clock;
 use kchess_domain::variant::{Setup, Variant};
@@ -42,7 +44,10 @@ use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Side, Tone};
 use kchess_domain::games::Host;
-use kchess_domain::games::computer::{self, ComputerGame, Effect, SearchRequest, Sparring};
+use kchess_domain::games::computer::{
+    self, ComputerGame, Effect, Opponent, SearchRequest, Sparring,
+};
+use kchess_domain::games::human;
 use options::{Chosen, Current, GameOptions};
 
 mod draw;
@@ -97,8 +102,9 @@ pub struct ComputerPage {
     /// The unfinished game the profile keeps, read to resume it and saved as it changes.
     saver: SessionSaver<ComputerPage>,
     search: Option<Task<()>>,
-    /// The move count at which the imitated player's games had no move: from there on the engine
-    /// plays, until a takeback goes back before it.
+    /// The move count at which the opening moves ran out (the imitated player's games had no
+    /// move, or people's games were too few): from there on the search plays, until a takeback
+    /// goes back before it. 0 when the explorer failed: then for the whole game.
     out_of_games: Option<usize>,
     ticker: Option<Task<()>>,
     /// The player's low-time warning; the computer's clock runs low unannounced.
@@ -388,7 +394,7 @@ impl ComputerPage {
                     if computer {
                         crate::notifications::desktop(
                             kchess_contracts::types::NotificationKind::ComputerMove,
-                            "Stockfish moved",
+                            &format!("{} moved", self.opponent_name()),
                             &format!("{san}. Your move."),
                             cx,
                         );
@@ -415,13 +421,78 @@ impl ComputerPage {
             Ok(None) => return,
             Err(cause) => return self.log_warn(&cause),
         };
-        if let Some(sparring) = self.game.sparring().cloned()
-            && self.game.setup().is_standard_start()
-            && self.out_of_games.is_none_or(|at| request.count < at)
-        {
-            return self.move_from_games(request, sparring, cx);
+        let opening = self.game.setup().is_standard_start()
+            && self.out_of_games.is_none_or(|at| request.count < at);
+        match self.game.opponent() {
+            Opponent::Player(sparring) if opening => self.move_from_games(request, sparring, cx),
+            Opponent::People(band) if opening && request.count < human::OPENING_PLIES => {
+                self.move_from_explorer(request, band, cx)
+            }
+            Opponent::People(band) => self.human_search(request, band, cx),
+            Opponent::Player(_) | Opponent::Engine => self.engine_search(request, cx),
         }
-        self.engine_search(request, cx);
+    }
+
+    /// The position the computer is to move in, as a FEN.
+    fn search_fen(&self, request: &SearchRequest) -> Fen {
+        Fen(self
+            .position_at(request.count)
+            .as_ref()
+            .map(kchess_domain::rules::make_fen)
+            .unwrap_or_default())
+    }
+
+    /// A move people of `band` played here on Lichess, drawn as often as they played it; the
+    /// search plays once their games are too few. When the explorer cannot answer (refused,
+    /// offline, no login), the search plays for the rest of the game.
+    fn move_from_explorer(&mut self, request: SearchRequest, band: u32, cx: &mut Context<Self>) {
+        let lookup = cx.global::<AppCore>().lookup(calls::PositionLookup {
+            kind: PositionLookupKind::Opening,
+            fen: self.search_fen(&request),
+            options: Some(LookupOptions {
+                speeds: Some(vec![
+                    ExplorerSpeed::Blitz,
+                    ExplorerSpeed::Rapid,
+                    ExplorerSpeed::Classical,
+                ]),
+                ratings: Some(vec![band]),
+                ..LookupOptions::default()
+            }),
+        });
+        cx.notify();
+        self.search = Some(cx.spawn(async move |this, cx| {
+            let found = lookup.await.warn_on_err();
+            this.update(cx, |this, cx| {
+                let Some(found) = found else {
+                    this.out_of_games = Some(0);
+                    return this.human_search(request, band, cx);
+                };
+                let roll = kchess_games::random_unit().warn_on_err().unwrap_or(0.0);
+                match human::from_games(&played_counts(found), roll) {
+                    Some(uci) => this.search_finished(&request, Ok(uci), cx),
+                    None => {
+                        this.out_of_games = Some(request.count);
+                        this.human_search(request, band, cx);
+                    }
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// The move people of `band` would play here, from the engine's lines.
+    fn human_search(&mut self, request: SearchRequest, band: u32, cx: &mut Context<Self>) {
+        let search = cx.global::<AppCore>().request(calls::HumanMove {
+            moves: Moves(request.moves.clone()),
+            rating: Bounded(u64::from(band)),
+            options: Some((&request.options).into()),
+        });
+        cx.notify();
+        self.search = Some(cx.spawn(async move |this, cx| {
+            let reply = search.await;
+            this.update(cx, |this, cx| this.search_finished(&request, reply, cx))
+                .ok();
+        }));
     }
 
     /// The imitated player's move here, drawn from their games as often as they played it; the
@@ -432,14 +503,9 @@ impl ComputerPage {
         sparring: Sparring,
         cx: &mut Context<Self>,
     ) {
-        let fen = self
-            .position_at(request.count)
-            .as_ref()
-            .map(kchess_domain::rules::make_fen)
-            .unwrap_or_default();
         let lookup = cx.global::<AppCore>().lookup(calls::PositionLookup {
             kind: PositionLookupKind::Database,
-            fen: Fen(fen),
+            fen: self.search_fen(&request),
             options: Some(LookupOptions {
                 database: Some(sparring.database),
                 player: Some(sparring.player),
@@ -451,22 +517,7 @@ impl ComputerPage {
         self.search = Some(cx.spawn(async move |this, cx| {
             let found = lookup.await.warn_on_err();
             this.update(cx, |this, cx| {
-                let moves: Vec<(String, u64)> = found
-                    .map(|lookup| {
-                        lookup
-                            .saved
-                            .moves
-                            .into_iter()
-                            .map(|played| {
-                                let games = [played.white, played.draws, played.black]
-                                    .into_iter()
-                                    .flatten()
-                                    .sum::<i64>();
-                                (played.uci, u64::try_from(games).unwrap_or(0))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let moves = found.map(played_counts).unwrap_or_default();
                 let roll = kchess_games::random_unit().warn_on_err().unwrap_or(0.0);
                 match computer::pick_from_games(&moves, roll) {
                     Some(uci) => this.search_finished(&request, Ok(uci), cx),
@@ -570,30 +621,40 @@ impl ComputerPage {
         self.played_game(&self.opponent_name())
     }
 
-    /// Who the computer's side is: Stockfish, or the player whose openings it plays.
+    /// Who the computer's side is: Stockfish, the player whose openings it plays, or the people
+    /// it plays like ("Players rated 1600").
     pub(crate) fn opponent_name(&self) -> SharedString {
-        match self.game.sparring() {
-            Some(sparring) => sparring.player.clone().into(),
-            None => SharedString::new_static("Stockfish"),
+        match self.game.opponent() {
+            Opponent::Player(sparring) => sparring.player.into(),
+            Opponent::People(band) => human::name(band).into(),
+            Opponent::Engine => SharedString::new_static("Stockfish"),
         }
+    }
+
+    /// Who the computer plays as.
+    pub(crate) fn opponent(&self) -> Opponent {
+        self.game.opponent()
     }
 
     /// Whether the imitated player's games ran out at the move shown; none without one.
     pub(crate) fn out_of_their_games(&self) -> Option<bool> {
-        self.game.sparring()?;
+        self.game.opponent().sparring()?;
         Some(self.out_of_games.is_some_and(|at| at <= self.moves().len()))
     }
 
     /// Review the game on the analysis board, opened at the move being looked at, with the
-    /// level Stockfish played at.
+    /// level Stockfish played at (or the people it played like).
     fn review_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let engine = format!(
-            "Stockfish ({})",
-            crate::game::engine_level_label(self.game.level())
-        );
-        let engine = match self.game.sparring() {
-            Some(sparring) => format!("{engine} as {}", sparring.player),
-            None => engine,
+        let level = || {
+            format!(
+                "Stockfish ({})",
+                crate::game::engine_level_label(self.game.level())
+            )
+        };
+        let engine = match self.game.opponent() {
+            Opponent::Player(sparring) => format!("{} as {}", level(), sparring.player),
+            Opponent::People(band) => human::name(band),
+            Opponent::Engine => level(),
         };
         let game = self.played_game(&engine);
         kchess_board::analysis::open(
@@ -770,7 +831,7 @@ impl ComputerPage {
             clock: self.game.clock(),
             color: self.user_color(),
             level: self.game.level().to_string(),
-            sparring: self.game.sparring().cloned(),
+            opponent: self.game.opponent(),
         };
         let page = cx.entity().downgrade();
         let levels = level_choices(cx);
@@ -805,7 +866,7 @@ impl ComputerPage {
                     clock: this.game.clock(),
                     color,
                     level: this.game.level().to_string(),
-                    sparring: None,
+                    opponent: Opponent::Engine,
                 };
                 this.start_chosen(chosen, window, cx);
             },
@@ -836,7 +897,7 @@ impl ComputerPage {
                     clock: this.game.clock(),
                     color,
                     level,
-                    sparring: None,
+                    opponent: Opponent::Engine,
                 };
                 this.start_chosen(chosen, window, cx);
             },
@@ -857,7 +918,7 @@ impl ComputerPage {
 
     fn begin(&mut self, chosen: Chosen, window: &mut Window, cx: &mut Context<Self>) {
         self.game.set_level(&chosen.level);
-        self.game.set_sparring(chosen.sparring);
+        self.game.set_opponent(chosen.opponent);
         self.out_of_games = None;
         self.game.set_color(chosen.color);
         self.flipped = false;
@@ -1027,6 +1088,22 @@ impl ComputerPage {
             }
         }
     }
+}
+
+/// Each move a lookup lists, with how many of its games played it.
+fn played_counts(lookup: PositionLookup) -> Vec<(String, u64)> {
+    lookup
+        .saved
+        .moves
+        .into_iter()
+        .map(|played| {
+            let games = [played.white, played.draws, played.black]
+                .into_iter()
+                .flatten()
+                .sum::<i64>();
+            (played.uci, u64::try_from(games).unwrap_or(0))
+        })
+        .collect()
 }
 
 /// The levels the player keeps in Settings → Gameplay, with their labels.

@@ -191,6 +191,9 @@ impl<const MIN: u64, const MAX: u64> Validate for Bounded<MIN, MAX> {
 /// An analysis request's `clientId`: a stop that names it ends only that search.
 pub type AnalysisClient = Bounded<1, 9_007_199_254_740_991>;
 
+/// The rating of the people the computer plays like (`humanMove`).
+pub type Rating = Bounded<400, 3000>;
+
 /* ── Positions ── */
 
 /// A position: at most 100 characters (`length` when longer), then the FEN shape (`msg`).

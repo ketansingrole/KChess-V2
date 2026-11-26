@@ -36,6 +36,47 @@ pub struct Sparring {
     pub player: String,
 }
 
+/// Who the computer's side plays as.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum Opponent {
+    /// The engine at its level.
+    #[default]
+    Engine,
+    /// A downloaded player's own moves in the opening, then the engine at its level.
+    Player(Sparring),
+    /// People of a rating band (`human::BANDS`): the moves they play in the opening, then the
+    /// kind of mistakes they make.
+    People(u32),
+}
+
+impl Opponent {
+    /// The opponent a saved game names: its imitated player, else its band, else the engine.
+    /// A band not offered is the engine.
+    fn of(sparring: Option<Sparring>, people: Option<u32>) -> Opponent {
+        match (sparring, people) {
+            (Some(sparring), _) => Opponent::Player(sparring),
+            (None, Some(band)) if super::human::is_band(band) => Opponent::People(band),
+            _ => Opponent::Engine,
+        }
+    }
+
+    /// The player it imitates, if it is one.
+    pub fn sparring(&self) -> Option<&Sparring> {
+        match self {
+            Opponent::Player(sparring) => Some(sparring),
+            _ => None,
+        }
+    }
+
+    /// The rating band it plays like, if it is one.
+    pub fn people(&self) -> Option<u32> {
+        match self {
+            Opponent::People(band) => Some(*band),
+            _ => None,
+        }
+    }
+}
+
 /// One of the imitated player's moves from `moves` (each with how often they played it), drawn
 /// in proportion by `roll` in [0, 1); none when they have no move here.
 pub fn pick_from_games(moves: &[(String, u64)], roll: f64) -> Option<String> {
@@ -74,6 +115,9 @@ pub struct State {
     /// The player the computer imitates in the opening, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sparring: Option<Sparring>,
+    /// The rating band of the people the computer plays like, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub people: Option<u32>,
 }
 
 /// What the game keeps beside the state: when the turn began, whether the engine may play, and
@@ -114,12 +158,15 @@ pub struct Saved {
     pub flagged: Option<Color>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sparring: Option<Sparring>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub people: Option<u32>,
 }
 
 impl State {
     /// A fresh state from a saved session.
     pub fn from_saved(saved: Saved) -> State {
-        State {
+        let opponent = Opponent::of(saved.sparring, saved.people);
+        let mut state = State {
             moves: saved.moves.unwrap_or_default(),
             ply: saved.ply.unwrap_or(0),
             level: saved.level.unwrap_or_else(|| "club".into()),
@@ -131,8 +178,20 @@ impl State {
             flagged: saved.flagged,
             thinking: false,
             epoch: 0,
-            sparring: saved.sparring,
-        }
+            sparring: None,
+            people: None,
+        };
+        state.set_opponent(opponent);
+        state
+    }
+
+    /// Play as `opponent`: one of its fields names it, the other none.
+    fn set_opponent(&mut self, opponent: Opponent) {
+        (self.sparring, self.people) = match opponent {
+            Opponent::Engine => (None, None),
+            Opponent::Player(sparring) => (Some(sparring), None),
+            Opponent::People(band) => (None, Some(band)),
+        };
     }
 }
 
@@ -297,19 +356,23 @@ impl ComputerGame {
         self.state.level = level.to_string();
     }
 
-    /// The player the computer imitates in the opening, if any.
-    pub fn sparring(&self) -> Option<&Sparring> {
-        self.state.sparring.as_ref()
+    /// Who the computer's side plays as.
+    pub fn opponent(&self) -> Opponent {
+        Opponent::of(self.state.sparring.clone(), self.state.people)
     }
 
-    /// Imitate `sparring` in the opening from now on, or no one.
-    pub fn set_sparring(&mut self, sparring: Option<Sparring>) {
-        self.state.sparring = sparring;
+    /// Play as `opponent` from now on.
+    pub fn set_opponent(&mut self, opponent: Opponent) {
+        self.state.set_opponent(opponent);
     }
 
     /// What the computer's side is called: the engine at its level, as the player it imitates
-    /// when it imitates one ("Stockfish (Club Player) as Carlsen").
+    /// when it imitates one ("Stockfish (Club Player) as Carlsen"), or the people it plays like
+    /// ("Players rated 1600").
     pub fn engine_name(&self) -> Result<String, String> {
+        if let Some(band) = self.state.people {
+            return Ok(super::human::name(band));
+        }
         let engine = format!("Stockfish ({})", level_info(&self.state.level)?.label);
         Ok(match &self.state.sparring {
             Some(sparring) => format!("{engine} as {}", sparring.player),
@@ -498,7 +561,11 @@ impl ComputerGame {
         let left = self.remaining(self.board.turn(), host.now);
         let movetime = match self.state.times {
             Some(_) => {
-                let time = level_info(&self.state.level)?.time;
+                // People think for their band's time, the engine for its level's.
+                let time = match self.state.people {
+                    Some(band) => super::human::movetime(band) as f64,
+                    None => level_info(&self.state.level)?.time,
+                };
                 let increment = self.state.clock.map_or(0.0, |clock| clock.increment);
                 let budget = (left / 30.0 + increment * 800.0).floor();
                 Some(50.0_f64.max(5000.0_f64.min(time).min(budget)))
@@ -678,6 +745,7 @@ impl ComputerGame {
             times: self.state.times.map(|_| self.clocking().times_at(at)),
             flagged: self.state.flagged,
             sparring: self.state.sparring.clone(),
+            people: self.state.people,
         }
     }
 
@@ -695,6 +763,7 @@ impl ComputerGame {
             times: self.state.times.map(|_| self.clocking().times_at(at)),
             flagged: self.state.flagged,
             sparring: self.state.sparring.clone(),
+            people: self.state.people,
         }
     }
 
@@ -1140,12 +1209,13 @@ mod tests {
     #[test]
     fn the_imitated_player_is_kept_with_the_game_and_names_the_computer() {
         let mut game = ComputerGame::resume(None, &host(0.)).unwrap();
+        assert_eq!(game.opponent(), Opponent::Engine);
         assert_eq!(game.engine_name().unwrap(), "Stockfish (Club Player)");
         let sparring = Sparring {
             database: "player-lichess-carlsen".into(),
             player: "Carlsen".into(),
         };
-        game.set_sparring(Some(sparring.clone()));
+        game.set_opponent(Opponent::Player(sparring.clone()));
         assert_eq!(
             game.engine_name().unwrap(),
             "Stockfish (Club Player) as Carlsen"
@@ -1153,11 +1223,58 @@ mod tests {
         // A saved game comes back with the player it imitated, through the library's session.
         let session = game.session(0.);
         assert_eq!(session.sparring.as_ref(), Some(&sparring));
+        assert_eq!(session.people, None);
         let resumed = ComputerGame::resume(Some(session.into()), &host(0.)).unwrap();
-        assert_eq!(resumed.sparring(), Some(&sparring));
+        assert_eq!(resumed.opponent(), Opponent::Player(sparring));
         // A game without one saves none, as before.
-        game.set_sparring(None);
+        game.set_opponent(Opponent::Engine);
         let plain = serde_json::to_value(game.session(0.)).unwrap();
         assert!(plain.get("sparring").is_none(), "{plain}");
+        assert!(plain.get("people").is_none(), "{plain}");
+    }
+
+    /// Playing like people rated 1600 is saved with the game, names the computer, and thinks
+    /// for its band's time on the clock; a session saved before bands, with a `sparring`, still
+    /// reads.
+    #[test]
+    fn people_of_a_band_are_kept_with_the_game_and_name_the_computer() {
+        let mut game = ComputerGame::resume(None, &host(0.)).unwrap();
+        game.set_opponent(Opponent::People(1600));
+        assert_eq!(game.engine_name().unwrap(), "Players rated 1600");
+        let session = game.session(0.);
+        assert_eq!(
+            (session.people, session.sparring.as_ref()),
+            (Some(1600), None)
+        );
+        let text = serde_json::to_value(&session).unwrap();
+        let read: ComputerSession = serde_json::from_value(text).unwrap();
+        let resumed = ComputerGame::resume(Some(read.into()), &host(0.)).unwrap();
+        assert_eq!(resumed.opponent(), Opponent::People(1600));
+        assert_eq!(
+            resumed.archive_snapshot().unwrap().black,
+            "Players rated 1600"
+        );
+        // Picking a player after a band forgets the band.
+        let sparring = Sparring {
+            database: "player-lichess-carlsen".into(),
+            player: "Carlsen".into(),
+        };
+        game.set_opponent(Opponent::Player(sparring.clone()));
+        assert_eq!(game.state().people, None);
+        // A session from before bands: its `sparring` reads as it did.
+        let mut old =
+            serde_json::to_value(ComputerGame::resume(None, &host(0.)).unwrap().session(0.))
+                .unwrap();
+        old["sparring"] = serde_json::to_value(&sparring).unwrap();
+        let read: ComputerSession = serde_json::from_value(old).unwrap();
+        let resumed = ComputerGame::resume(Some(read.into()), &host(0.)).unwrap();
+        assert_eq!(resumed.opponent(), Opponent::Player(sparring));
+        // A band not offered plays as the engine.
+        let odd = Saved {
+            people: Some(1500),
+            ..Saved::default()
+        };
+        let resumed = ComputerGame::resume(Some(odd), &host(0.)).unwrap();
+        assert_eq!(resumed.opponent(), Opponent::Engine);
     }
 }
