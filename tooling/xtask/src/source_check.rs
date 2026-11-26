@@ -864,6 +864,26 @@ c136acdf343293c45252906fee91e3b561fb26a936979f52dbe04bb649a2fd86  lichess_db_sta
         );
     }
 
+    /// Windows checks the sources out with CRLF line endings, where the scan once took every
+    /// test module for shipped code.
+    #[test]
+    fn the_address_scan_reads_a_windows_checkout_alike() {
+        let mut files = Vec::new();
+        crate::util::sources_under(&crate::util::root(), "crates/kchess-core/src", &mut files)
+            .unwrap();
+        let lf = addresses_outside_sources(&files);
+        let crlf: Vec<(String, String)> = files
+            .iter()
+            .map(|(path, text)| {
+                (
+                    path.clone(),
+                    text.replace("\r\n", "\n").replace('\n', "\r\n"),
+                )
+            })
+            .collect();
+        assert_eq!(addresses_outside_sources(&crlf), lf);
+    }
+
     #[test]
     fn the_address_scan_finds_a_literal_but_not_a_local_one_a_scheme_or_a_test() {
         let file = |path: &str, text: &str| (path.to_string(), text.to_string());
