@@ -427,6 +427,22 @@ pub struct GameDbSaved {
     pub game: u64,
 }
 
+/// Where `gameDbMergeGames` put the games merged: the study and its new chapter, and how many
+/// games it merged and left out.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameDbMerged {
+    pub study: String,
+    pub chapter: String,
+    pub merged: u64,
+    /// Games from another start position, or another variant, than the first game merged.
+    pub left_out: u64,
+    /// Games past what one chapter holds: 200 games, and its moves.
+    pub no_room: u64,
+    /// The studies it changed, as an incremental `studyCommand` answers them.
+    pub saved: StudyCommandResult,
+}
+
 /// What an import added.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]

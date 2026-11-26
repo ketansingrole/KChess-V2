@@ -804,6 +804,68 @@ fn games_are_copied_saved_and_deleted_from_the_page(cx: &mut gpui_kit::TestAppCo
     wait_for_listed(&mut app, "no game", &[]);
 }
 
+/// Every game a search finds merged into a new study: its chapter opens on the analysis board
+/// with the most played line as the main line, the other as a variation, and each game named
+/// where its line ends.
+#[gpui_kit::test]
+fn games_found_are_merged_into_a_study(cx: &mut gpui_kit::TestAppContext) {
+    const RUY: &str = "[White \"Ana\"]\n[Black \"Ben\"]\n[Result \"1-0\"]\n[Date \"2024.03.01\"]\n\n\
+        1. e4 e5 2. Nf3 Nc6 { The main line } 1-0\n\n\
+        [White \"Carl\"]\n[Black \"Dora\"]\n[Result \"0-1\"]\n[Date \"2024.03.02\"]\n\n\
+        1. e4 e5 2. Nf3 Nf6 0-1\n\n\
+        [White \"Eve\"]\n[Black \"Ana\"]\n[Result \"1/2-1/2\"]\n[Date \"2024.03.03\"]\n\n\
+        1. e4 e5 2. Nf3 Nc6 3. Bb5 1/2-1/2\n";
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    let files = tempfile::tempdir().expect("a folder for the file");
+    let path = files.path().join("ruy.pgn");
+    std::fs::write(&path, RUY).expect("the file");
+    app.click("gamedb-import");
+    app.wait_for_open_dialog();
+    app.cx
+        .simulate_path_prompt_response(move |_| Some(vec![path]));
+    wait_for_listed(
+        &mut app,
+        "every game",
+        &[
+            "Eve against Ana, 1/2-1/2",
+            "Carl against Dora, 0-1",
+            "Ana against Ben, 1-0",
+        ],
+    );
+
+    assert_eq!(app.find("database-found").label(), Some("All 3 games"));
+    app.click("database-found");
+    app.click_label("Merge into a study…");
+    app.fill_in_dialog("Name", "Ruy games");
+    app.click("target-confirm");
+    app.wait_for_page(crate::pages::Page::Analysis);
+    // 2... Nc6, played twice, is the main line on to 3. Bb5; 2... Nf6 its variation.
+    app.find("tree-e2e4 e7e5 g1f3 b8c6 f1b5");
+    app.find("tree-e2e4 e7e5 g1f3 g8f6");
+    let (name, pgn) = app.cx.update(|cx| {
+        let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .expect("the analysis board");
+        let study = page.read(cx).study_id().to_string();
+        let name = cx
+            .global::<crate::studies::StudyHandle>()
+            .0
+            .read(cx)
+            .study(&study)
+            .map(|study| study.name.clone());
+        (name, page.read(cx).pgn())
+    });
+    assert_eq!(name.as_deref(), Some("Ruy games"));
+    assert!(
+        pgn.contains("2. Nf3 Nc6 { The main line } { Ana \u{2013} Ben, 1-0, 2024 } ( 2... Nf6"),
+        "{pgn}"
+    );
+    assert!(
+        pgn.contains("3. Bb5 { Eve \u{2013} Ana, 1/2-1/2, 2024 }"),
+        "{pgn}"
+    );
+}
+
 /// A game opened from a database and changed on the board is saved back in its place, or as a
 /// new game in another database.
 #[gpui_kit::test]

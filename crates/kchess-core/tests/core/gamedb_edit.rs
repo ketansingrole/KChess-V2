@@ -409,3 +409,155 @@ async fn games_are_copied_and_saved_as_a_file() {
     assert!(!refused.message.is_empty());
     core.close().await;
 }
+
+/// The study's chapter `chapter`, as the library holds it: its name and PGN.
+async fn chapter(core: &Core, study: &str, chapter: &str) -> (String, String) {
+    let library = core.call("library", vec![]).await.expect("library");
+    let found = library["studies"]
+        .as_array()
+        .expect("studies")
+        .iter()
+        .find(|item| item["id"] == study)
+        .and_then(|item| {
+            item["chapters"]
+                .as_array()?
+                .iter()
+                .find(|item| item["id"] == chapter)
+                .cloned()
+        })
+        .expect("the chapter");
+    (
+        found["name"].as_str().expect("a name").into(),
+        found["pgn"].as_str().expect("a PGN").into(),
+    )
+}
+
+/// Every game a search finds merged into one chapter of a new study, then into an existing
+/// study as its last chapter: the chapter holds the merged tree, the game from another position
+/// is left out and counted, and the study's other chapter stays.
+#[tokio::test]
+async fn games_are_merged_into_a_study_chapter() {
+    let (_profile, files, core) = open().await;
+    let merged_games = [
+        game(
+            "Ana",
+            "Ben",
+            "1-0",
+            "Open",
+            "1. e4 { Best by test } e5 2. Nf3 $1 Nc6",
+        ),
+        game("Carl", "Ana", "0-1", "Open", "1. e4 c5 2. Nf3 d6"),
+        game("Dora", "Carl", "1-0", "Club", "1. e4 e5 2. Bc4"),
+    ]
+    .concat();
+    let elsewhere = "[Event \"Endgame\"]\n[White \"Eve\"]\n[Black \"Ana\"]\n[Result \"1-0\"]\n\
+                     [SetUp \"1\"]\n[FEN \"4k3/8/8/8/8/8/4P3/4K3 w - - 0 1\"]\n\n1. e4 1-0\n\n";
+    let id = import(
+        &core,
+        files.path(),
+        "Club",
+        &format!("{merged_games}{elsewhere}"),
+    )
+    .await;
+    let every = json!({ "database": id, "offset": 0, "limit": 20 });
+    let answer = core
+        .call(
+            "gameDbMergeGames",
+            vec![
+                json!(id),
+                Value::Null,
+                every.clone(),
+                Value::Null,
+                json!("Open games"),
+            ],
+        )
+        .await
+        .expect("merges");
+    assert_eq!(
+        (&answer["merged"], &answer["leftOut"], &answer["noRoom"]),
+        (&json!(3), &json!(1), &json!(0)),
+        "{answer}"
+    );
+    let study = answer["study"].as_str().expect("a study").to_string();
+    let first = answer["chapter"].as_str().expect("a chapter").to_string();
+    assert_eq!(
+        answer["saved"]["studies"][0]["id"], study,
+        "the study saved"
+    );
+    let (name, pgn) = chapter(&core, &study, &first).await;
+    assert_eq!(name, "Open games");
+    let expected =
+        kchess_domain::tree::merge::merge_games(&kchess_domain::pgn::parse_pgn(&merged_games))
+            .expect("merged here")
+            .tree
+            .to_pgn()
+            .expect("written");
+    assert_eq!(pgn, expected);
+    assert!(
+        pgn.contains("1. e4 { Best by test } e5 ( 1... c5 2. Nf3 d6"),
+        "{pgn}"
+    );
+    assert!(pgn.contains("2. Nf3 $1 ( 2. Bc4"), "{pgn}");
+    assert!(pgn.contains("Ana \u{2013} Ben, 1-0, Open 2024"), "{pgn}");
+    // Into that study now, from one game: its last chapter, named after the database.
+    let answer = core
+        .call(
+            "gameDbMergeGames",
+            vec![json!(id), json!([2]), Value::Null, json!(study)],
+        )
+        .await
+        .expect("merges into the study");
+    assert_eq!(answer["study"], study);
+    assert_eq!(answer["merged"], 1);
+    let second = answer["chapter"].as_str().expect("a chapter").to_string();
+    assert_ne!(second, first);
+    let (name, pgn) = chapter(&core, &study, &second).await;
+    assert_eq!(name, "Club");
+    assert!(
+        pgn.contains("1. e4 c5 2. Nf3 d6 { Carl \u{2013} Ana, 0-1, Open 2024 }"),
+        "{pgn}"
+    );
+    assert_eq!(chapter(&core, &study, &first).await.1, expected, "kept");
+    // Neither a study nor a name: refused before anything is read.
+    let refused = core
+        .call("gameDbMergeGames", vec![json!(id), Value::Null, every])
+        .await
+        .expect_err("nowhere to go");
+    assert_eq!(refused.message, "Choose a study, or name a new one.");
+    core.close().await;
+}
+
+/// A chapter takes 200 games: the rest a search finds are counted, not merged.
+#[tokio::test]
+async fn a_merge_keeps_to_200_games() {
+    let (_profile, files, core) = open().await;
+    let games: String = (0..203)
+        .map(|n| game(&format!("P{n}"), "Q", "1-0", "Open", "1. e4 e5"))
+        .collect();
+    let id = import(&core, files.path(), "Many", &games).await;
+    let answer = core
+        .call(
+            "gameDbMergeGames",
+            vec![
+                json!(id),
+                Value::Null,
+                json!({ "database": id, "offset": 0, "limit": 20 }),
+                Value::Null,
+                json!("Many"),
+            ],
+        )
+        .await
+        .expect("merges");
+    assert_eq!(
+        (&answer["merged"], &answer["noRoom"]),
+        (&json!(200), &json!(3))
+    );
+    let (_, pgn) = chapter(
+        &core,
+        answer["study"].as_str().expect("a study"),
+        answer["chapter"].as_str().expect("a chapter"),
+    )
+    .await;
+    assert_eq!(pgn.matches(" \u{2013} Q, 1-0, Open 2024").count(), 200);
+    core.close().await;
+}

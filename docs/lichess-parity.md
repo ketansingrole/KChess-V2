@@ -75,7 +75,12 @@ can add them as a friend, challenge them or watch their current game.
   filtered by player, colour, both players' rating and a year, and lists its best-rated games.
   The **Database** page lists a game database's games, searched by player, side, event, years,
   rating and result, a page at a time, and opens any on the analysis board; the analysis board's
-  _Games with this position_ lists the games that reached its position, at any depth. A PGN
+  _Games with this position_ lists the games that reached its position, at any depth. A game's
+  menu, or that of every game a search finds, copies them into another database, saves them as
+  one PGN file or deletes them; _Merge into a study_ makes the games a search finds (up to 200,
+  from the first one's start position) one chapter of a new or existing study: a move tree of
+  all their moves, the most played the main line at each branch and the others its variations,
+  with the games' comments and NAGs and a comment naming each game where its line ends. A PGN
   file, a `.pgn.zst` or `.pgn.bz2` (FICS's games), or a `.zip` of them (TWIC's weekly issues)
   or a `.7z` (Lumbra's Gigabase, CCRL), dropped on the page or picked is imported. _Broadcast games_ downloads Lichess's broadcast archive
   (over-the-board games since 2020, CC BY-SA 4.0, shown under its games) month by month, checking
