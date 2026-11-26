@@ -35,7 +35,7 @@ pub const NAME: &str = "Broadcast games";
 /// Whose games they are and on what terms, as the licence asks to be shown.
 pub const ATTRIBUTION: &str = "Lichess broadcast games, database.lichess.org, CC BY-SA 4.0";
 /// The archive: `list.txt`, `sha256sums.txt` and the months beside them.
-pub const ARCHIVE: &str = "https://database.lichess.org/broadcast/";
+pub const ARCHIVE: &str = crate::sources::LICHESS_BROADCAST.url;
 
 /// How long a download may go without a byte before it fails.
 pub(super) const SILENCE: Duration = Duration::from_secs(60);

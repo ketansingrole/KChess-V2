@@ -111,3 +111,8 @@ reduced motion, so dialogs and popovers are at rest when a test clicks them.
 - `fuzz/` holds cargo-fuzz targets for PGN, FEN, UCI output, online events and the game tree,
   over the typed rules; `check` builds them when the rules change, and
   `.github/workflows/fuzz.yml` runs them.
+- Every third-party address the core reaches is in `crates/kchess-core/src/sources.rs`, with who
+  runs it; xtask's `every_third_party_address_is_a_source` refuses one anywhere else. Each
+  download there has a check in `cargo xtask source-check`, which asks for a small part of it (an
+  archive's index, a release listing, a file's first bytes) and fails naming the source and its
+  owner; the weekly Sources workflow (`.github/workflows/sources.yml`) runs it.

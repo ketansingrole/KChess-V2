@@ -27,6 +27,7 @@ mod package;
 mod pinned;
 mod pins;
 mod release;
+mod source_check;
 mod store_notes;
 mod sums;
 mod superseded;
@@ -369,6 +370,16 @@ const COMMANDS: &[Command] = &[
              both; the weekly Pins workflow runs it",
         )],
         run: pins::run,
+    },
+    Command {
+        name: "source-check",
+        forms: &[(
+            "",
+            "Fail when a third-party download (crates/kchess-core/src/sources.rs) no longer \
+             serves what KChess reads, naming the source and its owner; the weekly Sources \
+             workflow runs it",
+        )],
+        run: source_check::run,
     },
 ];
 

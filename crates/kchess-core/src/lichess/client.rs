@@ -19,7 +19,7 @@ use super::stream::{LineOptions, read_chunks, read_lines};
 use kchess_contracts::error::{CoreError, ErrorKind, Result};
 
 /// The Lichess website and API.
-pub const BASE_URL: &str = "https://lichess.org";
+pub const BASE_URL: &str = crate::sources::LICHESS.url;
 
 /// Shared transport configuration. Streams have no total response deadline; the policy bounds
 /// headers, ordinary calls bound their bodies, line-stream readers bound silence between chunks,
