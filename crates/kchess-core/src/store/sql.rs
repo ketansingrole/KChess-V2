@@ -190,9 +190,61 @@ impl Lane {
         self.closed.store(true, Ordering::SeqCst);
         self.execution.close();
         self.work.close();
+        let __t = std::time::Instant::now();
         self.work.wait().await;
+        let __waited = __t.elapsed();
         let lane = Arc::clone(self);
-        if let Err(cause) = tokio::task::spawn_blocking(move || lane.release()).await {
+        let released = tokio::task::spawn_blocking(move || {
+            let t = std::time::Instant::now();
+            let taken = usable_connection(&lane.connection, lane.host.as_ref(), lane.scope).take();
+            let mut checkpoint = None;
+            let mut wal = None;
+            if let Some(db) = taken {
+                wal = db
+                    .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
+                    .ok();
+                let c = std::time::Instant::now();
+                let _ = db.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                    row.get::<_, i64>(1)
+                });
+                checkpoint = Some(c.elapsed());
+                let d = std::time::Instant::now();
+                drop(db);
+                return format!(
+                    "{wal:?} checkpoint {checkpoint:?} then drop {:?}, all {:?}",
+                    d.elapsed(),
+                    t.elapsed()
+                );
+            }
+            format!("no connection {checkpoint:?} {wal:?} {:?}", t.elapsed())
+        })
+        .await;
+        // TEMPORARY (claude/close-under-load)
+        if __t.elapsed() > std::time::Duration::from_millis(100) {
+            eprintln!(
+                "LANE-TIMING {} drain {:?}, release {:?} (of {:?})",
+                self.scope,
+                __waited,
+                released.as_ref().ok(),
+                __t.elapsed()
+            );
+            use std::io::Write as _;
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(std::env::temp_dir().join("kchess-close-timing.log"))
+            {
+                let _ = writeln!(
+                    file,
+                    "LANE-TIMING {} drain {:?}, release {:?} (of {:?})",
+                    self.scope,
+                    __waited,
+                    released.as_ref().ok(),
+                    __t.elapsed()
+                );
+            }
+        }
+        if let Err(cause) = released {
             self.host.log(
                 Level::Warn,
                 self.scope,
