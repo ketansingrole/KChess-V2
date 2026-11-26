@@ -102,7 +102,11 @@ impl ComputerPage {
             .into_any_element();
         }
         if self.thinking() {
-            return widgets::StatusBanner::turn("Stockfish is thinking…".into()).into_any_element();
+            let thinking = match self.game.sparring() {
+                Some(sparring) => format!("{} is thinking…", sparring.player).into(),
+                None => SharedString::new_static("Stockfish is thinking…"),
+            };
+            return widgets::StatusBanner::turn(thinking).into_any_element();
         }
         let position = self.position_at(self.ply());
         let turn = position
@@ -112,7 +116,10 @@ impl ComputerPage {
         widgets::StatusBanner::turn(if turn == self.user_color() {
             "Your move".into()
         } else {
-            "Stockfish's move".into()
+            match self.game.sparring() {
+                Some(sparring) => format!("{}'s move", sparring.player).into(),
+                None => SharedString::new_static("Stockfish's move"),
+            }
         })
         .when(check, |banner| banner.detail("Check".into()))
         .into_any_element()
@@ -166,7 +173,20 @@ impl Render for ComputerPage {
                     live && turn != user && untimed,
                     &palette,
                 ))
-                .child("Stockfish")
+                .child(self.opponent_name())
+                // Whether the moves still come from their games, or Stockfish took over.
+                .children(self.out_of_their_games().map(|out| {
+                    div()
+                        .flex_none()
+                        .text_size(px(12.))
+                        .text_color(palette.text_muted)
+                        .font_weight(FontWeight::NORMAL)
+                        .child(if out {
+                            SharedString::new_static("Out of their games")
+                        } else {
+                            SharedString::new_static("Their openings")
+                        })
+                }))
                 .child(
                     h_flex()
                         .w(px(196.))

@@ -1,6 +1,8 @@
 //! New game against Stockfish: where the game starts (the standard
 //! position, a Chess960 start, another variant, which Fairy-Stockfish plays, or a FEN), the clock,
-//! the side the player takes and the engine's strength. It opens on the current game's options.
+//! the side the player takes, the engine's strength, and from the standard position a player whose
+//! downloaded games the computer imitates in the opening (Player's games on the Database page). It
+//! opens on the current game's options.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -14,8 +16,15 @@ use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::game::chess960;
 use crate::theme::Palette;
+use crate::game_db::GameDbHandle;
 use crate::widgets;
+use crate::core::AppCore;
+use kchess_app::log::ResultExt as _;
+use kchess_contracts::calls;
+use kchess_contracts::check::{DatabaseId, PlayerName};
+use kchess_contracts::types::DatabaseSource;
 use kchess_domain::games::Clock;
+use kchess_domain::games::computer::Sparring;
 use kchess_domain::variant::{Setup, Variant};
 
 const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -35,12 +44,14 @@ fn fairy_variants() -> impl Iterator<Item = Variant> {
         .filter(|variant| !variant.standard_rules())
 }
 
-/// What the dialog starts: the setup, the clock, the player's side and Stockfish's level.
+/// What the dialog starts: the setup, the clock, the player's side, Stockfish's level and the
+/// player it imitates in the opening.
 pub struct Chosen {
     pub setup: Setup,
     pub clock: Option<Clock>,
     pub color: Color,
     pub level: String,
+    pub sparring: Option<Sparring>,
 }
 
 pub struct GameOptions {
@@ -54,6 +65,11 @@ pub struct GameOptions {
     color: Entity<SelectState<Vec<SharedString>>>,
     level: Entity<SelectState<Vec<SharedString>>>,
     levels: Vec<String>,
+    /// Stockfish, then each player whose games were downloaded, as `opponents` lists them.
+    opponent: Entity<SelectState<Vec<SharedString>>>,
+    opponents: Vec<Sparring>,
+    /// Their rating, read to set the strength to it.
+    rating: Option<Task<()>>,
     preview: Entity<ChessBoard>,
     on_start: OnStart,
     _subscriptions: Vec<Subscription>,
@@ -68,6 +84,7 @@ pub struct Current {
     pub clock: Option<Clock>,
     pub color: Color,
     pub level: String,
+    pub sparring: Option<Sparring>,
 }
 
 impl GameOptions {
@@ -158,8 +175,32 @@ impl GameOptions {
         let level_row = ids.iter().position(|id| *id == current.level);
         let level =
             cx.new(|cx| SelectState::new(labels, level_row.map(IndexPath::new), window, cx));
+        let (opponents, opponent_labels) = opponents(cx);
+        let opponent_row = current
+            .sparring
+            .as_ref()
+            .and_then(|sparring| opponents.iter().position(|one| one == sparring))
+            .map_or(0, |row| row + 1);
+        let opponent = cx.new(|cx| {
+            SelectState::new(
+                opponent_labels,
+                Some(IndexPath::new(opponent_row)),
+                window,
+                cx,
+            )
+        });
         let preview = cx.new(|_| ChessBoard::new(preview_state(&chess960(518))));
         let subscriptions = vec![
+            // A player picked: Stockfish takes their strength once their games run out.
+            cx.subscribe_in(
+                &opponent,
+                window,
+                |this, _, event: &SelectEvent<Vec<SharedString>>, window, cx| {
+                    if matches!(event, SelectEvent::Confirm(Some(_))) {
+                        this.match_rating(window, cx);
+                    }
+                },
+            ),
             cx.subscribe(&number, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.refresh_preview(cx);
@@ -207,6 +248,9 @@ impl GameOptions {
             color,
             level,
             levels: ids,
+            opponent,
+            opponents,
+            rating: None,
             preview,
             on_start: Box::new(on_start),
             _subscriptions: subscriptions,
@@ -221,6 +265,46 @@ impl GameOptions {
         }
         options.refresh_preview(cx);
         options
+    }
+
+    /// The player picked under _Opponent_, if any.
+    fn sparring(&self, cx: &App) -> Option<Sparring> {
+        let row = self.opponent.read(cx).selected_index(cx)?.row;
+        row.checked_sub(1)
+            .and_then(|row| self.opponents.get(row))
+            .cloned()
+    }
+
+    /// Set the strength to the picked player's latest rating in their games.
+    fn match_rating(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(sparring) = self.sparring(cx) else {
+            self.rating = None;
+            return;
+        };
+        let report = cx.global::<AppCore>().request(calls::GameDbPlayer {
+            database: DatabaseId(sparring.database),
+            name: PlayerName(sparring.player),
+        });
+        self.rating = Some(cx.spawn_in(window, async move |this, cx| {
+            let Some(report) = report.await.warn_on_err() else {
+                return;
+            };
+            let Some(rating) = report.ratings.last().map(|rating| rating.rating) else {
+                return;
+            };
+            this.update_in(cx, |this, window, cx| {
+                let Some(level) = kchess_domain::training::engine_levels::nearest(&this.levels, rating)
+                else {
+                    return;
+                };
+                let row = this.levels.iter().position(|id| *id == level);
+                this.level.update(cx, |select, cx| {
+                    select.set_selected_index(row.map(IndexPath::new), window, cx)
+                });
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     /// The Chess960 number typed, when it is a whole number from 0 to 959 (`valid960`).
@@ -317,6 +401,10 @@ impl GameOptions {
                 .get(row(&self.level))
                 .cloned()
                 .unwrap_or_else(|| "club".into()),
+            // Their games start from the usual position; another start leaves them out.
+            sparring: (self.start == Start::Standard)
+                .then(|| self.sparring(cx))
+                .flatten(),
         }
     }
 
@@ -337,6 +425,29 @@ impl GameOptions {
             .update(cx, |input, cx| input.set_value(n.to_string(), window, cx));
         self.refresh_preview(cx);
     }
+}
+
+/// The players whose games were downloaded (Player's games), each with the label it is offered
+/// under, after Stockfish's own openings.
+fn opponents(cx: &App) -> (Vec<Sparring>, Vec<SharedString>) {
+    let mut labels = vec![SharedString::new_static("Stockfish")];
+    let opponents = cx
+        .global::<GameDbHandle>()
+        .0
+        .read(cx)
+        .databases()
+        .iter()
+        .filter(|info| info.source == DatabaseSource::Player)
+        .filter_map(|info| {
+            let player = info.player.as_ref()?;
+            labels.push(info.name.clone().into());
+            Some(Sparring {
+                database: info.id.clone(),
+                player: player.username.clone(),
+            })
+        })
+        .collect();
+    (opponents, labels)
 }
 
 /// The Chess960 start shown beside its number.
@@ -477,6 +588,17 @@ impl Render for GameOptions {
                         )
                         .flex_1(),
                     ),
+            )
+            .when(
+                self.start == Start::Standard && !self.opponents.is_empty(),
+                |form| {
+                    form.child(widgets::field(
+                        "Opponent",
+                        Select::new(&self.opponent).accessibility_label("Opponent"),
+                        None,
+                        &palette,
+                    ))
+                },
             )
             .child(widgets::field(
                 "Stockfish strength",

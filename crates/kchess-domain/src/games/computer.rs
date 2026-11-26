@@ -25,6 +25,35 @@ pub fn players(color: Color, engine: &str) -> (&str, &str) {
     }
 }
 
+/// A player the computer imitates in the opening: while its position is among that player's
+/// games of `database` (a player's downloaded games), the computer plays one of their moves,
+/// drawn as often as they played it, and the engine takes over once it is not.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Sparring {
+    pub database: String,
+    /// Their name in the database's games.
+    pub player: String,
+}
+
+/// One of the imitated player's moves from `moves` (each with how often they played it), drawn
+/// in proportion by `roll` in [0, 1); none when they have no move here.
+pub fn pick_from_games(moves: &[(String, u64)], roll: f64) -> Option<String> {
+    let total: u64 = moves.iter().map(|(_, count)| count).sum();
+    if total == 0 {
+        return None;
+    }
+    let mut target = (roll.clamp(0.0, 1.0) * total as f64) as u64;
+    target = target.min(total - 1);
+    for (uci, count) in moves {
+        if target < *count {
+            return Some(uci.clone());
+        }
+        target -= count;
+    }
+    None
+}
+
 /// The session document and the engine turn's bookkeeping.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +71,9 @@ pub struct State {
     pub flagged: Option<Color>,
     pub thinking: bool,
     pub epoch: u64,
+    /// The player the computer imitates in the opening, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sparring: Option<Sparring>,
 }
 
 /// What the game keeps beside the state: when the turn began, whether the engine may play, and
@@ -80,6 +112,8 @@ pub struct Saved {
     pub times: Option<Times>,
     #[serde(default, with = "crate::color::option_by_name")]
     pub flagged: Option<Color>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sparring: Option<Sparring>,
 }
 
 impl State {
@@ -97,6 +131,7 @@ impl State {
             flagged: saved.flagged,
             thinking: false,
             epoch: 0,
+            sparring: saved.sparring,
         }
     }
 }
@@ -260,6 +295,26 @@ impl ComputerGame {
     /// Play at `level` from the next search on.
     pub fn set_level(&mut self, level: &str) {
         self.state.level = level.to_string();
+    }
+
+    /// The player the computer imitates in the opening, if any.
+    pub fn sparring(&self) -> Option<&Sparring> {
+        self.state.sparring.as_ref()
+    }
+
+    /// Imitate `sparring` in the opening from now on, or no one.
+    pub fn set_sparring(&mut self, sparring: Option<Sparring>) {
+        self.state.sparring = sparring;
+    }
+
+    /// What the computer's side is called: the engine at its level, as the player it imitates
+    /// when it imitates one ("Stockfish (Club Player) as Carlsen").
+    pub fn engine_name(&self) -> Result<String, String> {
+        let engine = format!("Stockfish ({})", level_info(&self.state.level)?.label);
+        Ok(match &self.state.sparring {
+            Some(sparring) => format!("{engine} as {}", sparring.player),
+            None => engine,
+        })
     }
 
     fn set_board(&mut self, board: Board) {
@@ -622,6 +677,7 @@ impl ComputerGame {
             clock: self.state.clock,
             times: self.state.times.map(|_| self.clocking().times_at(at)),
             flagged: self.state.flagged,
+            sparring: self.state.sparring.clone(),
         }
     }
 
@@ -638,12 +694,13 @@ impl ComputerGame {
             clock: self.state.clock,
             times: self.state.times.map(|_| self.clocking().times_at(at)),
             flagged: self.state.flagged,
+            sparring: self.state.sparring.clone(),
         }
     }
 
     /// The game as the archive stores it.
     pub fn archive_snapshot(&self) -> Result<Snapshot, String> {
-        let engine = format!("Stockfish ({})", level_info(&self.state.level)?.label);
+        let engine = self.engine_name()?;
         let (white, black) = players(self.state.color, &engine);
         let (white, black) = (white.to_string(), black.to_string());
         let reason = self
@@ -1063,5 +1120,44 @@ mod tests {
             ..host(2.)
         };
         assert!(!played(&mut game, request.epoch, request.count, refused));
+    }
+
+    #[test]
+    fn a_move_is_drawn_from_the_players_games_as_often_as_they_played_it() {
+        let moves = vec![("e2e4".to_string(), 3), ("d2d4".to_string(), 1)];
+        assert_eq!(pick_from_games(&moves, 0.0).as_deref(), Some("e2e4"));
+        assert_eq!(pick_from_games(&moves, 0.74).as_deref(), Some("e2e4"));
+        assert_eq!(pick_from_games(&moves, 0.75).as_deref(), Some("d2d4"));
+        // A roll at or past 1 still draws a move they played.
+        assert_eq!(pick_from_games(&moves, 1.0).as_deref(), Some("d2d4"));
+        // A move they never played is never drawn, nor anything when they have none here.
+        let never = vec![("g1f3".to_string(), 0), ("c2c4".to_string(), 2)];
+        assert_eq!(pick_from_games(&never, 0.0).as_deref(), Some("c2c4"));
+        assert_eq!(pick_from_games(&[], 0.5), None);
+        assert_eq!(pick_from_games(&[("e2e4".to_string(), 0)], 0.5), None);
+    }
+
+    #[test]
+    fn the_imitated_player_is_kept_with_the_game_and_names_the_computer() {
+        let mut game = ComputerGame::resume(None, &host(0.)).unwrap();
+        assert_eq!(game.engine_name().unwrap(), "Stockfish (Club Player)");
+        let sparring = Sparring {
+            database: "player-lichess-carlsen".into(),
+            player: "Carlsen".into(),
+        };
+        game.set_sparring(Some(sparring.clone()));
+        assert_eq!(
+            game.engine_name().unwrap(),
+            "Stockfish (Club Player) as Carlsen"
+        );
+        // A saved game comes back with the player it imitated, through the library's session.
+        let session = game.session(0.);
+        assert_eq!(session.sparring.as_ref(), Some(&sparring));
+        let resumed = ComputerGame::resume(Some(session.into()), &host(0.)).unwrap();
+        assert_eq!(resumed.sparring(), Some(&sparring));
+        // A game without one saves none, as before.
+        game.set_sparring(None);
+        let plain = serde_json::to_value(game.session(0.)).unwrap();
+        assert!(plain.get("sparring").is_none(), "{plain}");
     }
 }

@@ -57,6 +57,9 @@ pub struct ComputerSession {
     pub times: Option<Times>,
     #[serde(with = "crate::color::option_by_name")]
     pub flagged: Option<Color>,
+    /// The player the computer imitates in the opening, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sparring: Option<super::computer::Sparring>,
 }
 
 /// One session, of whichever kind: what a page saves and what `session` answers.
@@ -185,6 +188,7 @@ impl From<ComputerSession> for super::computer::Saved {
             clock: session.clock,
             times: session.times,
             flagged: session.flagged,
+            sparring: session.sparring,
         }
     }
 }
