@@ -61,6 +61,19 @@ pub fn normalize(levels: &[String]) -> Vec<String> {
     }
 }
 
+/// The level of `levels` whose rating is nearest `rating`, the weaker on a tie; full strength
+/// (no rating) only when nothing else is offered.
+pub fn nearest(levels: &[String], rating: u32) -> Option<String> {
+    let rated = levels.iter().filter_map(|id| Some((id, info(id)?.elo?)));
+    rated
+        .min_by(|(_, a), (_, b)| {
+            let (a, b) = ((a - f64::from(rating)).abs(), (b - f64::from(rating)).abs());
+            a.total_cmp(&b)
+        })
+        .map(|(id, _)| id.clone())
+        .or_else(|| levels.first().cloned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,5 +87,20 @@ mod tests {
             vec!["beginner".to_string(), "gm".into()]
         );
         assert_eq!(normalize(&[]), default_levels());
+    }
+
+    #[test]
+    fn the_nearest_offered_level_to_a_rating() {
+        let levels: Vec<String> = ["beginner", "club", "expert", "im", "max"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(nearest(&levels, 2150).as_deref(), Some("expert"));
+        assert_eq!(nearest(&levels, 2250).as_deref(), Some("im"));
+        assert_eq!(nearest(&levels, 300).as_deref(), Some("beginner"));
+        assert_eq!(nearest(&levels, 3200).as_deref(), Some("im"));
+        // A tie goes to the weaker: club (1600) and expert (2000) are both 200 from 1800.
+        assert_eq!(nearest(&levels, 1800).as_deref(), Some("club"));
+        assert_eq!(nearest(&["max".to_string()], 1500).as_deref(), Some("max"));
+        assert_eq!(nearest(&[], 1500), None);
     }
 }

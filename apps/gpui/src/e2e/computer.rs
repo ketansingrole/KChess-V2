@@ -574,3 +574,64 @@ fn undo_takes_back(cx: &mut gpui_kit::TestAppContext) {
     app.press("secondary-z");
     app.wait_for_moves(&[]);
 }
+
+/// Picked as the Opponent, a player whose games were downloaded plays their own moves in the
+/// opening, as often as they played each, and Stockfish takes their strength for the rest: the
+/// scripted engine only ever answers `e2e4`, so Black's reply can only be theirs.
+#[gpui_kit::test]
+fn a_downloaded_player_plays_their_own_openings(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::SCOUTED;
+    use gpui_kit::test::TestQueryExt as _;
+    let value = |window: &mut gpui_kit::Window, label: &str| {
+        window
+            .try_find_by_label(label)
+            .and_then(|select| select.value().map(str::to_string))
+    };
+    let mut app = Harness::start(cx);
+    app.open("Game database");
+    app.click("database-player");
+    app.fill_in_dialog("Username", SCOUTED);
+    app.click("player-download");
+    app.wait_for_app("their games", |cx| {
+        cx.global::<kchess_board::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .iter()
+            .any(|info| info.source == kchess_contracts::types::DatabaseSource::Player)
+    });
+    app.open("Play with computer");
+    app.find("chess-board");
+    wait_playable(&mut app);
+    app.click("game-options");
+    app.wait_for("Stockfish as the opponent", |window, _| {
+        value(window, "Opponent").as_deref() == Some("Stockfish")
+    });
+    app.click_label("Opponent");
+    app.press("down");
+    app.press("enter");
+    app.wait_for("their games picked", |window, _| {
+        value(window, "Opponent").as_deref() == Some("Scouted_Player · Lichess")
+    });
+    // Rated 2210 in their games: the nearest strength offered is the FIDE Master's ~2300.
+    app.wait_for("their strength", |window, _| {
+        value(window, "Stockfish strength").is_some_and(|level| level.contains("2300"))
+    });
+    app.click("start-game");
+    app.wait_gone("start-game");
+    wait_playable(&mut app);
+    app.drag_square("d2", "d4", true);
+    app.wait_for_moves(&["d4", "Nf6"]);
+    app.wait_for("their name and openings", |_, cx| {
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx).is_some_and(|page| {
+            let page = page.read(cx);
+            page.opponent_name() == SCOUTED && page.out_of_their_games() == Some(false)
+        })
+    });
+    // Past their games, the engine plays: it has no move for Black, so the games ran out.
+    app.drag_square("c2", "c4", true);
+    app.wait_for("out of their games", |_, cx| {
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
+            .is_some_and(|page| page.read(cx).out_of_their_games() == Some(true))
+    });
+}
