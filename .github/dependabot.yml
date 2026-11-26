@@ -39,6 +39,7 @@ updates:
       - { dependency-name: futures-io, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: futures-sink, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: futures-task, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: half, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: hashbrown, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: hyper, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: hyper-rustls, update-types: [version-update:semver-major, version-update:semver-minor] }
@@ -61,6 +62,7 @@ updates:
       - { dependency-name: serde_core, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: simd-adler32, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: slab, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: slotmap, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: smallvec, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: socket2, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: stable_deref_trait, update-types: [version-update:semver-major, version-update:semver-minor] }

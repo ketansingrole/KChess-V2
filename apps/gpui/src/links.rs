@@ -1,6 +1,6 @@
-//! What comes into the app from outside it: pasted text (a Lichess link, moves, a position) and
-//! dropped files. Paste outside a text field, Quick Pick and a dropped file all read it here, so
-//! they agree on what each one is and where it opens.
+//! What comes into the app from outside it: pasted text (a Lichess link, moves, a position), a
+//! pasted picture of a board, and dropped files. Paste outside a text field, Quick Pick and a
+//! dropped file all read it here, so they agree on what each one is and where it opens.
 
 use std::rc::Rc;
 
@@ -224,22 +224,77 @@ pub fn pasted(text: &str) -> Vec<PageCommand> {
 }
 
 /// Paste outside a text field: what the clipboard holds opens as Quick Pick's first suggestion
-/// for it would (a game or position on the analysis board, a Lichess link where it belongs).
-/// Under a dialog nothing happens; anything else is said in a notice.
+/// for it would (a game or position on the analysis board, a Lichess link where it belongs); a
+/// picture of a board opens its position in the board editor. Under a dialog nothing happens;
+/// anything else is said in a notice.
 pub fn open_pasted(window: &mut Window, cx: &mut App) {
     if window.has_active_dialog(cx) {
         return;
     }
     crate::slow_calls::call("the clipboard");
-    let text = cx
-        .read_from_clipboard()
+    let item = cx.read_from_clipboard();
+    let text = item
+        .as_ref()
         .and_then(|item| item.text())
         .unwrap_or_default();
-    match pasted(text.trim()).into_iter().next() {
-        Some(command) => (command.run)(window, cx),
-        None => window.push_notification("Copy a PGN, a FEN or a Lichess link to open it", cx),
+    if let Some(command) = pasted(text.trim()).into_iter().next() {
+        (command.run)(window, cx);
+    } else if let Some(bytes) = item.as_ref().and_then(clipboard_picture) {
+        open_picture(bytes, window, cx);
+    } else {
+        window.push_notification(
+            "Copy a PGN, a FEN, a Lichess link or a picture of a board to open it",
+            cx,
+        );
     }
 }
+
+/// The picture `item` holds, if any: a screenshot or an image copied from a page.
+pub fn clipboard_picture(item: &ClipboardItem) -> Option<Vec<u8>> {
+    item.entries().iter().find_map(|entry| match entry {
+        ClipboardEntry::Image(image) => Some(image.bytes.clone()),
+        _ => None,
+    })
+}
+
+/// The board in a picture, read off the main thread, set up in the board editor to check; a
+/// picture without one says so.
+pub fn open_picture(bytes: Vec<u8>, window: &mut Window, cx: &mut App) {
+    let read =
+        cx.background_spawn(async move { kchess_board::picture::read_board_picture(&bytes) });
+    window
+        .spawn(cx, async move |cx| {
+            let read = read.await;
+            cx.update(|window, cx| show_picture(read, window, cx)).ok();
+        })
+        .detach();
+}
+
+/// What a picture was read as: its position in the board editor, or why there is none.
+fn show_picture(
+    read: Result<kchess_board::picture::Recognised, kchess_board::picture::Refusal>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    match read {
+        Ok(recognised) => crate::pages::editor::edit_recognised(&recognised, window, cx),
+        Err(refusal) => {
+            crate::log::write(
+                kchess_contracts::Level::Info,
+                "picture",
+                &format!("a board picture was not read: {refusal}"),
+            );
+            window.push_notification(
+                gpui_kit::component::notification::Notification::error(refusal.to_string())
+                    .title("Could not set up that position"),
+                cx,
+            );
+        }
+    }
+}
+
+/// The largest picture file read when dropped.
+const MAX_PICTURE_FILE: u64 = 40 * 1024 * 1024;
 
 // Reading a game file, here and from the pages that open one (`kchess_board::export`).
 pub use crate::export::{choose_game_file, read_game_file};
@@ -252,6 +307,30 @@ pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
     let Some(path) = paths.paths().first().cloned() else {
         return;
     };
+    // A picture of a board: its position in the board editor. Read and recognised off the main
+    // thread.
+    if kchess_board::picture::is_picture_file(&path) {
+        let read = cx.background_spawn(async move {
+            use crate::log::ResultExt as _;
+            let size = std::fs::metadata(&path)
+                .warn_on_err()
+                .map(|file| file.len());
+            if size.is_none_or(|size| size > MAX_PICTURE_FILE) {
+                return Err(kchess_board::picture::Refusal::Unreadable);
+            }
+            std::fs::read(&path)
+                .warn_on_err()
+                .ok_or(kchess_board::picture::Refusal::Unreadable)
+                .and_then(|bytes| kchess_board::picture::read_board_picture(&bytes))
+        });
+        window
+            .spawn(cx, async move |cx| {
+                let read = read.await;
+                cx.update(|window, cx| show_picture(read, window, cx)).ok();
+            })
+            .detach();
+        return;
+    }
     // On the Database page a PGN file of any size, or a zip of them, is imported into a game
     // database.
     let name = path.to_string_lossy().to_ascii_lowercase();

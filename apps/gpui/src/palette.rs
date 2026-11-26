@@ -1123,6 +1123,25 @@ impl Render for CommandPalette {
             .px(px(12.))
             .gap(px(8.))
             .when(!open, |field| field.cursor_pointer())
+            // A picture pasted here, which the box cannot hold: its board opens in the editor.
+            .capture_action(cx.listener(
+                |this, _: &gpui_kit::component::input::Paste, window, cx| {
+                    crate::slow_calls::call("the clipboard");
+                    let item = cx.read_from_clipboard();
+                    let text = item
+                        .as_ref()
+                        .and_then(|item| item.text())
+                        .unwrap_or_default();
+                    if !text.trim().is_empty() {
+                        return;
+                    }
+                    if let Some(bytes) = item.as_ref().and_then(crate::links::clipboard_picture) {
+                        cx.stop_propagation();
+                        this.close(window, cx);
+                        crate::links::open_picture(bytes, window, cx);
+                    }
+                },
+            ))
             // A press anywhere on the closed box opens it, the icon and shortcut included.
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                 if !open {

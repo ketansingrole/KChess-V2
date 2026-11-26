@@ -16,6 +16,8 @@ kchess-app.workspace = true
 kchess-contracts.workspace = true
 kchess-domain.workspace = true
 kchess-games.workspace = true
+# A picture of a board to its position (`src/picture.rs`).
+kchess-recognise.workspace = true
 kchess-ui.workspace = true
 # Pinned with the app's (apps/gpui/Cargo.toml).
 gpui-kit = "=0.11.0"
@@ -63,8 +65,11 @@ gpui-kit = { version = "=0.11.0", features = ["test-support"] }
 kchess-app = { workspace = true, features = ["test-support"] }
 # Scratch folders for the export tests.
 tempfile = "3"
-# A stand-in Lichess for the puzzle database's download (`puzzle_db.rs`).
+# A stand-in Lichess for the puzzle database's download (`puzzle_db.rs`), and the seeded random
+# positions board pictures are measured on (`picture/corpus.rs`).
 kchess-testkit.workspace = true
+# The switch that keeps the pictures read wrongly (`picture/corpus.rs`).
+kchess-host.workspace = true
 
 [lints]
 workspace = true

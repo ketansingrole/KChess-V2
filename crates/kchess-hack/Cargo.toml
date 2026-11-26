@@ -71,6 +71,7 @@ serde_core = { version = "1", features = ["alloc", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order", "raw_value", "unbounded_depth"] }
 sha2 = { version = "0.11" }
 simd-adler32 = { version = "0.3" }
+slotmap = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
 stable_deref_trait = { version = "1", default-features = false, features = ["alloc"] }
 syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
@@ -145,6 +146,7 @@ digest = { version = "0.11", default-features = false, features = ["mac"] }
 fastrand = { version = "2" }
 futures-channel = { version = "0.3", features = ["sink"] }
 futures-task = { version = "0.3", default-features = false, features = ["std"] }
+half = { version = "2", features = ["num-traits"] }
 hashbrown = { version = "0.17", default-features = false, features = ["inline-more"] }
 hyper = { version = "1", features = ["client", "http1", "http2"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "tls12"] }

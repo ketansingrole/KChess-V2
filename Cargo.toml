@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-games", "crates/kchess-contracts", "crates/kchess-hack", "crates/kchess-voice", "crates/kchess-client", "crates/kchess-service", "crates/kchess-delta", "crates/kchess-host", "crates/kchess-testkit", "crates/kchess-ui", "crates/kchess-app", "crates/kchess-board", "crates/kchess-nav", "crates/kchess-puzzles", "crates/kchess-history", "crates/kchess-database", "crates/kchess-home", "crates/kchess-local", "crates/kchess-practice", "crates/kchess-studies", "crates/kchess-watch", "crates/kchess-background", "apps/gpui", "apps/cli", "tooling/xtask"]
+members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-games", "crates/kchess-contracts", "crates/kchess-hack", "crates/kchess-voice", "crates/kchess-client", "crates/kchess-service", "crates/kchess-delta", "crates/kchess-host", "crates/kchess-testkit", "crates/kchess-ui", "crates/kchess-app", "crates/kchess-board", "crates/kchess-nav", "crates/kchess-puzzles", "crates/kchess-history", "crates/kchess-database", "crates/kchess-home", "crates/kchess-local", "crates/kchess-practice", "crates/kchess-studies", "crates/kchess-watch", "crates/kchess-background", "crates/kchess-recognise", "apps/gpui", "apps/cli", "tooling/xtask"]
 # cargo-fuzz targets build on their own nightly (fuzz/rust-toolchain.toml); vendored crates keep
 # their own manifests and lints.
 exclude = ["fuzz", "vendor/gpui-pre", "vendor/gpui-pre-apple", "vendor/gpui-pre-macos", "vendor/gpui-pre-windows"]
@@ -86,6 +86,7 @@ kchess-practice = { path = "crates/kchess-practice" }
 kchess-studies = { path = "crates/kchess-studies" }
 kchess-watch = { path = "crates/kchess-watch" }
 kchess-voice = { path = "crates/kchess-voice" }
+kchess-recognise = { path = "crates/kchess-recognise" }
 shakmaty = { version = "0.30", features = ["variant"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "unbounded_depth", "float_roundtrip"] }
@@ -100,6 +101,11 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 2
 debug = false
+
+# Reading a board picture walks every pixel several times: unoptimized, the app took seconds over
+# one screenshot and the recogniser's corpus tests minutes. A small crate, quick to compile so.
+[profile.dev.package.kchess-recognise]
+opt-level = 2
 
 [profile.release]
 lto = "fat"

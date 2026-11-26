@@ -1,0 +1,23 @@
+[package]
+name = "kchess-recognise"
+description = "A picture of a chess diagram to its position, on this computer alone: the board found, each square read against the bundled piece sets."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+shakmaty.workspace = true
+# Decoding the picture: what a screenshot, a copied image or a saved diagram comes as. Every
+# decoder is pure Rust and already in Cargo.lock through GPUI.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+# The bundled piece sets drawn as references, at the size of the picture's squares.
+resvg = "0.50"
+kchess-hack = { version = "0.1", path = "../kchess-hack" }
+
+[dev-dependencies]
+# Seeded random positions for the tests.
+kchess-testkit.workspace = true
+
+[lints]
+workspace = true

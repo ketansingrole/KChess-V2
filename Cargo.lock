@@ -4361,6 +4361,8 @@ dependencies = [
  "kchess-domain",
  "kchess-games",
  "kchess-hack",
+ "kchess-host",
+ "kchess-recognise",
  "kchess-testkit",
  "kchess-ui",
  "objc2 0.6.5",
@@ -4599,6 +4601,7 @@ dependencies = [
  "futures-task",
  "futures-util",
  "getrandom 0.4.3",
+ "half",
  "hashbrown 0.17.2",
  "hyper",
  "hyper-rustls",
@@ -4635,6 +4638,7 @@ dependencies = [
  "sha2 0.11.1",
  "simd-adler32",
  "slab",
+ "slotmap",
  "smallvec",
  "socket2",
  "stable_deref_trait",
@@ -4784,6 +4788,17 @@ dependencies = [
  "kchess-ui",
  "serde",
  "serde_json",
+ "shakmaty",
+]
+
+[[package]]
+name = "kchess-recognise"
+version = "2026.11.9"
+dependencies = [
+ "image",
+ "kchess-hack",
+ "kchess-testkit",
+ "resvg 0.50.0",
  "shakmaty",
 ]
 
