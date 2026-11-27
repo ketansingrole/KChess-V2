@@ -9,6 +9,12 @@ with nothing there.
 
 ## Unreleased
 
+KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving.
+
+### Fixed
+
+- Challenges and new Lichess games keep arriving when KChess has been open for many hours. A quiet connection used to stop for good after a few network drops, until you restarted KChess.
+
 ## 2026.11.10 (2026-11-27)
 
 KChess is now a chess database too. Keep millions of games on your computer, from your own files, top events, engines, strong Lichess players or the opponent you are preparing for, and study them with no connection.

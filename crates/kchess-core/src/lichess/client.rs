@@ -229,6 +229,8 @@ pub struct Request<'c> {
     lane: Lane,
     cancel: CancellationToken,
     max_bytes: Option<(usize, &'static str)>,
+    /// `lines` passes keep-alive blank lines on as empty lines (`heartbeats`).
+    heartbeats: bool,
 }
 
 impl<'c> Request<'c> {
@@ -274,6 +276,13 @@ impl<'c> Request<'c> {
 
     pub fn cancel(mut self, cancel: &CancellationToken) -> Self {
         self.cancel = cancel.clone();
+        self
+    }
+
+    /// `lines` hands each keep-alive blank line on as an empty line: the only sign that a quiet
+    /// stream is alive.
+    pub fn heartbeats(mut self) -> Self {
+        self.heartbeats = true;
         self
     }
 
@@ -447,6 +456,7 @@ impl<'c> Request<'c> {
             .metered(response.bytes_stream(), &self.auth.usage);
         let options = LineOptions {
             idle: self.client.stream_idle,
+            heartbeats: self.heartbeats,
             ..LineOptions::default()
         };
         let outcome = read_lines(Box::pin(body), Some(&self.cancel), &options, on_line).await;
@@ -576,6 +586,7 @@ impl LichessClient {
             lane: Lane::Background,
             cancel: self.policy.lifetime().clone(),
             max_bytes: None,
+            heartbeats: false,
         }
     }
 

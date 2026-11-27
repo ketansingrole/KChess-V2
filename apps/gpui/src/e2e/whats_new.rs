@@ -99,14 +99,21 @@ fn the_notes_scroll_in_a_short_window(cx: &mut gpui_kit::TestAppContext) {
     app.click("account-menu");
     app.click_label("What's new");
     let list = app.find("whats-new").bounds();
-    // The newest notes alone are taller than a short window's list.
-    let first = app.find(("whats-new-release", 0usize)).bounds();
+    // The longest notes alone are taller than a short window's list. Not the newest: a
+    // development build shows the unreleased notes first, which may be one line.
+    let longest = crate::whats_new::releases()
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, release)| release.items.len())
+        .map(|(index, _)| index)
+        .expect("there are notes");
+    let first = app.find(("whats-new-release", longest)).bounds();
     assert!(
         first.size.height > list.size.height,
-        "the newest release {first:?} keeps its height past the list {list:?}, to scroll to"
+        "the longest release {first:?} keeps its height past the list {list:?}, to scroll to"
     );
     app.scroll_point(list.center(), px(-300.));
-    let scrolled = app.find(("whats-new-release", 0usize)).bounds();
+    let scrolled = app.find(("whats-new-release", longest)).bounds();
     assert!(
         scrolled.top() < first.top(),
         "the wheel scrolls the notes: {first:?} then {scrolled:?}"
