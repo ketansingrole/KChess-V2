@@ -3,6 +3,8 @@
 
 use std::rc::Rc;
 
+use gpui_kit::base::TestSupportExt as _;
+use gpui_kit::component::skeleton::Skeleton;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -18,6 +20,9 @@ use crate::widgets::Pressable as _;
 pub const EVAL_BAR: Pixels = px(14.);
 /// One engine line's row.
 const PV_ROW: Pixels = px(34.);
+/// How much of a waiting row its moves' placeholder fills, row by row, so the rows still to come
+/// read as lines of moves rather than one block.
+const PENDING_WIDTHS: [f32; 3] = [0.62, 0.48, 0.55];
 
 /// Play an engine line's moves up to the one at an index.
 pub type PlayLine = Rc<dyn Fn(&[String], usize, &mut Window, &mut App)>;
@@ -211,20 +216,34 @@ pub fn engine_lines(
                     .into_any_element(),
             );
         }
+        // A line still to come holds its place in the shape of one: a score chip and moves,
+        // pulsing (still, with reduced motion), so the row does not move when the line arrives.
         for index in lines.len()..pending {
             rows.push(
                 h_flex()
+                    .id(("pv-pending", index))
+                    .test_support()
+                    .role(Role::Status)
+                    .aria_label("Line still calculating")
                     .h(PV_ROW)
+                    .gap(px(8.))
                     .px(px(8.))
                     .when(index > 0, |row| {
                         row.border_t_1().border_color(palette.border)
                     })
                     .child(
-                        div()
+                        Skeleton::new()
                             .w(px(55.))
-                            .text_center()
-                            .text_color(palette.dimmed)
-                            .child("…"),
+                            .h(px(18.))
+                            .flex_none()
+                            .rounded(radii::BOX),
+                    )
+                    .child(
+                        Skeleton::new()
+                            .secondary()
+                            .w(relative(PENDING_WIDTHS[index % PENDING_WIDTHS.len()]))
+                            .h(px(10.))
+                            .rounded(radii::SMALL),
                     )
                     .into_any_element(),
             );

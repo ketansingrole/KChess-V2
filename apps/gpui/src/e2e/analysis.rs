@@ -543,6 +543,31 @@ fn the_engine_can_be_switched_off_and_on(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(app.find("engine-on").checked(), Some(true));
 }
 
+/// Regression: the engine lines still to come read as a bare "…", like text cut short. The
+/// scripted engine sends one line of the three shown: the other two hold their rows as
+/// placeholders, named as lines still calculating, each as tall as a line.
+#[gpui_kit::test]
+fn engine_lines_still_to_come_hold_their_rows(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    wait_for_search(&mut app);
+    let heights: Vec<_> = [1usize, 2]
+        .into_iter()
+        .map(|index| {
+            let pending = app.find(("pv-pending", index));
+            assert_eq!(pending.label(), Some("Line still calculating"));
+            pending.bounds().size.height
+        })
+        .collect();
+    assert_eq!(
+        heights[0], heights[1],
+        "both placeholders are a line's height"
+    );
+    assert!(
+        !app.shows(("pv-pending", 0usize)),
+        "the line that came is shown"
+    );
+}
+
 /// Show threat's hint, "The opponent's best move if it were their turn (X)", once ran past the
 /// engine settings popover's right edge, cut off: its column took the hint's width rather than
 /// what the switch left it.

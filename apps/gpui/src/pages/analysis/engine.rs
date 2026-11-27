@@ -7,6 +7,11 @@ use kchess_contracts::calls;
 use kchess_contracts::check::{Bounded, Position};
 use kchess_contracts::types::{AnalysisReason, AnalysisRequest, EngineLine};
 
+/// The spinner's place before the engine's status while it is on, and the gap after it: the
+/// engine's name above starts as far in, so the two lines share a left edge.
+const SPINNER_SLOT: Pixels = px(12.);
+const SPINNER_GAP: Pixels = px(4.);
+
 impl AnalysisPage {
     pub(crate) fn engine_on(cx: &App) -> bool {
         crate::prefs::get(cx, ENGINE_ON, true)
@@ -616,12 +621,14 @@ impl AnalysisPage {
                         div()
                             .text_size(px(12.))
                             .font_weight(FontWeight::MEDIUM)
+                            // In line with the status under it, past the spinner's place.
+                            .when(engine_on, |name| name.pl(SPINNER_SLOT + SPINNER_GAP))
                             .truncate()
                             .child("Stockfish"),
                     )
                     .child(
                         h_flex()
-                            .gap(px(4.))
+                            .gap(SPINNER_GAP)
                             .min_w_0()
                             .text_size(px(11.))
                             .text_color(if self.search.error.is_some() {
@@ -635,9 +642,9 @@ impl AnalysisPage {
                                 row.child(
                                     div()
                                         .flex_none()
-                                        .size(px(12.))
+                                        .size(SPINNER_SLOT)
                                         .when(self.search.busy, |slot| {
-                                            slot.child(crate::widgets::spinner(px(12.)))
+                                            slot.child(crate::widgets::spinner(SPINNER_SLOT))
                                         }),
                                 )
                             })
