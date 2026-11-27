@@ -579,6 +579,47 @@ fn engine_lines_still_to_come_hold_their_rows(cx: &mut gpui_kit::TestAppContext)
     );
 }
 
+/// A move of an engine line shows the position it reaches at once, and the one preview stays as
+/// the pointer crosses to the next move and the gap between them, moving on to that move, until
+/// the pointer leaves the lines. Regression: each move had its own tooltip, half a second late,
+/// which closed and opened again at every move crossed.
+#[gpui_kit::test]
+fn an_engine_line_previews_each_move_under_the_pointer(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    wait_for_search(&mut app);
+    let first = app.find("pv-0-0").bounds();
+    let second = app.find("pv-0-1").bounds();
+    assert!(!app.shows("pv-preview"));
+    // No time passes: the preview is there on the move itself.
+    app.move_mouse(first.center());
+    let shown = app.find("pv-preview").bounds();
+    let named = |app: &mut Harness, at: usize| {
+        let id = gpui_kit::SharedString::from(format!("pv-0-{at}"));
+        let played = app.find(id).label().map(str::to_string);
+        format!("Position after {}", played.expect("a move is named"))
+    };
+    let after_first = named(&mut app, 0);
+    assert_eq!(app.find("pv-preview").label(), Some(after_first.as_str()));
+    // Between the two moves: the same preview, where it was.
+    app.move_mouse(gpui_kit::point(
+        second.left() - gpui_kit::px(0.5),
+        second.center().y,
+    ));
+    assert_eq!(app.find("pv-preview").bounds(), shown);
+    assert_eq!(app.find("pv-preview").label(), Some(after_first.as_str()));
+    // On the second move, it shows that move, where it was.
+    app.move_mouse(second.center());
+    let after_second = named(&mut app, 1);
+    assert_eq!(app.find("pv-preview").label(), Some(after_second.as_str()));
+    assert_eq!(app.find("pv-preview").bounds(), shown, "it holds still");
+    // Off the lines, it goes.
+    app.move_mouse(gpui_kit::point(
+        first.left(),
+        first.top() - gpui_kit::px(60.),
+    ));
+    app.wait_gone("pv-preview");
+}
+
 /// Show threat's hint, "The opponent's best move if it were their turn (X)", once ran past the
 /// engine settings popover's right edge, cut off: its column took the hint's width rather than
 /// what the switch left it.
