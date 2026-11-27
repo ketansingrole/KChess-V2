@@ -603,12 +603,10 @@ impl Render for PositionExplorer {
         let needs_player = self.needs_player(cx);
         let needs_database = self.needs_database(cx);
         let about = if prefs.kind == PositionLookupKind::Database {
-            "Looked up in a game database on this computer. Statistics describe games, not \
-             move quality."
+            "From a game database on this computer. Statistics describe games, not move quality."
         } else {
-            "Lookups send this position to Lichess. The Lichess, Masters and Player databases \
-             use a connected account; saved results stay available offline. Statistics \
-             describe games, not move quality."
+            "Sends this position to Lichess; results seen once stay available offline. \
+             Statistics describe games, not move quality."
         };
         let choose_kind = {
             let explorer = cx.entity().downgrade();
@@ -667,7 +665,10 @@ impl Render for PositionExplorer {
                 div()
                     .id("explorer-about")
                     .text_color(palette.text_muted)
-                    .tooltip(move |window, cx| Tooltip::new(about).build(window, cx))
+                    // A few lines rather than one across the window.
+                    .tooltip(move |window, cx| {
+                        Tooltip::new(about).max_w(px(280.)).build(window, cx)
+                    })
                     .child(icon("info").size(px(14.))),
             );
         let status = if self.busy {
