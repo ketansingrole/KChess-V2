@@ -27,6 +27,7 @@ mod package;
 mod pinned;
 mod pins;
 mod release;
+mod review_guard;
 mod source_check;
 mod store_notes;
 mod sums;
@@ -222,6 +223,14 @@ const COMMANDS: &[Command] = &[
                 "sums needs the folder of the release's files.",
             )?)
         },
+    },
+    Command {
+        name: "app-store-review",
+        forms: &[(
+            "<versions.json> <submissions.json>",
+            "Print the version App Review already has, from asc's answers (App Store CI)",
+        )],
+        run: review_guard::run,
     },
     Command {
         name: "store-notes",
