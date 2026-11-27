@@ -11,7 +11,7 @@
 use kchess_hack as _;
 
 use kchess_app::{core, loading, prefs};
-use kchess_board::{game_db, live_game, widgets};
+use kchess_board::{game_db, game_db_list, live_game, widgets};
 use kchess_ui::theme;
 
 mod event;
@@ -51,7 +51,7 @@ use crate::game_db::{Chosen, GameDbEvent, GameDbHandle};
 use crate::live_game::Refused;
 use crate::loading::Loading;
 use crate::theme::{Palette, radii};
-use crate::widgets::{Choice, KeyboardFocus as _, Pill, Pressable as _};
+use crate::widgets::{Choice, Pill};
 
 /// What the page keeps between runs: the database shown, the order and the page size.
 const PREFS: &str = "kchess:database";
@@ -1014,47 +1014,13 @@ impl DatabasePage {
     }
 
     fn render_rows(&self, narrow: bool, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
-        let muted = palette.text_muted;
-        let column = |width: f32| div().w(px(width)).flex_none().truncate();
-        let head = h_flex()
-            .px(px(12.))
-            .pb(px(8.))
-            .gap(px(12.))
-            .text_size(px(11.))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(muted)
-            .child(div().flex_1().child("WHITE"))
-            .child(div().flex_1().child("BLACK"))
-            .child(column(64.).child("RESULT"))
-            .when(!narrow, |head| {
-                head.child(div().flex_1().child("EVENT"))
-                    .child(column(84.).child("DATE"))
-                    .child(column(44.).child("ECO"))
-                    .child(column(52.).text_right().child("MOVES"))
-            })
-            .child(div().w(px(24.)).flex_none());
-        let player = |name: &str, elo: Option<u32>| {
-            h_flex()
-                .flex_1()
-                .min_w_0()
-                .gap(px(6.))
-                .items_baseline()
-                .child(div().truncate().child(name.to_string()))
-                .children(elo.map(|elo| {
-                    div()
-                        .flex_none()
-                        .text_size(px(12.))
-                        .text_color(muted)
-                        .child(elo.to_string())
-                }))
-        };
         let rows: Vec<AnyElement> = self
             .games
             .iter()
             .enumerate()
             .map(|(index, game)| {
                 let chosen = game.clone();
-                let label = format!("{} against {}, {}", game.white, game.black, game.result);
+                let label = game_db_list::label(game);
                 let menu = self.games_menu(Chosen::Game(game.id), 1, Some(game.clone()), cx);
                 let actions = Button::new(("database-game-actions", index))
                     .ghost()
@@ -1065,60 +1031,20 @@ impl DatabasePage {
                     .dropdown_menu_with_anchor(Anchor::TopRight, move |popup, _, _| {
                         menu.build(popup)
                     });
-                h_flex()
-                    .id(("database-game", index))
-                    .test_support()
-                    .role(Role::Button)
-                    .keyboard_focus(palette.primary)
-                    .aria_label(label)
-                    .px(px(12.))
-                    .py(px(8.))
-                    .gap(px(12.))
-                    .rounded(radii::BOX)
-                    .text_size(px(13.))
-                    .cursor_pointer()
-                    .pressable(palette)
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.open_game(&chosen, window, cx)),
-                    )
-                    .child(player(&game.white, game.white_elo))
-                    .child(player(&game.black, game.black_elo))
-                    .child(
-                        column(64.)
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(game.result.clone()),
-                    )
-                    .when(!narrow, |row| {
-                        row.child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(muted)
-                                .child(game.event.clone().unwrap_or_default()),
-                        )
-                        .child(
-                            column(84.)
-                                .text_color(muted)
-                                .child(game.date.clone().unwrap_or_default()),
-                        )
-                        .child(
-                            column(44.)
-                                .text_color(muted)
-                                .child(game.eco.clone().unwrap_or_default()),
-                        )
-                        .child(
-                            column(52.)
-                                .text_right()
-                                .text_color(muted)
-                                .child(game.plies.div_ceil(2).to_string()),
-                        )
-                    })
-                    .child(actions)
-                    .into_any_element()
+                game_db_list::row(
+                    ("database-game", index),
+                    game,
+                    narrow,
+                    Some(actions.into_any_element()),
+                    cx.listener(move |this, _, window, cx| this.open_game(&chosen, window, cx)),
+                    palette,
+                )
             })
             .collect();
-        v_flex().child(head).children(rows).into_any_element()
+        v_flex()
+            .child(game_db_list::head(narrow, palette))
+            .children(rows)
+            .into_any_element()
     }
 }
 

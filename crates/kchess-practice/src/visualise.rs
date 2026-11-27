@@ -632,7 +632,13 @@ mod tests {
     #[test]
     fn the_famous_games_are_read_whole() {
         let plies: Vec<usize> = games().iter().map(Vec::len).collect();
-        assert_eq!(plies, [33, 45, 47, 21, 35, 82, 37, 87]);
+        assert_eq!(
+            plies,
+            [
+                74, 45, 47, 33, 36, 75, 50, 46, 50, 44, 27, 81, 66, 82, 57, 81, 61, 148, 73, 37,
+                87, 123
+            ]
+        );
         assert_eq!(LEVELS.len(), LEVEL_PLIES.len());
     }
 

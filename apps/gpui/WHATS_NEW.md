@@ -9,11 +9,13 @@ with nothing there.
 
 ## Unreleased
 
-The board editor sets up well-known openings and endgames in one click, and KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving. Player search, Books, the engine lines, the Watch page, move lists and the panels beside the board are cleaner and easier to read.
+The board editor sets up well-known openings and endgames in one click, and Guess the move has 22 famous games and takes games from your databases. KChess stays connected to Lichess when it is left open for a long time, and Player search, Books, the engine lines, the Watch page, move lists and the panels beside the board are cleaner.
 
 ### Added
 
 - Set the board in the board editor sets up the starting position, an empty board, a popular opening or a classic endgame such as the Lucena or Philidor position.
+- Guess the move lists 22 famous games by era, from McDonnell against La Bourdonnais in 1834 to Kasparov's Immortal in 1999.
+- Guess the move can take a game from your databases. Search for a player and you guess the moves as them.
 
 ### Changed
 
