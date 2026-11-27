@@ -241,10 +241,13 @@ impl GameFinder {
         widgets::card(palette)
             .gap(px(12.))
             .child(widgets::heading("A player's games", palette))
-            .child(div().w_full().max_w(px(480.)).child(search))
+            // Centred, as Players' and Following's searches are.
+            .child(player_search::centred_search(search, None))
             .children(self.error.clone().map(|error| {
                 div()
                     .id("guess-find-error")
+                    .w_full()
+                    .text_center()
                     .test_support()
                     .aria_label(error.clone())
                     .relative()

@@ -22,11 +22,13 @@ KChess stays connected to Lichess when it is left open for a long time, so chall
 - On the Books page, your books end with a card to open another, an open book has a way back to them, and its page buttons float at the foot of its pages. The diagram buttons sit under the board.
 - Filters, search fields and buttons that share a row are the same height.
 - The board editor speaks up only when the position is not legal yet.
+- A game or run with no clock shows ∞ where it said Untimed or No clock.
 
 ### Fixed
 
 - Challenges and new Lichess games keep arriving when KChess has been open for many hours. A quiet connection used to stop for good after a few network drops, until you restarted KChess.
 - The analysis board no longer shifts sideways when you turn the engine off.
+- Looking up a Lichess player who doesn't exist names them, instead of saying "Lichess has no such thing."
 - Many smaller fixes.
 
 ## 2026.11.10 (2026-11-27)

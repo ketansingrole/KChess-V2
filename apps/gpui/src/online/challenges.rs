@@ -228,7 +228,7 @@ impl OnlineState {
     }
 }
 
-/// A challenge's clock as its card and notice name it: "5+3", "2 days per move", "No clock".
+/// A challenge's clock as its card and notice name it: "5+3", "2 days per move", "∞".
 pub fn describe_control(control: &ChallengeTimeControl) -> String {
     match control {
         ChallengeTimeControl::Clock { limit, increment } => crate::widgets::time_control(
@@ -242,7 +242,7 @@ pub fn describe_control(control: &ChallengeTimeControl) -> String {
                 if days == 1. { "day" } else { "days" }
             )
         }
-        ChallengeTimeControl::Unlimited => "No clock".into(),
+        ChallengeTimeControl::Unlimited => "∞".into(),
     }
 }
 

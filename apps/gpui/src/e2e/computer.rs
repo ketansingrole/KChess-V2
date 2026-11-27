@@ -487,7 +487,7 @@ fn game_options_play_the_clock_picked(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
     app.click("game-options");
     app.wait_for("the dialog with no clock", |window, _| {
-        clock(window).as_deref() == Some("No clock")
+        clock(window).as_deref() == Some("∞")
     });
     app.click_label("Clock");
     app.press("down");

@@ -79,6 +79,7 @@ impl PlayersPage {
             ))
             .children(self.profile_loading.error().cloned().map(|error| {
                 h_flex()
+                    .justify_center()
                     .id("players-error")
                     .test_support()
                     .aria_label(error.clone())
