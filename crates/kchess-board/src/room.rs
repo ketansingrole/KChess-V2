@@ -61,30 +61,19 @@ pub fn with_room(
                     .map_or(free, |pinned| Some(pinned.0));
                 match short_of_room(free, takes) {
                     None => start(window, cx),
-                    Some(free) => ask_for_room(room_left(free, takes), go, window, cx, start),
+                    Some(free) => widgets::confirm_danger(
+                        window,
+                        cx,
+                        "Your disk is almost full",
+                        room_left(free, takes),
+                        go,
+                        start,
+                    ),
                 }
             })
             .ok();
         })
         .detach();
-}
-
-/// Ask before a download or import the disk may have no room for, saying `description`.
-fn ask_for_room(
-    description: String,
-    go: &'static str,
-    window: &mut Window,
-    cx: &mut App,
-    start: impl Fn(&mut Window, &mut App) + 'static,
-) {
-    widgets::confirm_danger(
-        window,
-        cx,
-        "Your disk is almost full",
-        description,
-        go,
-        start,
-    );
 }
 
 #[cfg(test)]
