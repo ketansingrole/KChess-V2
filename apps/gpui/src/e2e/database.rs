@@ -69,21 +69,22 @@ const SMITH_JONES: &str = "Smith against Jones, 0-1";
 
 /// `GAMES` imported on the Database page, listed newest first.
 pub(super) fn import_games(app: &mut Harness) {
+    import_pgn(app, GAMES, &[GUKESH_CARLSEN, CARLSEN_GUKESH, SMITH_JONES]);
+}
+
+/// `pgn` imported on the Database page, whose games are then listed as `newest_first`.
+pub(super) fn import_pgn(app: &mut Harness, pgn: &str, newest_first: &[&str]) {
     app.open("Game database");
     app.find("gamedb-import");
     assert!(!app.shows("database-delete"), "nothing to delete yet");
     let files = tempfile::tempdir().expect("a folder for the file");
     let path = files.path().join("tata.pgn");
-    std::fs::write(&path, GAMES).expect("the file");
+    std::fs::write(&path, pgn).expect("the file");
     app.click("gamedb-import");
     app.wait_for_open_dialog();
     app.cx
         .simulate_path_prompt_response(move |_| Some(vec![path]));
-    wait_for_listed(
-        app,
-        "every game, newest first",
-        &[GUKESH_CARLSEN, CARLSEN_GUKESH, SMITH_JONES],
-    );
+    wait_for_listed(app, "every game, newest first", newest_first);
 }
 
 /// A PGN file imported on the page lists its games, newest first; the filters narrow them; a

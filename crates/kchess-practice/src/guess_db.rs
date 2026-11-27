@@ -42,6 +42,8 @@ pub struct DatabaseFinder {
     open_epoch: Epoch,
     /// Why the game picked could not be fetched.
     open_error: Option<SharedString>,
+    /// The list's scroll, kept to it rather than shared with the page's.
+    scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -80,6 +82,7 @@ impl DatabaseFinder {
             opening: None,
             open_epoch: Epoch::default(),
             open_error: None,
+            scroll: ScrollHandle::new(),
             _subscriptions: subscriptions,
         };
         finder.sync_databases(window, cx);
@@ -289,10 +292,8 @@ impl Render for DatabaseFinder {
             // One height whatever it holds, so the games arriving (or a search's answer) move
             // nothing under the card.
             .child(
-                div()
-                    .id("guess-db-games")
-                    .h(LIST_HEIGHT)
-                    .overflow_y_scroll()
+                widgets::nested_scroll(div().id("guess-db-games").h(LIST_HEIGHT), &self.scroll)
+                    .test_support()
                     .child(body),
             )
             .into_any_element()

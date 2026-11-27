@@ -1437,6 +1437,70 @@ fn a_game_from_your_databases_is_guessed_as_its_player(cx: &mut gpui_kit::TestAp
     assert_eq!(app.find(("guess-side", 1usize)).selected(), Some(true));
 }
 
+/// The wheel over the database's games scrolls them and not the page around them, which GPUI
+/// moved with them; once they are at their end, the page takes the wheel.
+#[gpui_kit::test]
+fn the_database_games_scroll_without_the_page(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    // More games than the list shows at once, newest first.
+    let pgn: String = (1..=12)
+        .map(|day| {
+            format!(
+                "[Date \"2024.01.{day:02}\"]\n[White \"White {day}\"]\n[Black \"Black {day}\"]\n\
+                 [Result \"1-0\"]\n\n1. e4 e5 1-0\n\n"
+            )
+        })
+        .collect();
+    let listed: Vec<String> = (1..=12)
+        .rev()
+        .map(|day| format!("White {day} against Black {day}, 1-0"))
+        .collect();
+    let listed: Vec<&str> = listed.iter().map(String::as_str).collect();
+    super::database::import_pgn(&mut app, &pgn, &listed);
+    app.open("Practice");
+    tab(&mut app, crate::pages::practice::Tab::Guess);
+    super::database::wait_for_listed(&mut app, "the database's games", &listed);
+    // The card is below the famous games: the page is scrolled to it, by its left edge, which
+    // the list never comes under.
+    let (edge, height) = app.with_window(|window, _| {
+        let size = window.viewport_size();
+        (
+            gpui_kit::point(size.width * 0.3, size.height / 2.),
+            size.height,
+        )
+    });
+    for _ in 0..20 {
+        if app.shows("guess-db-games") && app.find("guess-db-games").bounds().bottom() < height {
+            break;
+        }
+        app.scroll_point(edge, gpui_kit::px(-200.));
+    }
+
+    let list = app.find("guess-db-games").bounds();
+    let card = app.find("guess-databases").bounds();
+    // A row that stays in the list as it scrolls.
+    let first = app.find(("guess-db-game", 4usize)).bounds();
+    app.scroll_point(list.center(), gpui_kit::px(-60.));
+    let scrolled = app.find(("guess-db-game", 4usize)).bounds();
+    assert!(
+        scrolled.top() < first.top(),
+        "the games scroll: {first:?} then {scrolled:?}"
+    );
+    assert_eq!(
+        app.find("guess-databases").bounds(),
+        card,
+        "the page holds still while the games scroll"
+    );
+    // To the list's end, and then the page moves.
+    app.scroll_point(list.center(), gpui_kit::px(-2000.));
+    let card = app.find("guess-databases").bounds();
+    app.scroll_point(list.center(), gpui_kit::px(-60.));
+    assert!(
+        app.find("guess-databases").bounds().top() < card.top(),
+        "at the list's end the page scrolls"
+    );
+}
+
 /// A Lichess player is looked up on Guess the move, and one of their games is guessed as them.
 #[gpui_kit::test]
 fn a_players_game_is_found_and_guessed_as_them(cx: &mut gpui_kit::TestAppContext) {

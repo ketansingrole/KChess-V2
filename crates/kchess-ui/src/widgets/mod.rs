@@ -224,6 +224,7 @@ mod inputs;
 mod pager;
 mod panel;
 mod pills;
+mod scroll;
 mod status;
 #[cfg(test)]
 mod tests;
@@ -237,4 +238,5 @@ pub use inputs::*;
 pub use pager::*;
 pub use panel::*;
 pub use pills::*;
+pub use scroll::*;
 pub use status::*;
