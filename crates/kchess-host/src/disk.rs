@@ -1,6 +1,22 @@
-//! What a folder takes on disk, as the core measures the profile and the app its own install.
+//! The disk as the core and its frontends use it alike: what a folder takes, as the core measures
+//! the profile and the app its own install, and the files only their owner may read.
 
 use std::path::Path;
+
+/// Replace `path` whole with `contents`, readable by its owner alone (0600 on Unix): written
+/// beside it under a random name of its own, so no leftover or other writer lends it a mode, and
+/// renamed over it, so a crash leaves the old file or the new one, never part of either.
+pub fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let dir = match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    let mut file = tempfile::NamedTempFile::new_in(dir)?;
+    std::io::Write::write_all(&mut file, contents)?;
+    file.as_file().sync_all()?;
+    file.persist(path).map_err(|e| e.error)?;
+    Ok(())
+}
 
 /// The bytes of every file under `path` (or of `path` itself, a file), links not followed, so a
 /// link out of the folder is never counted. What cannot be read counts as nothing. It reads the

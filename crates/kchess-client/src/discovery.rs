@@ -132,32 +132,7 @@ pub fn socket_path(profile: &Path) -> std::io::Result<PathBuf> {
     )))
 }
 
-/// Writes `contents` to `path` readable by this user only, replacing it whole.
-pub fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
-    // Its own temporary name per file (`core.token.tmp`, `core.json.tmp`), made afresh so the
-    // owner-only mode applies: an existing file keeps whatever mode it had.
-    let mut temporary = path.as_os_str().to_owned();
-    temporary.push(".tmp");
-    let temporary = PathBuf::from(temporary);
-    match std::fs::remove_file(&temporary) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary)?;
-        std::io::Write::write_all(&mut file, contents)?;
-        file.sync_all()?;
-    }
-    std::fs::rename(&temporary, path)
-}
+pub use kchess_host::disk::write_private;
 
 /// A new token for `core.token`: 32 random bytes, as hex.
 pub fn new_token() -> std::io::Result<String> {
@@ -285,21 +260,6 @@ mod tests {
         // Not even root may make a folder in sysfs.
         let error = private_dir(Path::new("/sys/kchess-test")).expect_err("refused");
         assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
-    }
-
-    /// A leftover temporary that cannot be removed is the error, not the failed create after it.
-    #[test]
-    fn a_leftover_that_cannot_be_removed_names_why() {
-        let folder = tempfile::tempdir().expect("folder");
-        let path = folder.path().join(TOKEN_FILE);
-        let leftover = folder.path().join(format!("{TOKEN_FILE}.tmp"));
-        std::fs::create_dir(&leftover).expect("a folder in its place");
-        let expected = std::fs::remove_file(&leftover)
-            .expect_err("not a file")
-            .kind();
-        let error = write_private(&path, b"secret").expect_err("refused");
-        assert_eq!(error.kind(), expected);
-        assert_ne!(error.kind(), std::io::ErrorKind::AlreadyExists);
     }
 
     #[cfg(unix)]

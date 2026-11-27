@@ -14,7 +14,6 @@ use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -170,20 +169,11 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
     Some(key)
 }
 
-/// Write `text` to a file only its owner can read, replacing it whole: written beside it under a
-/// name of its own, then renamed over it. Truncated in place, a crash between emptying the file
-/// and writing it left the profile's id empty, and every saved login unreadable.
+/// `disk::write_private`: truncated in place, a crash between emptying the file and writing it
+/// left the profile's id empty, and every saved login unreadable.
 fn write_private(path: &Path, text: &str) -> Result<()> {
-    let wrap = |e: std::io::Error| CoreError::wrap("credential file", e);
-    let dir = path
-        .parent()
-        .ok_or_else(|| CoreError::new("The credential file has no folder."))?;
-    // Created owner-only (0600 on Unix), with a random name no other writer shares.
-    let mut file = tempfile::NamedTempFile::new_in(dir).map_err(wrap)?;
-    file.write_all(text.as_bytes()).map_err(wrap)?;
-    file.as_file().sync_all().map_err(wrap)?;
-    file.persist(path).map_err(|e| wrap(e.error))?;
-    Ok(())
+    kchess_host::disk::write_private(path, text.as_bytes())
+        .map_err(|e| CoreError::wrap("credential file", e))
 }
 
 fn read_optional(path: &Path) -> Result<Option<String>> {
