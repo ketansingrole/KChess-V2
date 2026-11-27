@@ -439,7 +439,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     /// The release build waits longer for its silent link than any other step waits.
     #[test]
     fn the_release_build_may_be_quiet_longest() {
@@ -449,18 +448,13 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_command_that_keeps_printing_runs_past_the_quiet_limit() {
-        // Printing every 0.3 s for longer than the limit. The limit leaves room for starting `sh`
-        // and each `sleep`, separate processes that on a loaded Windows runner took a whole
-        // second between two lines when it was 1 s (2026-11-27).
         run_watched(
-            Command::new("sh").args([
-                "-c",
-                "for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo $i; sleep 0.3; done",
-            ]),
+            Command::new("sh").args(["-c", "for i in 1 2 3 4 5 6; do echo $i; sleep 0.3; done"]),
             &[],
-            Duration::from_secs(3),
+            Duration::from_secs(1),
         )
         .unwrap();
         let failure =
