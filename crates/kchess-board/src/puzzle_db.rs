@@ -19,9 +19,9 @@ pub struct PuzzleDb {
     pub status: PuzzleDbStatus,
     progress: Option<PuzzleDbProgress>,
     error: Option<String>,
-    /// Counts installs, deletes and failures shown: a status read that started before one of
-    /// them is out of date when it lands, and neither its status nor its clearing counts.
-    changes: u64,
+    /// Status reads: an install, a delete or a failure shown since a read started makes it
+    /// out of date when it lands, and neither its status nor its clearing counts.
+    reads: crate::loading::Epoch,
     _events: Subscription,
 }
 
@@ -37,7 +37,7 @@ pub fn init(cx: &mut App) {
         status: PuzzleDbStatus::default(),
         progress: None,
         error: None,
-        changes: 0,
+        reads: crate::loading::Epoch::default(),
         _events: cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
             if let ClientEvent::Event(CoreEvent::PuzzleDbProgress(progress)) = event {
                 // A download that ended is no longer running, whatever an earlier status read
@@ -46,7 +46,7 @@ pub fn init(cx: &mut App) {
                 // window that started it closed or it failed.
                 if progress.phase.is_terminal() {
                     this.status.busy = false;
-                    this.changes += 1;
+                    this.reads.invalidate();
                 }
                 this.progress = Some(progress.clone());
                 cx.notify();
@@ -71,11 +71,11 @@ impl PuzzleDb {
     /// changes nothing.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let status = cx.global::<AppCore>().request(calls::PuzzleDbStatus {});
-        let asked = self.changes;
+        let asked = self.reads.current();
         cx.spawn(async move |this, cx| {
             let status = status.await;
             this.update(cx, |this, cx| {
-                if this.changes != asked {
+                if !this.reads.is_current(asked) {
                     return;
                 }
                 match status {
@@ -94,12 +94,12 @@ impl PuzzleDb {
 
     /// Shows a failure, which a status read already under way leaves on screen.
     fn failed(&mut self, cause: &kchess_contracts::CoreError) {
-        self.changes += 1;
+        self.reads.invalidate();
         self.error = Some(crate::loading::failure("puzzle-db", cause));
     }
 
     fn install(&mut self, cx: &mut Context<Self>) {
-        self.changes += 1;
+        self.reads.invalidate();
         self.error = None;
         self.progress = Some(PuzzleDbProgress {
             phase: PuzzleDbPhase::Downloading,
@@ -156,7 +156,7 @@ impl PuzzleDb {
     }
 
     fn delete(&mut self, cx: &mut Context<Self>) {
-        self.changes += 1;
+        self.reads.invalidate();
         self.error = None;
         let delete = cx.global::<AppCore>().request(calls::PuzzleDbDelete {});
         cx.spawn(async move |this, cx| {
@@ -487,8 +487,8 @@ mod tests {
         assert!(app.with_window(|_, cx| db.read(cx).error.is_none()));
     }
 
-    /// An install, a delete and a failure shown each move the count a status read compares on
-    /// landing, so a read asked before any of them is known for out of date.
+    /// An install, a delete and a failure shown each make a status read asked before them out of
+    /// date.
     #[gpui_kit::test]
     fn installs_deletes_and_failures_each_overtake_a_read(cx: &mut gpui_kit::TestAppContext) {
         let server = kchess_testkit::Server::start(|_, out| {
@@ -503,9 +503,9 @@ mod tests {
         let moved = |app: &mut Started, change: fn(&mut super::PuzzleDb, &mut gpui_kit::Context<super::PuzzleDb>)| {
             app.with_window(|_, cx| {
                 db.update(cx, |db, cx| {
-                    let before = db.changes;
+                    let before = db.reads.current();
                     change(db, cx);
-                    db.changes > before
+                    !db.reads.is_current(before)
                 })
             })
         };
