@@ -17,6 +17,7 @@ use kchess_ui::theme;
 
 mod classics;
 pub mod coordinates;
+mod endgame_board;
 pub mod endgame_drills;
 pub mod endgame_lesson;
 mod endgames;

@@ -13,10 +13,11 @@ use kchess_domain::training::endgames::{self, Status};
 use serde_json::json;
 use shakmaty::Color;
 
+use super::endgame_board::{Shown, taken_back};
 use super::endgames::{Drill, TrainerEvent, drills, finished};
 use super::engine_move::{EngineMove, HasEngine};
 use super::run::{self, TrainingItem};
-use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
+use crate::board::{BoardEvent, BoardState, ChessBoard};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
 use crate::voice::moves::{
@@ -30,15 +31,6 @@ use kchess_ui::icon;
 pub(crate) const GROUPS: [&str; 3] = ["Basic mates", "Pawn endings", "Rook endings"];
 
 use kchess_domain::training::endgames::san_from;
-
-/// A move's squares as the board marks them (castling king to its square).
-pub fn move_squares(fen: &str, uci: &str) -> Option<(shakmaty::Square, shakmaty::Square)> {
-    let squares = kchess_domain::training::puzzle::move_squares(fen, uci)?;
-    Some((
-        squares.first()?.parse().ok()?,
-        squares.get(1)?.parse().ok()?,
-    ))
-}
 
 /// A drill's actions, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -363,12 +355,9 @@ impl EndgameDrills {
         }
         self.engine.cancel(cx);
         self.hint = None;
-        let mut kept = self.moves.clone();
-        kept.pop();
-        while !kept.is_empty() && self.status_after(&kept).turn != self.drill.player {
-            kept.pop();
-        }
-        self.moves = kept;
+        self.moves = taken_back(&self.moves, |kept| {
+            self.status_after(kept).turn == self.drill.player
+        });
         self.recorded = false;
         self.moved(cx);
     }
@@ -397,33 +386,25 @@ impl EndgameDrills {
     fn redraw(&mut self, cx: &mut Context<Self>) {
         self.sync_voice(cx);
         let status = self.status();
-        let fen = status.fen.clone();
-        let Some(position) =
-            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
-        else {
+        let before = self
+            .moves
+            .split_last()
+            .map(|(last, earlier)| (self.status_after(earlier).fen, last));
+        let shown = Shown {
+            fen: &status.fen,
+            last: before
+                .as_ref()
+                .map(|(fen, last)| (fen.as_str(), last.as_str())),
+            player: self.player(),
+            flipped: self.flipped,
+            your_turn: self.your_turn(),
+            hint: self.hint.as_deref(),
+            // The pieces show again once the drill is over.
+            reveal: status.over,
+        };
+        let Some(state) = shown.state(|_| {}, cx) else {
             return;
         };
-        let last = self.moves.last().and_then(|last| {
-            let before = self.status_after(&self.moves[..self.moves.len() - 1]);
-            move_squares(&before.fen, last)
-        });
-        let orientation = if self.flipped {
-            !self.player()
-        } else {
-            self.player()
-        };
-        let over = status.over;
-        let movable = self.your_turn().then_some(self.player());
-        let mut state = BoardState::of(&position, orientation, movable, last);
-        if let Some((from, to)) = self
-            .hint
-            .as_deref()
-            .and_then(|hint| move_squares(&fen, hint))
-        {
-            state.arrows = vec![Arrow::hint(from, to)];
-        }
-        // The pieces show again once the drill is over.
-        state.blindfold = crate::settings::frontend(cx).blindfold && !over;
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
         cx.notify();
