@@ -453,17 +453,10 @@ impl GuessMoves {
     }
 
     fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) {
-            return;
-        }
         let setup = self.setup_now();
         let taking = self.your_turn();
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice.missed(heard, &setup.fen, taking, cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        let Some(heard) = self.voice.heard(event, &setup.fen, taking, cx) else {
+            return;
         };
         let turn = Turn {
             taking,

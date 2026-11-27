@@ -609,9 +609,6 @@ impl PuzzleBoard {
     }
 
     fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) {
-            return;
-        }
         let setup = self
             .on_board
             .as_ref()
@@ -620,13 +617,8 @@ impl PuzzleBoard {
                 fen: board.fen().to_string(),
             })
             .unwrap_or_else(|| Setup::standard_at(""));
-        let fen = setup.fen.clone();
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice.missed(heard, &fen, self.playing(), cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        let Some(heard) = self.voice.heard(event, &setup.fen, self.playing(), cx) else {
+            return;
         };
         let (over, playing) = (self.over(), self.playing());
         let turn = Turn {

@@ -498,17 +498,9 @@ impl LocalPage {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.voice.owns(event) {
-            return;
-        }
         let setup = self.voice_setup();
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice
-                    .missed(heard, &setup.fen, self.voice_taking(), cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        let Some(heard) = self.voice.heard(event, &setup.fen, self.voice_taking(), cx) else {
+            return;
         };
         let turn = crate::voice::moves::Turn {
             taking: self.voice_taking(),

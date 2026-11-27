@@ -841,17 +841,10 @@ impl Repertoire {
     }
 
     fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) {
-            return;
-        }
         let fen = self.node().map(|node| node.fen.clone()).unwrap_or_default();
         let setup = kchess_domain::variant::Setup::standard_at(&fen);
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice.missed(heard, &fen, self.your_turn(cx), cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        let Some(heard) = self.voice.heard(event, &fen, self.your_turn(cx), cx) else {
+            return;
         };
         let turn = Turn {
             taking: self.your_turn(cx),

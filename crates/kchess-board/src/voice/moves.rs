@@ -146,11 +146,6 @@ impl VoiceMoves {
         }
     }
 
-    /// Whether `event` is this board's.
-    pub fn owns(&self, event: &VoiceEvent) -> bool {
-        self.control.owns(event)
-    }
-
     /// Voice on or off for this board.
     pub fn toggle(&mut self, on: bool, grammar: Vec<String>, active: bool, cx: &mut App) {
         self.settle(VoiceOutcome::Abandoned, None, cx);
@@ -258,8 +253,29 @@ impl VoiceMoves {
         }
     }
 
-    /// Heard but too unsure (or only noise) to act on; `taking` as for `hear`.
-    pub fn missed(&mut self, heard: &Heard, fen: &str, taking: bool, cx: &mut App) {
+    /// The phrase `event` brings this board to act on: none when the event is another page's, or
+    /// when the phrase was too unsure (or only noise), which is recorded at `fen`; `taking` as for
+    /// `hear`.
+    pub fn heard(
+        &mut self,
+        event: &VoiceEvent,
+        fen: &str,
+        taking: bool,
+        cx: &mut App,
+    ) -> Option<Heard> {
+        if !self.control.owns(event) {
+            return None;
+        }
+        match event {
+            VoiceEvent::Missed { heard, .. } => {
+                self.missed(heard, fen, taking, cx);
+                None
+            }
+            VoiceEvent::Heard { heard, .. } => Some(heard.clone()),
+        }
+    }
+
+    fn missed(&mut self, heard: &Heard, fen: &str, taking: bool, cx: &mut App) {
         if self.control.enabled {
             self.record(heard, VoiceOutcome::Unclear, None, fen, taking, cx);
         }

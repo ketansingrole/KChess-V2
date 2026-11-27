@@ -265,16 +265,9 @@ impl EndgameDrills {
     }
 
     fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) {
-            return;
-        }
         let setup = kchess_domain::variant::Setup::standard_at(&self.status().fen);
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice.missed(heard, &setup.fen, self.your_turn(), cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        let Some(heard) = self.voice.heard(event, &setup.fen, self.your_turn(), cx) else {
+            return;
         };
         let turn = Turn {
             taking: self.your_turn(),

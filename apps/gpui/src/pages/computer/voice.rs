@@ -59,9 +59,6 @@ impl ComputerPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.voice.owns(event) {
-            return;
-        }
         let setup = self
             .position_at(self.moves().len())
             .map(|position| Setup {
@@ -69,15 +66,10 @@ impl ComputerPage {
                 fen: kchess_domain::rules::make_fen(&position),
             })
             .unwrap_or_else(|| Setup::standard_at(""));
-        let fen = setup.fen.clone();
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice.missed(heard, &fen, self.voice_taking(), cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
-        };
         let taking = self.voice_taking();
+        let Some(heard) = self.voice.heard(event, &setup.fen, taking, cx) else {
+            return;
+        };
         let idle = self.voice_idle();
         let asked = self.asked;
         let mut run: Option<Deferred> = None;
