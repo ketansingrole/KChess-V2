@@ -265,7 +265,7 @@ impl StudiesPage {
         window
             .spawn(cx, async move |cx| {
                 let result = answer.await;
-                let _ = cx.update(|window, cx| match result {
+                cx.update(|window, cx| match result {
                     Ok(result) => {
                         library.update(cx, |library, cx| {
                             library.apply(&result);
@@ -274,7 +274,8 @@ impl StudiesPage {
                         then(result, window, cx);
                     }
                     Err(cause) => window.push_notification(Notification::error(cause), cx),
-                });
+                })
+                .ok();
             })
             .detach();
     }
@@ -297,7 +298,7 @@ impl StudiesPage {
                 window
                     .spawn(cx, async move |cx| {
                         let result = answer.await;
-                        let _ = cx.update(|window, cx| match result {
+                        cx.update(|window, cx| match result {
                             Ok(result) => {
                                 library.update(cx, |library, cx| {
                                     library.apply(&result);
@@ -306,7 +307,8 @@ impl StudiesPage {
                                 window.close_dialog(cx);
                             }
                             Err(cause) => dialog.update(cx, |dialog, cx| dialog.fail(cause, cx)),
-                        });
+                        })
+                        .ok();
                     })
                     .detach();
             },
@@ -374,7 +376,8 @@ impl StudiesPage {
                     }
                     None => return,
                 };
-                let _ = cx.update(|window, cx| window.push_notification(note, cx));
+                cx.update(|window, cx| window.push_notification(note, cx))
+                    .ok();
             })
             .detach();
     }
@@ -502,16 +505,17 @@ impl StudiesPage {
                     })
                     .map_err(|_| "The page closed".to_string())?;
                 let result = marked.await?;
-                let _ = this.update(cx, |_, cx| {
+                this.update(cx, |_, cx| {
                     library.update(cx, |library, cx| {
                         library.apply(&result);
                         cx.notify();
                     })
-                });
+                })
+                .ok();
                 Ok(())
             }
             .await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.uploading = None;
                 match outcome {
                     Ok(()) => window.push_notification(Notification::success("Study uploaded"), cx),
@@ -525,7 +529,8 @@ impl StudiesPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -874,9 +879,10 @@ impl Render for StudiesPage {
                                         if index == 1 { "lichess" } else { "device" },
                                     );
                                     if index == 1 {
-                                        let _ = page.update(cx, |page, cx| {
+                                        page.update(cx, |page, cx| {
                                             page.load_lichess(false, window, cx)
-                                        });
+                                        })
+                                        .ok();
                                     }
                                     window.refresh();
                                 }

@@ -343,17 +343,18 @@ impl SettingsPage {
             crate::core::profile_changes(cx, &[ProfileArea::Engine], {
                 let page = page.clone();
                 move |cx| {
-                    let _ = page.update(cx, |page, cx| page.engine_changed(cx));
+                    page.update(cx, |page, cx| page.engine_changed(cx)).ok();
                 }
             }),
             crate::core::profile_changes(cx, &[ProfileArea::Tablebases], {
                 let page = page.clone();
                 move |cx| {
-                    let _ = page.update(cx, |page, cx| {
+                    page.update(cx, |page, cx| {
                         if page.section == Section::Storage {
                             page.refresh_tablebases(cx);
                         }
-                    });
+                    })
+                    .ok();
                 }
             }),
             // A tablebase download's progress, whichever window started it.
@@ -369,7 +370,8 @@ impl SettingsPage {
                 },
             ),
             crate::core::profile_changes(cx, &[ProfileArea::VoiceHistory], move |cx| {
-                let _ = page.update(cx, |page, cx| page.voice_history_changed(cx));
+                page.update(cx, |page, cx| page.voice_history_changed(cx))
+                    .ok();
             }),
             cx.subscribe_in(
                 &chesscom_input,
@@ -420,10 +422,11 @@ impl SettingsPage {
                         move |window, cx| {
                             choose(before, window, cx);
                             // The list shows the size again (`sync_zoom`).
-                            let _ = page.update(cx, |this, cx| {
+                            page.update(cx, |this, cx| {
                                 this.zoom_shown = None;
                                 cx.notify();
-                            });
+                            })
+                            .ok();
                         },
                         window,
                         cx,
@@ -677,10 +680,11 @@ impl SettingsPage {
         self.show(section, cx);
         let fade = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(REVEAL_LIT).await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.reveal = None;
                 cx.notify();
-            });
+            })
+            .ok();
         });
         self.reveal = Some(Reveal {
             title,
@@ -857,13 +861,14 @@ impl SettingsPage {
         cx.notify();
         cx.spawn(async move |this, cx| {
             for left in (1..=DELAY).rev() {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.test_note = Some(format!("Switch to another app now… sending in {left}s").into());
                     cx.notify();
-                });
+                })
+.ok();
                 cx.background_executor().timer(std::time::Duration::from_secs(1)).await;
             }
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let outcome = crate::notifications::desktop(
                     kchess_contracts::types::NotificationKind::Test,
                     "KChess notifications",
@@ -883,7 +888,8 @@ impl SettingsPage {
                 );
                 this.test_pending = false;
                 cx.notify();
-            });
+            })
+.ok();
         })
         .detach();
     }

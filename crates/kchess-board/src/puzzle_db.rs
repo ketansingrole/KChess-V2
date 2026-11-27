@@ -112,7 +112,7 @@ impl PuzzleDb {
         let install = cx.global::<AppCore>().request(calls::PuzzleDbInstall {});
         cx.spawn(async move |this, cx| {
             let result = install.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 match result {
                     Ok(status) => this.status = status,
                     Err(cause) => this.failed(&cause),
@@ -127,7 +127,8 @@ impl PuzzleDb {
                     this.progress = None;
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -150,7 +151,7 @@ impl PuzzleDb {
             "This removes the puzzles stored on this computer. Storm, Streak, Rush and offline puzzles stop working until you download it again. Your scores are kept.",
             "Delete",
             move |_, cx| {
-                let _ = db.update(cx, |db, cx| db.delete(cx));
+                db.update(cx, |db, cx| db.delete(cx)).ok();
             },
         );
     }
@@ -161,7 +162,7 @@ impl PuzzleDb {
         let delete = cx.global::<AppCore>().request(calls::PuzzleDbDelete {});
         cx.spawn(async move |this, cx| {
             let result = delete.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 match result {
                     Ok(status) => {
                         this.status = status;
@@ -170,7 +171,8 @@ impl PuzzleDb {
                     Err(cause) => this.failed(&cause),
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -325,7 +327,7 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
     let act = |run: fn(&mut PuzzleDb, &mut Window, &mut Context<PuzzleDb>)| {
         let handle = handle.downgrade();
         move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-            let _ = handle.update(cx, |db, cx| run(db, window, cx));
+            handle.update(cx, |db, cx| run(db, window, cx)).ok();
         }
     };
     let hint = |text: String| {

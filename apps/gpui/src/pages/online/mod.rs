@@ -413,9 +413,10 @@ impl OnlinePage {
         let input = self.chat_input.clone();
         cx.spawn_in(window, async move |_, cx| {
             if sent.await && typed {
-                let _ = cx.update(|window, cx| {
+                cx.update(|window, cx| {
                     input.update(cx, |input, cx| input.set_value("", window, cx))
-                });
+                })
+                .ok();
             }
         })
         .detach();

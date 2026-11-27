@@ -395,7 +395,8 @@ impl PuzzlesPage {
                 .collect(),
             MODES.iter().position(|(key, _)| *key == mode).unwrap_or(0),
             move |index, _, cx| {
-                let _ = page.update(cx, |page, cx| page.choose_mode(MODES[index].0, cx));
+                page.update(cx, |page, cx| page.choose_mode(MODES[index].0, cx))
+                    .ok();
             },
             false,
             palette,
@@ -510,7 +511,7 @@ impl PuzzlesPage {
                         Some(Box::new({
                             let page = cx.entity().downgrade();
                             move |_, cx| {
-                                let _ = page.update(cx, |page, cx| page.load_next(cx));
+                                page.update(cx, |page, cx| page.load_next(cx)).ok();
                             }
                         })),
                         mode == "rated" && !is_retry,

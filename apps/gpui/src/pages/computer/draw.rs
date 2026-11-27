@@ -286,7 +286,7 @@ impl Render for ComputerPage {
 
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
-            let _ = page.update(cx, |page, cx| page.show_ply(ply, cx));
+            page.update(cx, |page, cx| page.show_ply(ply, cx)).ok();
         };
         let other = if user == Color::White {
             "black"
@@ -295,7 +295,9 @@ impl Render for ComputerPage {
         };
         let flip_page = cx.entity().downgrade();
         let flip: widgets::ClickHandler = Box::new(move |_, window, cx| {
-            let _ = flip_page.update(cx, |page, cx| page.ask(Question::SwitchSides, window, cx));
+            flip_page
+                .update(cx, |page, cx| page.ask(Question::SwitchSides, window, cx))
+                .ok();
         });
         let clock_label = self
             .game

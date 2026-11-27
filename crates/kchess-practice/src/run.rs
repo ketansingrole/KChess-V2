@@ -230,7 +230,7 @@ pub fn load_summary<V: 'static>(
     let summary = cx.global::<AppCore>().request(calls::RunSummary { kind });
     cx.spawn(async move |this, cx| match summary.await {
         Ok(summary) => {
-            let _ = this.update(cx, |view, cx| keep(view, summary, cx));
+            this.update(cx, |view, cx| keep(view, summary, cx)).ok();
         }
         Err(cause) => crate::log::write(
             Level::Warn,
@@ -250,7 +250,7 @@ pub fn save_run<V: 'static>(
     let saved = cx.global::<AppCore>().request(calls::SaveRun { run });
     cx.spawn(async move |this, cx| match saved.await {
         Ok(saved) => {
-            let _ = this.update(cx, |view, cx| keep(view, saved, cx));
+            this.update(cx, |view, cx| keep(view, saved, cx)).ok();
         }
         // The score is still on screen; only the record is lost.
         Err(cause) => crate::log::write(

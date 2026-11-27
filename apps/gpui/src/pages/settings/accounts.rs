@@ -33,7 +33,9 @@ fn ask_remove(username: String, connected: bool, window: &mut Window, cx: &mut A
     let handle = cx.global::<AccountsHandle>().0.downgrade();
     crate::widgets::confirm_danger(window, cx, title, text, label, move |window, cx| {
         let username = username.clone();
-        let _ = handle.update(cx, |accounts, cx| accounts.remove(username, window, cx));
+        handle
+            .update(cx, |accounts, cx| accounts.remove(username, window, cx))
+            .ok();
     });
 }
 
@@ -225,7 +227,9 @@ impl SettingsPage {
                         .loading(accounts.busy)
                         .disabled(accounts.busy)
                         .on_click(move |_, window, cx| {
-                            let _ = target.update(cx, |accounts, cx| accounts.connect(window, cx));
+                            target
+                                .update(cx, |accounts, cx| accounts.connect(window, cx))
+                                .ok();
                         }),
                 ),
             )
@@ -364,7 +368,9 @@ impl SettingsPage {
         crate::accounts::handle(cx).update(cx, |accounts, cx| {
             accounts.add_chesscom(name, window, cx, move |added, window, cx| {
                 if added {
-                    let _ = input.update(cx, |input, cx| input.set_value("", window, cx));
+                    input
+                        .update(cx, |input, cx| input.set_value("", window, cx))
+                        .ok();
                 }
             })
         });
@@ -384,9 +390,11 @@ fn ask_remove_chesscom(username: String, window: &mut Window, cx: &mut App) {
         "Remove",
         move |window, cx| {
             let username = username.clone();
-            let _ = handle.update(cx, |accounts, cx| {
-                accounts.remove_chesscom(username, window, cx)
-            });
+            handle
+                .update(cx, |accounts, cx| {
+                    accounts.remove_chesscom(username, window, cx)
+                })
+                .ok();
         },
     );
 }

@@ -219,11 +219,12 @@ pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App)
                         "Could not open the study: {}",
                         kchess_app::loading::failure("analysis", &cause)
                     );
-                    let _ = cx.update(|window, cx| window.push_notification(message, cx));
+                    cx.update(|window, cx| window.push_notification(message, cx))
+                        .ok();
                     return;
                 }
             };
-            let _ = cx.update(|window, cx| {
+            cx.update(|window, cx| {
                 let orientation = pgn.as_deref().and_then(crate::game::pgn_orientation);
                 let pgn =
                     async move { pgn.ok_or_else(|| "That study could not be read".to_string()) };
@@ -232,7 +233,8 @@ pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App)
                     ..Opening::default()
                 };
                 open_fetched(pgn, opening, window, cx);
-            });
+            })
+            .ok();
         })
         .detach();
 }
@@ -248,7 +250,7 @@ fn open_fetched(
     window
         .spawn(cx, async move |cx| {
             let pgn = pgn.await;
-            let _ = cx.update(|window, cx| match pgn {
+            cx.update(|window, cx| match pgn {
                 // A variant the analysis board cannot play (Crazyhouse, Atomic…): say so before
                 // asking to replace anything.
                 Ok(pgn)
@@ -263,7 +265,8 @@ fn open_fetched(
                     });
                 }
                 Err(message) => window.push_notification(message, cx),
-            });
+            })
+            .ok();
         })
         .detach();
 }
@@ -340,9 +343,10 @@ fn new_study(name: String, window: &mut Window, cx: &mut App) {
                         "studies",
                         &format!("Could not save study: {cause}"),
                     );
-                    let _ = cx.update(|window, cx| {
+                    cx.update(|window, cx| {
                         window.push_notification(Notification::error(cause), cx)
-                    });
+                    })
+                    .ok();
                 }
             })
             .detach();

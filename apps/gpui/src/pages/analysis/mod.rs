@@ -505,7 +505,8 @@ impl AnalysisPage {
                     crate::setting_notice::offer(
                         "Engine lines changed",
                         move |window, cx| {
-                            let _ = page.update(cx, |page, cx| page.set_lines(before, window, cx));
+                            page.update(cx, |page, cx| page.set_lines(before, window, cx))
+                                .ok();
                         },
                         window,
                         cx,
@@ -1090,7 +1091,7 @@ impl AnalysisPage {
         if !self.study.is_empty() {
             self.study_save = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(SAVE_DELAY).await;
-                let _ = this.update(cx, |this, cx| this.persist_study(cx));
+                this.update(cx, |this, cx| this.persist_study(cx)).ok();
             }));
         }
         SessionSaver::changed(self, cx);
@@ -1147,7 +1148,7 @@ impl AnalysisPage {
         let read = cx.global::<AppCore>().request(calls::Mistakes {});
         cx.spawn(async move |this, cx| {
             let read = read.await;
-            let _ = this.update(cx, |this, cx| match read {
+            this.update(cx, |this, cx| match read {
                 // A review that saved mistakes meanwhile holds the newer list.
                 Ok(mistakes) if this.review.mistakes.is_empty() => {
                     this.review.mistakes = mistakes;
@@ -1159,7 +1160,8 @@ impl AnalysisPage {
                     "library",
                     &format!("Reading the mistakes to practise failed: {}", cause.message),
                 ),
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -1457,7 +1459,7 @@ impl AnalysisPage {
                 "undo-delete-moves",
                 "Undo",
                 move |window, cx| {
-                    let _ = page.update(cx, |page, cx| page.undo(window, cx));
+                    page.update(cx, |page, cx| page.undo(window, cx)).ok();
                 },
             ),
             cx,

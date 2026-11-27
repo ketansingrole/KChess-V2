@@ -174,7 +174,7 @@ impl Measured {
                     // step, unlike a resize) would otherwise leave the old layout up.
                     let entity = entity.clone();
                     window.on_next_frame(move |_, cx| {
-                        let _ = entity.update(cx, |_, cx| cx.notify());
+                        entity.update(cx, |_, cx| cx.notify()).ok();
                     });
                 }
             },

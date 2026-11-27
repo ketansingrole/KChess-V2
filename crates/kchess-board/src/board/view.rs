@@ -40,10 +40,12 @@ impl ChessBoard {
                             cell.on_a11y_action(
                                 gpui_kit::AccessibleAction::Click,
                                 move |_, _, cx| {
-                                    let _ = entity.update(cx, |this, cx| {
-                                        this.cursor = Some(square);
-                                        this.activate(square, cx);
-                                    });
+                                    entity
+                                        .update(cx, |this, cx| {
+                                            this.cursor = Some(square);
+                                            this.activate(square, cx);
+                                        })
+                                        .ok();
                                 },
                             )
                         })
@@ -585,17 +587,19 @@ impl Render for ChessBoard {
                                     window.on_mouse_event(
                                         move |event: &MouseMoveEvent, phase, _, cx| {
                                             if phase == DispatchPhase::Bubble {
-                                                let _ = moving.update(cx, |this, cx| {
-                                                    // A release this listener missed (it arrived before
-                                                    // this frame) ends the drag at the next move.
-                                                    if event.pressed_button
-                                                        == Some(MouseButton::Left)
-                                                    {
-                                                        this.pointer_moved(event.position, cx)
-                                                    } else {
-                                                        this.release(event.position, cx)
-                                                    }
-                                                });
+                                                moving
+                                                    .update(cx, |this, cx| {
+                                                        // A release this listener missed (it arrived before
+                                                        // this frame) ends the drag at the next move.
+                                                        if event.pressed_button
+                                                            == Some(MouseButton::Left)
+                                                        {
+                                                            this.pointer_moved(event.position, cx)
+                                                        } else {
+                                                            this.release(event.position, cx)
+                                                        }
+                                                    })
+                                                    .ok();
                                             }
                                         },
                                     );
@@ -605,9 +609,11 @@ impl Render for ChessBoard {
                                             if phase == DispatchPhase::Bubble
                                                 && event.button == MouseButton::Left
                                             {
-                                                let _ = releasing.update(cx, |this, cx| {
-                                                    this.release(event.position, cx)
-                                                });
+                                                releasing
+                                                    .update(cx, |this, cx| {
+                                                        this.release(event.position, cx)
+                                                    })
+                                                    .ok();
                                             }
                                         },
                                     );

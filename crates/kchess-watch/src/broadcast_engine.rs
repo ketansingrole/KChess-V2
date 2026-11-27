@@ -210,13 +210,14 @@ impl WatchPage {
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
             let ready = status.await.is_ok_and(|status| status.ready);
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if this.broadcasts.engine.ready != ready {
                     this.broadcasts.engine.ready = ready;
                     this.broadcasts.engine.previews.clear();
                 }
                 this.engine_changed(cx);
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -473,7 +474,7 @@ impl WatchPage {
                                 .accessibility_label(label)
                                 .on_click(move |on, _, cx| {
                                     crate::prefs::set(cx, key, *on);
-                                    let _ = page.update(cx, |page, cx| page.engine_changed(cx));
+                                    page.update(cx, |page, cx| page.engine_changed(cx)).ok();
                                 }),
                         )
                         .child(div().text_size(px(14.)).child(label))
@@ -590,7 +591,7 @@ impl WatchPage {
                         ended: terminal.map(|_| "Nothing to analyse"),
                     },
                     std::rc::Rc::new(move |pv: &[String], at, _: &mut Window, cx: &mut App| {
-                        let _ = page.update(cx, |page, cx| page.explore(pv, at, cx));
+                        page.update(cx, |page, cx| page.explore(pv, at, cx)).ok();
                     }),
                     palette,
                     crate::notation::figurine(cx),

@@ -82,12 +82,13 @@ impl PuzzlesPage {
                     kind: cause.kind,
                 }
             });
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let selection = this.selection(cx);
                 let next = settle.apply(&mut this.session, call.resume, reply, &selection);
                 this.follow(next, settle, cx);
                 this.sync_board(cx);
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -179,10 +180,11 @@ impl PuzzlesPage {
         });
         cx.spawn(async move |this, cx| match async { save?.await }.await {
             Ok(progress) => {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.progress = progress;
                     cx.notify();
-                });
+                })
+                .ok();
             }
             Err(cause) => crate::log::write(
                 Level::Warn,
@@ -233,12 +235,13 @@ impl PuzzlesPage {
             self.timers.clear();
             self.timers.push(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(AUTO_NEXT_DELAY).await;
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     // Moving on by hand, or changing what to train, already replaced the puzzle.
                     if this.session.puzzle_key() == key && this.session.phase() == Phase::Ready {
                         this.load_next(cx);
                     }
-                });
+                })
+                .ok();
             }));
         }
     }

@@ -413,12 +413,13 @@ impl PuzzleBoard {
             let generation = self.generation.current();
             self.timers.push(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(FLASH).await;
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if this.generation.is_current(generation) {
                         this.flash = false;
                         cx.notify();
                     }
-                });
+                })
+                .ok();
             }));
             cx.emit(PuzzleBoardEvent::Move {
                 index,
@@ -461,7 +462,7 @@ impl PuzzleBoard {
         let generation = self.generation.current();
         self.timers.push(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.generation.is_current(generation) {
                     return;
                 }
@@ -471,7 +472,8 @@ impl PuzzleBoard {
                 }
                 this.waiting = false;
                 this.redraw(cx);
-            });
+            })
+            .ok();
         }));
     }
 
@@ -526,7 +528,7 @@ impl PuzzleBoard {
                 let Ok(reply) = reply else { break };
                 if let Some(reply) = reply {
                     cx.background_executor().timer(SOLUTION_REPLY).await;
-                    let _ = this.update(cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         if !this.generation.is_current(generation) {
                             return;
                         }
@@ -535,15 +537,17 @@ impl PuzzleBoard {
                             crate::sound::move_sound(&board.last_san(), cx);
                         }
                         this.redraw(cx);
-                    });
+                    })
+                    .ok();
                 }
             }
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if this.generation.is_current(generation) {
                     cx.emit(PuzzleBoardEvent::Done);
                     this.redraw(cx);
                 }
-            });
+            })
+            .ok();
         }));
     }
 

@@ -228,10 +228,12 @@ impl PositionExplorer {
                 {
                     let explorer = cx.entity().downgrade();
                     move |index, _, cx| {
-                        let _ = explorer.update(cx, |this, cx| {
-                            this.update_prefs(cx, |prefs| prefs.color = colors[index]);
-                            this.filters_changed(cx);
-                        });
+                        explorer
+                            .update(cx, |this, cx| {
+                                this.update_prefs(cx, |prefs| prefs.color = colors[index]);
+                                this.filters_changed(cx);
+                            })
+                            .ok();
                     }
                 },
                 true,
@@ -613,9 +615,11 @@ impl Render for PositionExplorer {
             let kinds = kinds.clone();
             move |index: usize, window: &mut Window, cx: &mut App| {
                 let kind = kinds[index];
-                let _ = explorer.update(cx, |this, cx| {
-                    this.lookup(Some(kind), true, Some(window), cx)
-                });
+                explorer
+                    .update(cx, |this, cx| {
+                        this.lookup(Some(kind), true, Some(window), cx)
+                    })
+                    .ok();
             }
         };
         let head = h_flex()
@@ -774,12 +778,14 @@ impl Render for PositionExplorer {
                                 let explorer = cx.entity().downgrade();
                                 move |on, _, cx| {
                                     let on = *on;
-                                    let _ = explorer.update(cx, |this, cx| {
-                                        this.update_prefs(cx, |prefs| prefs.follow = on);
-                                        if on {
-                                            this.lookup(None, false, None, cx);
-                                        }
-                                    });
+                                    explorer
+                                        .update(cx, |this, cx| {
+                                            this.update_prefs(cx, |prefs| prefs.follow = on);
+                                            if on {
+                                                this.lookup(None, false, None, cx);
+                                            }
+                                        })
+                                        .ok();
                                 }
                             },
                         )),

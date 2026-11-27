@@ -165,7 +165,7 @@ pub fn title_bar_button(cx: &App) -> Option<impl IntoElement + use<>> {
                     if installs {
                         ask_restart(window, cx);
                     } else {
-                        let _ = target.update(cx, |updates, cx| updates.download(cx));
+                        target.update(cx, |updates, cx| updates.download(cx)).ok();
                     }
                 }),
         )
@@ -261,7 +261,7 @@ impl SettingsPage {
         let act = |run: fn(&mut Updates, &mut Context<Updates>)| {
             let handle = handle.downgrade();
             move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-                let _ = handle.update(cx, run);
+                handle.update(cx, run).ok();
             }
         };
         let primary = match phase {

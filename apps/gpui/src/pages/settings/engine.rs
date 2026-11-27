@@ -101,10 +101,11 @@ impl SettingsPage {
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
             let status = status.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.engine = status.warn_on_err();
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -130,7 +131,7 @@ impl SettingsPage {
                 .ok();
             let Some(status) = status else { return };
             let status: Option<EngineStatus> = status.await.warn_on_err();
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 let ready = status.as_ref().is_some_and(|status| status.ready);
                 this.engine = status;
                 if chosen && !ready {
@@ -141,7 +142,8 @@ impl SettingsPage {
                     );
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -170,9 +172,10 @@ impl SettingsPage {
             if let Some(trusted) = trusted {
                 trusted.await.log_err();
             }
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.set_engine_path(path, true, window, cx)
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -210,7 +213,7 @@ impl SettingsPage {
         let install = cx.global::<AppCore>().request(calls::InstallEngine {});
         cx.spawn_in(window, async move |this, cx| {
             let result = install.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.engine_busy = false;
                 let result = match result {
                     Ok(result) => result,
@@ -247,7 +250,8 @@ impl SettingsPage {
                     this.set_engine_path(result.path, false, window, cx);
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -262,7 +266,8 @@ impl SettingsPage {
              chose yourself are not touched, and you can download it again later.",
             "Delete",
             move |window, cx| {
-                let _ = page.update(cx, |page, cx| page.delete_engine(window, cx));
+                page.update(cx, |page, cx| page.delete_engine(window, cx))
+                    .ok();
             },
         );
     }
@@ -279,7 +284,7 @@ impl SettingsPage {
         let delete = cx.global::<AppCore>().request(calls::DeleteEngine {});
         cx.spawn_in(window, async move |this, cx| {
             let result = delete.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.engine_busy = false;
                 if let Err(cause) = result {
                     window.push_notification(
@@ -304,7 +309,8 @@ impl SettingsPage {
                     this.refresh_engine(cx);
                 }
                 window.push_notification("Downloaded Stockfish deleted", cx);
-            });
+            })
+            .ok();
         })
         .detach();
     }

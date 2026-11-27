@@ -469,7 +469,7 @@ impl WatchPage {
         });
         cx.spawn_in(window, async move |this, cx| {
             let answer = found.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if !this.epoch.is_current(epoch) {
                     return;
                 }
@@ -482,7 +482,8 @@ impl WatchPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -508,7 +509,7 @@ impl WatchPage {
         let channels = cx.global::<AppCore>().request(calls::TvChannels {});
         cx.spawn(async move |this, cx| {
             let answer = channels.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 match answer {
                     Ok(channels) => {
                         this.channels_error = None;
@@ -520,7 +521,8 @@ impl WatchPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -556,7 +558,7 @@ impl WatchPage {
             };
             let answer = call.await;
             drop(started);
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.epoch.is_current(epoch) {
                     // The page moved on while the core started it: that watch ends now.
                     // gpui-lints: allow(dropped_failure) a superseded start's failure is nobody's
@@ -578,7 +580,8 @@ impl WatchPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -679,7 +682,7 @@ impl WatchPage {
             });
             cx.spawn(async move |this, cx| {
                 let answer = presence.await;
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     match answer {
                         Ok(report) => {
                             for (name, entry) in report.users {
@@ -692,7 +695,8 @@ impl WatchPage {
                         }
                     }
                     cx.notify();
-                });
+                })
+                .ok();
             })
             .detach();
         }
@@ -794,7 +798,8 @@ impl Render for WatchPage {
         let page = cx.entity().downgrade();
         let choose = move |index: usize, window: &mut Window, cx: &mut App| {
             let tab = Tab::ALL[index];
-            let _ = page.update(cx, |page, cx| page.choose_tab(tab, window, cx));
+            page.update(cx, |page, cx| page.choose_tab(tab, window, cx))
+                .ok();
         };
         let header = h_flex()
             .gap(px(12.))

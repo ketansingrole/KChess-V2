@@ -71,7 +71,7 @@ impl Ai {
             let Some(status) = read.await.warn_on_err() else {
                 return;
             };
-            let _ = this.update(cx, |this, cx| this.adopt(status, cx));
+            this.update(cx, |this, cx| this.adopt(status, cx)).ok();
         })
         .detach();
     }
@@ -86,13 +86,14 @@ impl Ai {
                 AiModelList::Listed { models } => models,
                 AiModelList::Refused { .. } => Vec::new(),
             };
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.models = models
                     .into_iter()
                     .map(|model| (model.slug, model.name))
                     .collect();
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -108,7 +109,7 @@ impl Ai {
         let connected = cx.global::<AppCore>().request(calls::AiConnect {});
         cx.spawn_in(window, async move |this, cx| {
             let result = connected.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 cx.notify();
                 match result {
@@ -122,7 +123,8 @@ impl Ai {
                         window.push_notification(kchess_app::loading::failure("ai", &cause), cx)
                     }
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -133,7 +135,7 @@ impl Ai {
             let Some(status) = done.await.warn_on_err() else {
                 return;
             };
-            let _ = this.update(cx, |this, cx| this.adopt(status, cx));
+            this.update(cx, |this, cx| this.adopt(status, cx)).ok();
         })
         .detach();
     }
@@ -148,10 +150,11 @@ impl Ai {
             let Some(status) = saved.await.warn_on_err() else {
                 return;
             };
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.status = status;
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -201,7 +204,7 @@ impl Explainer {
         let answer = cx.global::<AppCore>().request(calls::AiExplain { request });
         cx.spawn(async move |this, cx| {
             let result = answer.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if this.asked != asked {
                     return;
                 }
@@ -217,7 +220,8 @@ impl Explainer {
                 });
                 cx.notify();
                 handle(cx).update(cx, |ai, cx| ai.refresh(cx));
-            });
+            })
+            .ok();
         })
         .detach();
     }

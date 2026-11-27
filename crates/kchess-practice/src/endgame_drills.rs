@@ -582,7 +582,7 @@ impl Render for EndgameDrills {
                 &self.drill.id,
                 move |id, _, cx| {
                     let next = set.iter().find(|drill| drill.id == id).cloned();
-                    let _ = page.update(cx, |page, cx| page.restart(next, cx));
+                    page.update(cx, |page, cx| page.restart(next, cx)).ok();
                 },
                 &palette,
             ));

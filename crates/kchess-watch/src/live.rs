@@ -241,12 +241,13 @@ impl Live {
             if let Some(table) = call.await.warn_on_err()
                 && table.nb_games > 0
             {
-                let _ = this.update(cx, |page, cx| {
+                this.update(cx, |page, cx| {
                     if page.live.pairing == pairing {
                         page.live.head_to_head = Some((pairing, table));
                         cx.notify();
                     }
-                });
+                })
+                .ok();
             }
         })
         .detach();
@@ -661,19 +662,22 @@ impl WatchPage {
             });
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
-            let _ = page.update(cx, |page, cx| {
+            page.update(cx, |page, cx| {
                 page.live.select(ply);
                 page.live.redraw(cx);
                 cx.notify();
-            });
+            })
+            .ok();
         };
         let flip_page = cx.entity().downgrade();
         let flip: widgets::ClickHandler = Box::new(move |_, _, cx| {
-            let _ = flip_page.update(cx, |page, cx| {
-                page.live.flipped = !page.live.flipped;
-                page.live.redraw(cx);
-                cx.notify();
-            });
+            flip_page
+                .update(cx, |page, cx| {
+                    page.live.flipped = !page.live.flipped;
+                    page.live.redraw(cx);
+                    cx.notify();
+                })
+                .ok();
         });
         widgets::side_panel(palette)
             .h(self.layout.panel_height(board_size))

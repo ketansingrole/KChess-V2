@@ -35,7 +35,7 @@ impl AnalysisPage {
         self.study_writing = Some((write, answer.clone()));
         cx.spawn(async move |this, cx| {
             let result: Result<StudyCommandResult, CoreError> = outcome.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if this
                     .study_writing
                     .as_ref()
@@ -68,7 +68,8 @@ impl AnalysisPage {
                     Err(_) => {}
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
         Some(answer)

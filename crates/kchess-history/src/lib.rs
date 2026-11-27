@@ -744,12 +744,13 @@ impl HistoryPage {
                 Some(Err(cause)) => Some(format!("Export failed: {cause}").into()),
                 None => None,
             };
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if message.is_some() {
                     this.message = message;
                     cx.notify();
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -789,12 +790,13 @@ impl HistoryPage {
                 Some(Err(cause)) => Some(format!("Export failed: {cause}").into()),
                 None => None,
             };
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if message.is_some() {
                     this.message = message;
                     cx.notify();
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }

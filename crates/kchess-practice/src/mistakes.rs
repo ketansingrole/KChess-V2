@@ -138,7 +138,7 @@ impl Mistakes {
             ),
             // Another window added or answered drills: the overview lists the profile's.
             crate::core::profile_changes(cx, &[ProfileArea::Drills], move |cx| {
-                let _ = trainer.update(cx, |trainer, cx| trainer.reload(cx));
+                trainer.update(cx, |trainer, cx| trainer.reload(cx)).ok();
             }),
         ];
         let clock = crate::timer::every(CLOCK, cx, |this, cx| {
@@ -320,7 +320,7 @@ impl Mistakes {
         });
         cx.spawn(async move |this, cx| {
             let answer = answer.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 match answer {
                     Ok(items) => {
                         this.items = items;
@@ -329,7 +329,8 @@ impl Mistakes {
                     Err(cause) => this.loading.failed("mistakes", &cause),
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }

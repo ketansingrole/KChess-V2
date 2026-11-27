@@ -290,10 +290,11 @@ impl Coordinates {
         self.flash = Some((square.to_string(), correct));
         self.flash_timer = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FLASH).await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.flash = None;
                 this.redraw(cx);
-            });
+            })
+            .ok();
         }));
         self.tally.record(correct);
         if correct {
@@ -508,7 +509,7 @@ impl Coordinates {
             disabled,
             move |on, _, cx| {
                 crate::prefs::set(cx, key, *on);
-                let _ = page.update(cx, |this, cx| this.redraw(cx));
+                page.update(cx, |this, cx| this.redraw(cx)).ok();
             },
         )
         .text_size(px(14.))
@@ -653,7 +654,7 @@ impl Render for Coordinates {
             {
                 let page = page.clone();
                 move |index, _, cx| {
-                    let _ = page.update(cx, |this, cx| {
+                    page.update(cx, |this, cx| {
                         this.mode = MODES[index];
                         // Leaving Name the square turns voice off, as its control goes away.
                         if this.mode != Mode::Name && this.voice.enabled {
@@ -661,7 +662,8 @@ impl Render for Coordinates {
                         }
                         this.starting = false;
                         this.redraw(cx);
-                    });
+                    })
+                    .ok();
                 }
             },
             &palette,
@@ -685,10 +687,11 @@ impl Render for Coordinates {
             {
                 let page = page.clone();
                 move |index, _, cx| {
-                    let _ = page.update(cx, |this, cx| {
+                    page.update(cx, |this, cx| {
                         this.side = sides[index];
                         this.redraw(cx);
-                    });
+                    })
+                    .ok();
                 }
             },
             false,

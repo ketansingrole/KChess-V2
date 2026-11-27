@@ -23,7 +23,7 @@ impl SettingsPage {
         cx.spawn(async move |this, cx| {
             let status = status.await;
             let busy = status.as_ref().is_some_and(|status| status.busy);
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.voice_downloading {
                     match status {
                         Some(status) => this.voice_model = Some(status),
@@ -33,14 +33,16 @@ impl SettingsPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
             if busy {
                 cx.background_executor().timer(BUSY_POLL).await;
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if this.section == Section::Storage {
                         this.refresh_voice_model(cx);
                     }
-                });
+                })
+                .ok();
             }
         })
         .detach();
@@ -79,7 +81,7 @@ impl SettingsPage {
                 let mut cx = cx.clone();
                 async move {
                     while let Some(progress) = updates.next().await {
-                        let _ = this.update(&mut cx, |this, cx| {
+                        this.update(&mut cx, |this, cx| {
                             this.voice_model = Some(Status {
                                 installed: false,
                                 bytes: 0,
@@ -87,12 +89,13 @@ impl SettingsPage {
                                 progress: Some(progress),
                             });
                             cx.notify();
-                        });
+                        })
+                        .ok();
                     }
                 }
             };
             let (outcome, ()) = futures::join!(download, watch);
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.voice_downloading = false;
                 let failed = match outcome {
                     Some(Ok(())) => None,
@@ -109,7 +112,8 @@ impl SettingsPage {
                 }
                 this.refresh_voice_model(cx);
                 this.refresh_free_space(cx);
-            });
+            })
+            .ok();
         })
         .detach();
         cx.notify();

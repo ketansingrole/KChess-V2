@@ -241,7 +241,7 @@ impl HomePage {
                     cx,
                     &[kchess_contracts::types::ProfileArea::Sessions],
                     move |cx| {
-                        let _ = home.update(cx, |home, cx| home.refresh_continue(cx));
+                        home.update(cx, |home, cx| home.refresh_continue(cx)).ok();
                     },
                 ),
             ],

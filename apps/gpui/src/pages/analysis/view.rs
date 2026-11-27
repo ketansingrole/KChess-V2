@@ -220,7 +220,7 @@ impl AnalysisPage {
                         )| {
                             let page = page.clone();
                             move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                let _ = page.update(cx, |page, cx| run(page, window, cx));
+                                page.update(cx, |page, cx| run(page, window, cx)).ok();
                             }
                         };
                         // Leaving for another page takes the position and orientation first: the
@@ -396,10 +396,11 @@ impl AnalysisPage {
                                     PopupMenuItem::new("Copy PGN")
                                         .icon(icon("file-text"))
                                         .on_click(move |_, window, cx| {
-                                            let _ = page.update(cx, |page, cx| {
+                                            page.update(cx, |page, cx| {
                                                 let pgn = page.root.pgn_text();
                                                 page.copy(pgn, "PGN", window, cx)
-                                            });
+                                            })
+                                            .ok();
                                         }),
                                 )
                             }

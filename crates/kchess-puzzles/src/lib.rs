@@ -394,7 +394,7 @@ impl PuzzlesPage {
         self.started = true;
         cx.spawn(async move |this, cx| {
             let progress = progress.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if let Some(progress) = progress.warn_on_err() {
                     this.progress = progress;
                 }
@@ -402,7 +402,8 @@ impl PuzzlesPage {
                     this.load_next(cx);
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }

@@ -143,7 +143,7 @@ impl SettingsPage {
             "This deletes the Storm, Streak, Rush and board-training scores and the endgame and lesson progress stored on this computer. Nothing on Lichess is affected.",
             "Clear",
             move |_, cx| {
-                let _ = this.update(cx, |this, cx| this.clear_runs(cx));
+                this.update(cx, |this, cx| this.clear_runs(cx)).ok();
             },
         );
     }
@@ -155,7 +155,7 @@ impl SettingsPage {
             .request(calls::ClearRuns { kind: None });
         cx.spawn(async move |this, cx| {
             let cleared = clearing.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.runs_note = Some(match cleared {
                     Ok(_) => "Local scores and progress cleared".into(),
                     Err(cause) => {
@@ -168,7 +168,8 @@ impl SettingsPage {
                     }
                 });
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -195,7 +196,7 @@ impl SettingsPage {
         let saving = crate::export::save_text(&name, text, cx);
         cx.spawn(async move |this, cx| {
             let saved = saving.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.exporting = false;
                 this.diagnostics_note = match saved {
                     Some(Ok(())) => Some("Diagnostics exported".into()),
@@ -210,7 +211,8 @@ impl SettingsPage {
                     None => None,
                 };
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
         cx.notify();

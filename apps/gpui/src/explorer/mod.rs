@@ -392,7 +392,7 @@ impl PositionExplorer {
                 .filter(|account| account.connected)
                 .map(|account| account.username)
                 .collect();
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if Self::prefs(cx).player.is_empty()
                     && let Some(first) = accounts.first()
                 {
@@ -400,7 +400,8 @@ impl PositionExplorer {
                 }
                 this.accounts = accounts;
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -460,7 +461,8 @@ impl PositionExplorer {
     fn follow_lookup(&mut self, cx: &mut Context<Self>) {
         self.follow_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FOLLOW_DELAY).await;
-            let _ = this.update(cx, |this, cx| this.lookup(None, false, None, cx));
+            this.update(cx, |this, cx| this.lookup(None, false, None, cx))
+                .ok();
         }));
     }
 
@@ -529,7 +531,7 @@ impl PositionExplorer {
         cx.notify();
         self.lookup_task = Some(cx.spawn(async move |this, cx| {
             let outcome = call.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.epoch.is_current(request) {
                     return;
                 }
@@ -558,7 +560,8 @@ impl PositionExplorer {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         }));
     }
 
@@ -612,7 +615,7 @@ impl PositionExplorer {
         let call = self.game_pgn(&id, cx);
         cx.spawn_in(window, async move |_, cx| {
             let outcome = call.await;
-            let _ = cx.update(|window, cx| {
+            cx.update(|window, cx| {
                 let pgn = match outcome {
                     Ok(pgn) => pgn,
                     Err(cause) => {
@@ -645,7 +648,8 @@ impl PositionExplorer {
                     }
                     opened
                 });
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -660,14 +664,15 @@ impl PositionExplorer {
         };
         cx.spawn_in(window, async move |_, cx| {
             let outcome = call.await;
-            let _ = cx.update(|window, cx| match outcome {
+            cx.update(|window, cx| match outcome {
                 Ok(pgn) => crate::pages::practice::guess_moves(&pgn, Some(side), window, cx),
                 Err(cause) => window.push_notification(
                     Notification::error(kchess_app::loading::failure("explorer", &cause))
                         .title("Could not open the game"),
                     cx,
                 ),
-            });
+            })
+            .ok();
         })
         .detach();
     }

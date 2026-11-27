@@ -128,7 +128,7 @@ impl StudiesPage {
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = studies.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 let Some(entry) = this.lichess.entries.get_mut(&key) else {
                     return;
                 };
@@ -144,7 +144,8 @@ impl StudiesPage {
                 }
                 this.sync_targets(window, cx);
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -238,13 +239,15 @@ impl StudiesPage {
                         let note = format!(
                             "Lichess needs the study permission: connect @{account} again in Settings → My accounts."
                         );
-                        let _ = cx.update(|window, cx| fail(note, window, cx));
+                        cx.update(|window, cx| fail(note, window, cx))
+.ok();
                         return;
                     }
                     Ok(Reply::Done(chapters)) => chapters,
                     Err(cause) => {
                         let message = kchess_app::loading::failure("studies", &cause);
-                        let _ = cx.update(|window, cx| fail(message, window, cx));
+                        cx.update(|window, cx| fail(message, window, cx))
+.ok();
                         return;
                     }
                 };
@@ -254,7 +257,8 @@ impl StudiesPage {
                     .any(|chapter| !crate::game::pgn_analysable(&chapter.pgn))
                 {
                     let note = super::VARIANT_IMPORT.to_string();
-                    let _ = cx.update(|window, cx| fail(note, window, cx));
+                    cx.update(|window, cx| fail(note, window, cx))
+.ok();
                     return;
                 }
                 let command = StudyCommand::Offline {
@@ -268,7 +272,7 @@ impl StudiesPage {
                 let answer = cx.update(|_, cx| library.read(cx).command(command));
                 let Ok(answer) = answer else { return };
                 let result = answer.await;
-                let _ = cx.update(|window, cx| match result {
+                cx.update(|window, cx| match result {
                     Ok(result) => {
                         library.update(cx, |library, cx| {
                             library.apply(&result);
@@ -285,7 +289,8 @@ impl StudiesPage {
                         }
                     }
                     Err(cause) => fail(cause, window, cx),
-                });
+                })
+.ok();
             })
             .detach();
     }
@@ -308,18 +313,21 @@ impl StudiesPage {
             window,
             cx,
             move |saved, _, window, cx| {
-                let _ = page.update(cx, |page, cx| {
+                page.update(cx, |page, cx| {
                     page.lichess.busy = false;
                     cx.notify();
-                });
+                })
+                .ok();
                 Self::open(saved, window, cx);
             },
             move |note, _, cx| {
-                let _ = failed.update(cx, |page, cx| {
-                    page.lichess.busy = false;
-                    page.lichess.message = note;
-                    cx.notify();
-                });
+                failed
+                    .update(cx, |page, cx| {
+                        page.lichess.busy = false;
+                        page.lichess.message = note;
+                        cx.notify();
+                    })
+                    .ok();
             },
         );
     }
@@ -335,7 +343,8 @@ impl StudiesPage {
             if let Some(flushed) = flushed {
                 let _ = flushed.await;
             }
-            let _ = this.update_in(cx, |this, window, cx| this.merge_cloud(item, window, cx));
+            this.update_in(cx, |this, window, cx| this.merge_cloud(item, window, cx))
+                .ok();
         })
         .detach();
     }
@@ -355,7 +364,7 @@ impl StudiesPage {
                     window,
                     cx,
                 );
-                let _ = page.update(cx, |page, cx| {
+                page.update(cx, |page, cx| {
                     page.lichess.busy = false;
                     page.lichess.message = if conflict {
                         "Your offline edits were kept. The cloud version was downloaded as a separate copy.".into()
@@ -363,14 +372,17 @@ impl StudiesPage {
                         "Study available offline".into()
                     };
                     cx.notify();
-                });
+                })
+.ok();
             },
             move |note, _, cx| {
-                let _ = failed.update(cx, |page, cx| {
-                    page.lichess.busy = false;
-                    page.lichess.message = note;
-                    cx.notify();
-                });
+                failed
+                    .update(cx, |page, cx| {
+                        page.lichess.busy = false;
+                        page.lichess.message = note;
+                        cx.notify();
+                    })
+                    .ok();
             },
         );
     }
@@ -412,7 +424,7 @@ impl StudiesPage {
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = sent.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.lichess.busy = false;
                 match result {
                     Ok(Reply::NeedsReconnect) => {
@@ -435,7 +447,8 @@ impl StudiesPage {
                     ),
                 }
                 cx.notify();
-            });
+            })
+.ok();
         })
         .detach();
     }

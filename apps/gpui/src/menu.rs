@@ -44,7 +44,7 @@ pub use kchess_ui::keys::{all_keys, key_alone, keys};
 fn on_window(cx: &mut App, change: impl FnOnce(&mut Window, &mut App) + 'static) {
     cx.defer(move |cx| {
         if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, cx| change(window, cx));
+            window.update(cx, |_, window, cx| change(window, cx)).ok();
         }
     });
 }
@@ -84,7 +84,9 @@ pub fn close_window(window: AnyWindowHandle, cx: &mut App) {
             cx,
             "Close without saving",
             move |cx| {
-                let _ = window.update(cx, |_, window, _| window.remove_window());
+                window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .ok();
             },
             |_| {},
         );

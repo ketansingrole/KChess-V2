@@ -248,10 +248,11 @@ impl FriendsPage {
                     if recent && !everyone {
                         fresh.insert(key(name));
                     }
-                    let _ = this.update(cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.profiles.entry(key(name)).or_insert(profile);
                         cx.notify();
-                    });
+                    })
+                    .ok();
                 }
             }
             let stale: Vec<String> = names
@@ -267,19 +268,21 @@ impl FriendsPage {
                     .await
                     .warn_on_err()
                 {
-                    let _ = this.update(cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         for user in users.into_iter().filter(|user| !user.username.is_empty()) {
                             this.profiles.insert(key(&user.username), user);
                         }
                         cx.notify();
-                    });
+                    })
+                    .ok();
                 }
             }
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.loading = false;
                 crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.refresh(cx));
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -334,10 +337,11 @@ impl FriendsPage {
             accounts.follow(name, window, cx, move |added, window, cx| {
                 if added {
                     input.update(cx, |input, cx| input.set_value("", window, cx));
-                    let _ = page.update(cx, |page, cx| {
+                    page.update(cx, |page, cx| {
                         page.load_profiles(cx);
                         page.refresh_status(cx);
-                    });
+                    })
+                    .ok();
                 }
             })
         });
@@ -875,7 +879,7 @@ impl FriendsPage {
                     error.clone(),
                     palette.error,
                     move |_, _, cx| {
-                        let _ = page.update(cx, |page, cx| page.load_timeline(cx));
+                        page.update(cx, |page, cx| page.load_timeline(cx)).ok();
                     },
                 ))
             }

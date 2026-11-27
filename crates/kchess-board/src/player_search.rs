@@ -129,7 +129,7 @@ impl NameMatches {
                     term: Username(term),
                 })
                 .await;
-            let _ = this.update(cx, |owner, cx| {
+            this.update(cx, |owner, cx| {
                 let matches = matches(owner);
                 if !matches.epoch.is_current(epoch) {
                     return;
@@ -139,7 +139,8 @@ impl NameMatches {
                     matches.found = found;
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }

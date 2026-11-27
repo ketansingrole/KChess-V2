@@ -606,18 +606,21 @@ pub fn board_bar<V: 'static>(
     let extra = state.choice_buttons(
         bar.id,
         move |uci, window, cx| {
-            let _ = pick.update(cx, |this, cx| {
+            pick.update(cx, |this, cx| {
                 if let Action::Play(uci) = (access.write)(this).picked(&uci, cx) {
                     (access.play)(this, &uci, window, cx);
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         },
         move |_, cx| {
-            let _ = cancel.update(cx, |this, cx| {
-                (access.write)(this).cancel(cx);
-                cx.notify();
-            });
+            cancel
+                .update(cx, |this, cx| {
+                    (access.write)(this).cancel(cx);
+                    cx.notify();
+                })
+                .ok();
         },
     );
     let (grammar, listening) = (bar.grammar, bar.listening);
@@ -638,10 +641,12 @@ pub fn board_bar<V: 'static>(
         bar,
         move |on, _, cx| {
             let grammar = grammar.clone();
-            let _ = toggle.update(cx, |this, cx| {
-                (access.write)(this).toggle(on, grammar, listening, cx);
-                cx.notify();
-            });
+            toggle
+                .update(cx, |this, cx| {
+                    (access.write)(this).toggle(on, grammar, listening, cx);
+                    cx.notify();
+                })
+                .ok();
         },
         cx,
     );

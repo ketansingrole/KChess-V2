@@ -221,7 +221,7 @@ impl KnightPaths {
             }
             self.advance = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(ADVANCE).await;
-                let _ = this.update(cx, |this, cx| this.next_round(cx));
+                this.update(cx, |this, cx| this.next_round(cx)).ok();
             }));
         }
         self.redraw(cx);

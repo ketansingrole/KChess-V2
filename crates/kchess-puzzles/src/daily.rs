@@ -149,7 +149,7 @@ impl DailyPuzzle {
         let asked = self.request;
         cx.spawn(async move |this, cx| {
             let daily = request.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 // An answer for a puzzle no longer asked for.
                 if this.request != asked {
                     return;
@@ -175,7 +175,8 @@ impl DailyPuzzle {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }

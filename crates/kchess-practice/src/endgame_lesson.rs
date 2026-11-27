@@ -510,12 +510,13 @@ impl EndgameLesson {
             let at = self.moves.len();
             self.reply = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(REPLY).await;
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.reply = None;
                     if this.moves.len() == at {
                         this.play(reply, cx);
                     }
-                });
+                })
+                .ok();
             }));
             return;
         }
@@ -599,7 +600,7 @@ impl EndgameLesson {
         });
         cx.spawn(async move |this, cx| {
             let saved = saved.await;
-            let _ = this.update(cx, |this, cx| match saved {
+            this.update(cx, |this, cx| match saved {
                 Ok(saved) => {
                     cx.emit(TrainerEvent::Saved(saved.summary.clone()));
                     this.summary = Some(saved.summary);
@@ -613,7 +614,8 @@ impl EndgameLesson {
                     );
                     this.saved = None;
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -694,7 +696,7 @@ impl EndgameLesson {
                 vec![(None, items)],
                 &self.chapter().id,
                 move |id, _, cx| {
-                    let _ = page.update(cx, |page, cx| {
+                    page.update(cx, |page, cx| {
                         if let Some(index) = page
                             .course
                             .chapters
@@ -703,7 +705,8 @@ impl EndgameLesson {
                         {
                             page.open_step(0, index, cx);
                         }
-                    });
+                    })
+                    .ok();
                 },
                 palette,
             ))

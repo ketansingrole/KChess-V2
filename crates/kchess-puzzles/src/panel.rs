@@ -61,7 +61,7 @@ fn coach_block(
         } else if playing {
             let board = board_entity.downgrade();
             let nudged: crate::ai::OnAnswer = std::rc::Rc::new(move |cx| {
-                let _ = board.update(cx, |board, _| board.nudged());
+                board.update(cx, |board, _| board.nudged()).ok();
             });
             (
                 "puzzle-nudge",
@@ -272,7 +272,7 @@ pub(crate) fn status_panel(
                         .on_click({
                             let board = board_entity.downgrade();
                             move |_, _, cx| {
-                                let _ = board.update(cx, |board, cx| board.hint(cx));
+                                board.update(cx, |board, cx| board.hint(cx)).ok();
                             }
                         })
                         .into_any_element()
@@ -286,7 +286,7 @@ pub(crate) fn status_panel(
                         .on_click({
                             let board = board_entity.downgrade();
                             move |_, _, cx| {
-                                let _ = board.update(cx, |board, cx| board.show_solution(cx));
+                                board.update(cx, |board, cx| board.show_solution(cx)).ok();
                             }
                         })
                         .into_any_element()
@@ -303,7 +303,7 @@ pub(crate) fn status_panel(
                     .on_click({
                         let board = board_entity.downgrade();
                         move |_, _, cx| {
-                            let _ = board.update(cx, |board, cx| board.flip(cx));
+                            board.update(cx, |board, cx| board.flip(cx)).ok();
                         }
                     }),
             )])

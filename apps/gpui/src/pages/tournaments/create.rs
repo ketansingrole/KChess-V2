@@ -266,7 +266,8 @@ impl CreateArena {
                     Ok(Reply::NeedsReconnect) => this.reconnect = true,
                     Ok(Reply::Done(created)) => {
                         window.close_dialog(cx);
-                        let _ = page.update(cx, |page, cx| page.created(&created, window, cx));
+                        page.update(cx, |page, cx| page.created(&created, window, cx))
+                            .ok();
                     }
                     Err(_) => {}
                 }

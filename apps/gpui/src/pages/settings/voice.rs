@@ -106,11 +106,12 @@ impl SettingsPage {
         });
         cx.spawn(async move |this, cx| {
             let access = answer.await.unwrap_or(Access::Unknown);
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.mic_asking = false;
                 this.mic.access = access;
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
         cx.notify();

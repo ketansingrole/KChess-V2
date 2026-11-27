@@ -245,9 +245,10 @@ impl AnalysisPage {
         });
         cx.spawn(async move |this, cx| match answered.await {
             Ok(items) => {
-                let _ = this.update(cx, |this, _| {
+                this.update(cx, |this, _| {
                     this.review.mistakes = items;
-                });
+                })
+                .ok();
             }
             Err(cause) => crate::log::write(
                 Level::Warn,

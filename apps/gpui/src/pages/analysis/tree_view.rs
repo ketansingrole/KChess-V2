@@ -35,7 +35,7 @@ pub(super) fn move_menu(
     let act = |run: PageAction| {
         let page = page.clone();
         move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-            let _ = page.update(cx, |page, cx| run(page, window, cx));
+            page.update(cx, |page, cx| run(page, window, cx)).ok();
         }
     };
     let (at, current) = (path.to_string(), state.nag);
@@ -50,7 +50,8 @@ pub(super) fn move_menu(
                         PopupMenuItem::new(format!("{glyph}  {label}"))
                             .checked(current == Some(nag))
                             .on_click(move |_, _, cx| {
-                                let _ = page.update(cx, |page, cx| page.toggle_glyph(&at, nag, cx));
+                                page.update(cx, |page, cx| page.toggle_glyph(&at, nag, cx))
+                                    .ok();
                             }),
                     )
                 })
@@ -176,14 +177,14 @@ impl TreeView<'_> {
             .on_click({
                 let (page, target) = (page.clone(), target.clone());
                 move |_, _, cx| {
-                    let _ = page.update(cx, |page, cx| page.go_to(&target, cx));
+                    page.update(cx, |page, cx| page.go_to(&target, cx)).ok();
                 }
             })
             // A right-click shows the move it is about, then its menu.
             .on_mouse_down(MouseButton::Right, {
                 let (page, target) = (page.clone(), target.clone());
                 move |_, _, cx| {
-                    let _ = page.update(cx, |page, cx| page.go_to(&target, cx));
+                    page.update(cx, |page, cx| page.go_to(&target, cx)).ok();
                 }
             })
             .when(active, |chip| {
@@ -291,7 +292,7 @@ impl TreeView<'_> {
             .text_color(palette.text_muted)
             .cursor_pointer()
             .on_click(move |_, _, cx| {
-                let _ = page.update(cx, |page, cx| page.go_to(&target, cx));
+                page.update(cx, |page, cx| page.go_to(&target, cx)).ok();
             })
             .when(block, |comment| {
                 comment

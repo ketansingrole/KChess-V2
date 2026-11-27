@@ -419,7 +419,7 @@ impl PlayersPage {
         });
         cx.spawn(async move |this, cx| {
             let answer = days.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.profile_loading.is_current(epoch) {
                     return;
                 }
@@ -431,7 +431,8 @@ impl PlayersPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -458,7 +459,7 @@ impl PlayersPage {
                     cx,
                     move |took, _, cx| {
                         if took {
-                            let _ = page.update(cx, |page, cx| {
+                            page.update(cx, |page, cx| {
                                 // Another account or player since: its relation is read anew.
                                 if !page.account_epoch.is_current(account_epoch) {
                                     return;
@@ -469,7 +470,8 @@ impl PlayersPage {
                                     blocking,
                                 });
                                 cx.notify();
-                            });
+                            })
+                            .ok();
                         }
                     },
                 )
@@ -515,7 +517,7 @@ impl PlayersPage {
         let key = username.to_lowercase();
         cx.spawn(async move |this, cx| {
             let answer = presence.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.profile_loading.is_current(epoch) {
                     return;
                 }
@@ -527,7 +529,8 @@ impl PlayersPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -570,14 +573,15 @@ impl PlayersPage {
         });
         cx.spawn(async move |this, cx| {
             let answer = relation.await.warn_on_err();
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if this.account_epoch.is_current(account_epoch)
                     && let Some(Reply::Done(relation)) = answer
                 {
                     this.relation = Some(relation);
                     cx.notify();
                 }
-            });
+            })
+            .ok();
         })
         .detach();
         let crosstable = core.request(calls::Crosstable {
@@ -586,7 +590,7 @@ impl PlayersPage {
         });
         cx.spawn(async move |this, cx| {
             let answer = crosstable.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.account_epoch.is_current(account_epoch) {
                     return;
                 }
@@ -598,7 +602,8 @@ impl PlayersPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -639,7 +644,7 @@ impl PlayersPage {
         });
         cx.spawn(async move |this, cx| {
             let answer = games.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.profile_loading.is_current(epoch) {
                     return;
                 }
@@ -652,7 +657,8 @@ impl PlayersPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
         let official = core.request(calls::RatingHistory {
@@ -672,7 +678,7 @@ impl PlayersPage {
                     rated.iter().filter_map(LichessGame::rated_game),
                 ))
             };
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.profile_loading.is_current(epoch) {
                     return;
                 }
@@ -681,7 +687,8 @@ impl PlayersPage {
                     history.set(official, rebuilt.unwrap_or_default(), cx);
                     history.set_withheld(withheld, cx);
                 });
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -695,7 +702,7 @@ impl PlayersPage {
         let page = cx.entity().downgrade();
         played.then(|| {
             let retry: Retry = Rc::new(move |_, cx| {
-                let _ = page.update(cx, |page, cx| page.load_activity(cx));
+                page.update(cx, |page, cx| page.load_activity(cx)).ok();
             });
             (
                 SharedString::from("Lichess isn’t sending this player’s rating history right now"),

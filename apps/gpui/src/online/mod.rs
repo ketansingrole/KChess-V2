@@ -96,7 +96,9 @@ fn log(message: &str) {
 pub fn notice(cx: &mut App, text: impl Into<gpui_kit::SharedString>) {
     let text = text.into();
     if let Some(window) = cx.active_window().or_else(|| cx.windows().first().copied()) {
-        let _ = window.update(cx, |_, window, cx| window.push_notification(text, cx));
+        window
+            .update(cx, |_, window, cx| window.push_notification(text, cx))
+            .ok();
     }
 }
 
@@ -499,10 +501,11 @@ impl OnlineState {
         let task = self.perform(op, cx);
         cx.spawn(async move |this, cx| {
             let value = task.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.busy = false;
                 cx.notify();
-            });
+            })
+            .ok();
             value
         })
     }
@@ -762,7 +765,7 @@ impl OnlineState {
             .request(calls::Presence { usernames: ids });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.presence_pending = false;
                 if !this.presence_epoch.is_current(epoch) || this.phase != Phase::Playing {
                     return;
@@ -776,7 +779,8 @@ impl OnlineState {
                     this.presence = Some(report);
                     cx.notify();
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }

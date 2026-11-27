@@ -340,14 +340,15 @@ impl ComputerPage {
         });
         cx.spawn(async move |this, cx| {
             let ready = matches!(status.await, Ok(status) if status.ready);
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.engine = if ready {
                     Engine::Ready
                 } else {
                     Engine::Missing
                 };
                 this.availability(cx);
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -540,7 +541,8 @@ impl ComputerPage {
         cx.notify();
         self.search = Some(cx.spawn(async move |this, cx| {
             let reply = search.await;
-            let _ = this.update(cx, |this, cx| this.search_finished(&request, reply, cx));
+            this.update(cx, |this, cx| this.search_finished(&request, reply, cx))
+                .ok();
         }));
     }
 
@@ -836,7 +838,8 @@ impl ComputerPage {
                 current,
                 levels,
                 move |chosen, window, cx| {
-                    let _ = page.update(cx, |page, cx| page.start_chosen(chosen, window, cx));
+                    page.update(cx, |page, cx| page.start_chosen(chosen, window, cx))
+                        .ok();
                 },
                 window,
                 cx,
@@ -1053,18 +1056,20 @@ impl ComputerPage {
                 .on_ok({
                     let page = page.clone();
                     move |_, window, cx| {
-                        let _ = page.update(cx, |page, cx| {
+                        page.update(cx, |page, cx| {
                             page.asked = None;
                             page.answer(question, window, cx)
-                        });
+                        })
+                        .ok();
                         true
                     }
                 })
                 .on_cancel(move |_, _, cx| {
-                    let _ = page.update(cx, |page, cx| {
+                    page.update(cx, |page, cx| {
                         page.asked = None;
                         cx.notify();
-                    });
+                    })
+                    .ok();
                     true
                 })
         });

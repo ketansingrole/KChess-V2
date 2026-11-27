@@ -275,12 +275,13 @@ impl VoiceHistory {
                     }
                 }
             };
-            let _ = cx.update(|window, cx| match outcome {
+            cx.update(|window, cx| match outcome {
                 Some(Ok(())) => window.push_notification("Saved the voice history", cx),
                 Some(Err(cause)) => window
                     .push_notification(Notification::error(cause).title("The export failed"), cx),
                 None => {}
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -294,7 +295,7 @@ impl VoiceHistory {
             "Every logged phrase is deleted. Export it first if you want to keep it.",
             "Clear",
             move |_, cx| {
-                let _ = this.update(cx, |this, cx| this.clear(cx));
+                this.update(cx, |this, cx| this.clear(cx)).ok();
             },
         );
     }
@@ -303,13 +304,14 @@ impl VoiceHistory {
         let clearing = cx.global::<AppCore>().request(calls::ClearVoiceHistory {});
         cx.spawn(async move |this, cx| {
             let cleared = clearing.await;
-            let _ = this.update(cx, |this, cx| match cleared {
+            this.update(cx, |this, cx| match cleared {
                 Ok(_) => this.load(cx),
                 Err(cause) => {
                     this.loading.failed("voice-history", &cause);
                     cx.notify();
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }

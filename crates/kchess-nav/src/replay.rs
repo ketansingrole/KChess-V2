@@ -189,11 +189,11 @@ impl Render for GameReplay {
 
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
-            let _ = page.update(cx, |page, cx| page.show(ply, cx));
+            page.update(cx, |page, cx| page.show(ply, cx)).ok();
         };
         let flip_page = cx.entity().downgrade();
         let flip: widgets::ClickHandler = Box::new(move |_, _, cx| {
-            let _ = flip_page.update(cx, |page, cx| page.flip(cx));
+            flip_page.update(cx, |page, cx| page.flip(cx)).ok();
         });
         let count = self.moves.len().div_ceil(2);
         let panel = widgets::side_panel(&palette)

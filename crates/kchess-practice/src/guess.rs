@@ -238,7 +238,8 @@ impl GuessMoves {
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
             let ready = matches!(status.await, Ok(status) if status.ready);
-            let _ = this.update(cx, |this, cx| this.engine_known(ready, cx));
+            this.update(cx, |this, cx| this.engine_known(ready, cx))
+                .ok();
         })
         .detach();
         GuessMoves {
@@ -388,7 +389,7 @@ impl GuessMoves {
                 if !first {
                     cx.background_executor().timer(REPLY).await;
                 }
-                let _ = this.update(cx, |this, cx| this.other_move(cx));
+                this.update(cx, |this, cx| this.other_move(cx)).ok();
             }));
         } else if self.engine_usable(cx) {
             self.start_probe(Probe::Best(self.ply), None, cx);
@@ -840,7 +841,7 @@ impl GuessMoves {
                 .collect(),
             usize::from(self.side == Color::Black),
             move |index, _, cx| {
-                let _ = page.update(cx, |this, cx| {
+                page.update(cx, |this, cx| {
                     let side = if index == 1 {
                         Color::Black
                     } else {
@@ -853,7 +854,8 @@ impl GuessMoves {
                         }
                         cx.notify();
                     }
-                });
+                })
+                .ok();
             },
             false,
             palette,
@@ -1112,7 +1114,7 @@ impl GuessMoves {
             },
             "No moves yet".into(),
             move |ply, _, cx| {
-                let _ = page.update(cx, |this, cx| this.view(ply, cx));
+                page.update(cx, |this, cx| this.view(ply, cx)).ok();
             },
             crate::notation::figurine(cx),
             palette,

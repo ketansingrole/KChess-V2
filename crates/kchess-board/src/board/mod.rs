@@ -321,7 +321,7 @@ impl ChessBoard {
         // or a test's, which has no frame clock).
         self._animating = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(duration).await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let now = cx.background_executor().now();
                 if this
                     .animation
@@ -331,7 +331,8 @@ impl ChessBoard {
                     this.animation = None;
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         }));
     }
 

@@ -1026,7 +1026,7 @@ impl Render for EditorPage {
                                 } else {
                                     Color::White
                                 };
-                                let _ = page.update(cx, |page, cx| page.set_turn(turn, cx));
+                                page.update(cx, |page, cx| page.set_turn(turn, cx)).ok();
                             }
                         },
                         false,

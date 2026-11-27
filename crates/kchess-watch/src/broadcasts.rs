@@ -685,7 +685,7 @@ impl WatchPage {
             .request(calls::BroadcastTour { id: LichessId(id) });
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if !this.epoch.is_current(epoch) {
                     return;
                 }
@@ -726,7 +726,8 @@ impl WatchPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -775,7 +776,7 @@ impl WatchPage {
             };
             let answer = call.await;
             drop(started);
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.epoch.is_current(epoch) {
                     // The page moved on while the core started it: that feed ends now.
                     // gpui-lints: allow(dropped_failure) a superseded start's failure is nobody's
@@ -797,7 +798,8 @@ impl WatchPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -1526,20 +1528,23 @@ impl WatchPage {
         let sans = view::sans(&setup, &moves);
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
-            let _ = page.update(cx, |page, cx| {
+            page.update(cx, |page, cx| {
                 let count = page.broadcasts.current().map_or(0, |game| game.moves.len());
                 page.broadcasts.return_to_game();
                 page.broadcasts.ply = (ply < count).then_some(ply);
                 page.engine_changed(cx);
-            });
+            })
+            .ok();
         };
         let flip_page = cx.entity().downgrade();
         let flip: widgets::ClickHandler = Box::new(move |_, _, cx| {
-            let _ = flip_page.update(cx, |page, cx| {
-                page.broadcasts.orientation = !page.broadcasts.orientation;
-                page.broadcasts.redraw(cx);
-                cx.notify();
-            });
+            flip_page
+                .update(cx, |page, cx| {
+                    page.broadcasts.orientation = !page.broadcasts.orientation;
+                    page.broadcasts.redraw(cx);
+                    cx.notify();
+                })
+                .ok();
         });
         let ongoing = game.ongoing;
         let banner =

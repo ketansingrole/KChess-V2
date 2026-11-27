@@ -175,10 +175,11 @@ impl Control {
             bar,
             move |on, _, cx| {
                 let grammar = grammar.clone();
-                let _ = page.update(cx, |this, cx| {
+                page.update(cx, |this, cx| {
                     control(this).toggle(on, grammar, active, cx);
                     cx.notify();
-                });
+                })
+                .ok();
             },
             cx,
         )
