@@ -256,6 +256,44 @@ impl EditorSetup {
         })
     }
 
+    /// The position as it is when a picture read from one side was drawn from the other: every
+    /// piece on the square opposite (a1 to h8), castling wherever king and rook stand at home,
+    /// no en passant. The side to move stays, unless that leaves the other side in check.
+    pub fn turned_around(&self) -> EditorSetup {
+        let board = self
+            .board
+            .split('/')
+            .rev()
+            .map(|row| compress_row(&expand_digits(row).chars().rev().collect::<String>()))
+            .collect::<Vec<_>>()
+            .join("/");
+        let in_check = |color: Color| {
+            shakmaty::Board::from_ascii_board_fen(board.as_bytes())
+                .ok()
+                .and_then(|placed| {
+                    let king = placed.king_of(color)?;
+                    Some(placed.attacks_to(king, !color, placed.occupied()).any())
+                })
+                .unwrap_or(false)
+        };
+        let turn = if in_check(!self.turn) {
+            !self.turn
+        } else {
+            self.turn
+        };
+        EditorSetup {
+            board,
+            turn,
+            castling: CastlingRights {
+                white_short: true,
+                white_long: true,
+                black_short: true,
+                black_long: true,
+            },
+            ep: String::new(),
+        }
+    }
+
     /// Its FEN: castling rights and en passant only where the pieces allow them.
     pub fn fen(&self) -> String {
         let (board, ep) = (self.board.as_str(), self.ep.as_str());
@@ -324,6 +362,35 @@ mod tests {
         black_short: true,
         black_long: true,
     };
+
+    /// A picture read from the wrong side, turned around: each piece keeps its colour on the
+    /// opposite square, castling only where king and rook are home, and the side to move
+    /// changes only when the other side would be left in check.
+    #[test]
+    fn a_position_turned_around_puts_each_piece_opposite() {
+        let read = EditorSetup::from_fen("1k6/8/8/8/8/8/1P6/R3K2R w - - 0 1").unwrap();
+        let turned = read.turned_around();
+        assert_eq!(turned.board, "R2K3R/6P1/8/8/8/8/8/6k1");
+        assert_eq!(turned.fen(), "R2K3R/6P1/8/8/8/8/8/6k1 w - - 0 1");
+        // Turned back, it is the position read, castling now where king and rooks are home.
+        assert_eq!(
+            turned.turned_around().fen(),
+            "1k6/8/8/8/8/8/1P6/R3K2R w KQ - 0 1"
+        );
+        // Turned around, the white rook on h8 checks the black king with White to move: Black
+        // is to move instead.
+        let check = EditorSetup::from_fen("4K3/8/8/8/8/8/8/R3k3 w - - 0 1").unwrap();
+        assert_eq!(
+            check.turned_around().fen(),
+            "3k3R/8/8/8/8/8/8/3K4 b - - 0 1"
+        );
+        // The side to move in check stays to move.
+        let checked = EditorSetup::from_fen("4k3/8/8/8/8/8/8/K6r w - - 0 1").unwrap();
+        assert_eq!(
+            checked.turned_around().fen(),
+            "r6K/8/8/8/8/8/8/3k4 w - - 0 1"
+        );
+    }
 
     #[test]
     fn the_start_writes_the_standard_fen() {
