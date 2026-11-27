@@ -164,7 +164,6 @@ fn played_variants(db: &Connection, query: &InsightsQuery) -> Result<Vec<Variant
         .collect())
 }
 
-/// `insights(query)`.
 pub fn insights(
     host: &dyn Host,
     db: &Connection,

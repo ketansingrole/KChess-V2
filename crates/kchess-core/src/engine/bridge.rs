@@ -60,7 +60,6 @@ impl Battery {
         Battery::reading(Arc::new(crate::power::on_battery))
     }
 
-    /// A battery read by `read`.
     pub fn reading(read: PowerReader) -> Arc<Battery> {
         Arc::new(Battery {
             value: AtomicBool::new(false),

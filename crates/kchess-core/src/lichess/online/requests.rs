@@ -20,7 +20,6 @@ pub(crate) struct StreamRequest {
 }
 
 impl StreamRequest {
-    /// A GET stream of `path` as `auth`.
     pub(crate) fn get(path: impl Into<String>, auth: &Auth) -> StreamRequest {
         StreamRequest {
             method: reqwest::Method::GET,

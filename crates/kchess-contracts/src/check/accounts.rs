@@ -119,7 +119,6 @@ impl Validate for RelationAction {
 
 const NOTIFY: &str = "Invalid notification setting.";
 
-/// The message of each setting.
 fn settings_messages(keys: &[&str]) -> Msg {
     Some(match keys {
         ["appearance"] => "Invalid appearance.",

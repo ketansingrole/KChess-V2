@@ -830,7 +830,6 @@ fn join_numbers(values: &[u32]) -> String {
     listed.join(",")
 }
 
-/// A legal position of `variant`.
 fn is_legal_position(variant: Variant, fen: &str) -> bool {
     if variant == Variant::Standard {
         position::fen_problem(fen).is_none()

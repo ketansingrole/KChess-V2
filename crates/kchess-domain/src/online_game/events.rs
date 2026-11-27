@@ -289,7 +289,6 @@ impl Run<'_> {
         self.read_state(&state, previous, true);
     }
 
-    /// A `gameState`.
     fn game_state(&mut self, state: &GameState) {
         if !self.m.online_id.is_empty() && self.other_game(state.id.as_deref()) {
             return;

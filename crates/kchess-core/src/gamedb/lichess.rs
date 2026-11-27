@@ -59,7 +59,6 @@ pub fn rating_of(id: &str) -> Option<u32> {
     id.strip_prefix(ID_PREFIX)?.parse().ok()
 }
 
-/// The file of a month.
 fn file_of(month: &str) -> String {
     format!("{PREFIX}{month}.pgn.zst")
 }
