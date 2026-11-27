@@ -32,8 +32,9 @@ ad hoc in the sandbox and leaves it in `apps/gpui/dist/mas/KChess.app`.
    happens whatever App Review is doing. It then stages the App Store version with the
    listing in `app-store/` (and the release notes as What's New), attaches that build and submits
    it for review. Apple releases it when the review passes.
-   While another version is with Apple (waiting for or in review, or approved and not yet
-   released) it submits nothing, so that review never restarts: once that version is out, run
+   While another version is with Apple (waiting for or in review, approved and not yet
+   released, or rejected with its review still open for your answer) it submits nothing, so that
+   review never restarts (`cargo xtask app-store-review` decides): once that version is out, run
    Publish to the App Store by hand with the newest tag.
 
 ## What App Review reads

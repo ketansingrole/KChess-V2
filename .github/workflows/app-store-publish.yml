@@ -52,29 +52,23 @@ jobs:
         run: |
           gh release view "$RELEASE_TAG" --json body --jq .body > "$RUNNER_TEMP/notes.md"
           cargo xtask store-notes "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/notes.txt"
-      # A version already with Apple (waiting, in review, approved but unreleased) is never
-      # replaced: its review would start again. Submit the newest tag by hand once it is out
-      # (Run workflow with that tag).
-      - name: Leave a review in progress alone
-        id: review
+      # A version already with Apple (waiting, in review, approved but unreleased, or rejected
+      # with its review still open) is never replaced: its review would start again. Submit the
+      # newest tag by hand once it is out (Run workflow with that tag). `cargo xtask
+      # app-store-review` decides (tooling/xtask/src/review_guard.rs).
+      - name: Ask what App Review has
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: |
           asc versions list --app "$ASC_APP_ID" --platform MAC_OS --paginate --output json > "$RUNNER_TEMP/states.json"
-          busy="$(python3 - "$RUNNER_TEMP/states.json" <<'PY'
-          import json, sys
-          waiting = {"WAITING_FOR_REVIEW", "IN_REVIEW", "READY_FOR_REVIEW", "ACCEPTED",
-                     "PENDING_DEVELOPER_RELEASE", "PENDING_APPLE_RELEASE",
-                     "PROCESSING_FOR_APP_STORE", "PROCESSING_FOR_DISTRIBUTION"}
-          for v in json.load(open(sys.argv[1])).get("data", []):
-              a = v["attributes"]
-              if a.get("appStoreState") in waiting:
-                  print(f'{a.get("versionString")} ({a.get("appStoreState")})')
-                  break
-          PY
-          )"
+          asc review submissions-list --app "$ASC_APP_ID" --platform MAC_OS --paginate --output json > "$RUNNER_TEMP/submissions.json"
+      # No App Store key reaches this step: building xtask runs its dependencies' build scripts.
+      - name: Leave a review in progress alone
+        id: review
+        run: |
+          busy="$(cargo xtask app-store-review "$RUNNER_TEMP/states.json" "$RUNNER_TEMP/submissions.json")"
           if [ -n "$busy" ]; then
             echo "::notice::$busy is with Apple; $RELEASE_TAG is not submitted. Run this workflow with the newest tag once it is out."
             echo "skip=true" >> "$GITHUB_OUTPUT"
