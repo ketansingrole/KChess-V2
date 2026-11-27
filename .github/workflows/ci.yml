@@ -412,9 +412,9 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
-    # Twice the slowest green run: a release commit's macOS package, 37 minutes (2026-11-27), 20 of
-    # them the release link (`RELEASE_BUILD_QUIET`).
-    timeout-minutes: 75
+    # Twice the slowest green run: a release commit's macOS package, 53 minutes (2026-11-27), 29.5
+    # of them the release link (`RELEASE_BUILD_QUIET`).
+    timeout-minutes: 110
     env:
       CARGO_PROFILE_RELEASE_LTO: ${{ needs.changes.outputs.release != 'true' && 'off' || 'fat' }}
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ needs.changes.outputs.release != 'true' && '16' || '1' }}

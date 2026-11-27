@@ -87,9 +87,10 @@ const QUIET: Duration = Duration::from_secs(20 * 60);
 
 /// The release build's: its link optimises the whole program as one (fat LTO, one codegen unit),
 /// printing nothing until it ends. On CI's macOS runner that took 8 minutes for 2026.11.9's
-/// package (2026-11-22) and 20 for 2026.11.10's five days later, when the second run passed the
-/// 20-minute limit and was stopped. The job's own `timeout-minutes` still ends a real hang.
-pub const RELEASE_BUILD_QUIET: Duration = Duration::from_secs(45 * 60);
+/// package (2026-11-22); five days later 2026.11.10's took 20, then more than 20 (stopped by
+/// the 20-minute limit), then 29.5: twice the slowest. The job's own `timeout-minutes` still
+/// ends a real hang.
+pub const RELEASE_BUILD_QUIET: Duration = Duration::from_secs(60 * 60);
 
 fn quiet_limit() -> Duration {
     std::env::var("KCHESS_QUIET_MINUTES")
