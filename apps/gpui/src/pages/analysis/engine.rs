@@ -68,7 +68,6 @@ impl AnalysisPage {
         }
         self.attached = false;
         self.cloud_task = None;
-        self.cloud_request += 1;
         self.search.stop(true, cx);
     }
 
@@ -211,8 +210,6 @@ impl AnalysisPage {
 
     pub(super) fn ask_cloud(&mut self, cx: &mut Context<Self>) {
         self.cloud_task = None;
-        self.cloud_request += 1;
-        let request = self.cloud_request;
         let fen = self.node().fen.clone();
         if self.cloud.as_ref().map(|cloud| cloud.fen.as_str()) != Some(fen.as_str()) {
             self.cloud = None;
@@ -251,9 +248,6 @@ impl AnalysisPage {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                if request != this.cloud_request {
-                    return;
-                }
                 this.cloud_busy = false;
                 match answer {
                     Ok(cloud) => this.cloud = cloud,

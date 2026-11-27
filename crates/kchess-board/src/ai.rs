@@ -191,13 +191,12 @@ enum Phase {
 pub struct Explainer {
     request: Option<AiRequest>,
     phase: Option<Phase>,
-    asked: u64,
+    asked: kchess_app::loading::Epoch,
 }
 
 impl Explainer {
     pub fn ask(&mut self, request: AiRequest, on_answer: Option<OnAnswer>, cx: &mut Context<Self>) {
-        self.asked += 1;
-        let asked = self.asked;
+        let asked = self.asked.start();
         self.request = Some(request.clone());
         self.phase = Some(Phase::Asking);
         cx.notify();
@@ -205,7 +204,7 @@ impl Explainer {
         cx.spawn(async move |this, cx| {
             let result = answer.await;
             this.update(cx, |this, cx| {
-                if this.asked != asked {
+                if !this.asked.is_current(asked) {
                     return;
                 }
                 this.phase = Some(match result {

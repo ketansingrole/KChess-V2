@@ -35,7 +35,7 @@ pub struct DailyPuzzle {
     /// The id of a linked puzzle shown instead of the daily one.
     linked: Option<String>,
     /// The latest fetch: an answer to an earlier one is dropped.
-    request: u64,
+    request: kchess_app::loading::Epoch,
     board: Entity<PuzzleBoard>,
     themes: Vec<Theme>,
     layout: PlayLayout,
@@ -69,7 +69,7 @@ impl DailyPuzzle {
             loading: false,
             day: String::new(),
             linked: None,
-            request: 0,
+            request: Default::default(),
             _subscriptions: vec![cx.observe(&board, |_, _, cx| cx.notify())],
             board,
             themes,
@@ -145,13 +145,12 @@ impl DailyPuzzle {
         day: String,
         cx: &mut Context<Self>,
     ) {
-        self.request += 1;
-        let asked = self.request;
+        let asked = self.request.start();
         cx.spawn(async move |this, cx| {
             let daily = request.await;
             this.update(cx, |this, cx| {
                 // An answer for a puzzle no longer asked for.
-                if this.request != asked {
+                if !this.request.is_current(asked) {
                     return;
                 }
                 this.loading = false;

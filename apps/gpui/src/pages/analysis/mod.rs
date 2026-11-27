@@ -336,7 +336,7 @@ pub struct AnalysisPage {
     cloud: Option<kchess_contracts::types::CloudEval>,
     cloud_busy: bool,
     cloud_error: Option<String>,
-    cloud_request: u64,
+    /// The cloud lookup under way: replacing it drops the one before, whose answer never lands.
     cloud_task: Option<Task<()>>,
     /// The main line's novelty in the game databases.
     novelty: novelty::Novelty,
@@ -607,7 +607,6 @@ impl AnalysisPage {
             cloud: None,
             cloud_busy: false,
             cloud_error: None,
-            cloud_request: 0,
             cloud_task: None,
             novelty: Default::default(),
             saver: SessionSaver::start(SessionKind::Analysis, &[], window, cx),
