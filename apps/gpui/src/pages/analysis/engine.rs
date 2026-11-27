@@ -456,8 +456,9 @@ impl AnalysisPage {
                 let (on_infinite, on_arrows, on_threat) =
                     (page.clone(), page.clone(), page.clone());
                 let threat = page.upgrade().is_some_and(|page| page.read(cx).threat);
-                // As in Settings: the title and hint take what the switch leaves, so a long hint
-                // wraps inside the popover instead of running past its edge.
+                // As in Settings: the title and hint take what the control leaves, so a long hint
+                // wraps inside the popover instead of running past its edge, and each control ends
+                // its row.
                 let described = |title: &'static str, hint: Option<&'static str>| {
                     crate::widgets::setting_info(
                         title,
@@ -470,124 +471,94 @@ impl AnalysisPage {
                     .w(px(260.))
                     .gap(px(12.))
                     .p(px(4.))
-                    .child(
-                        h_flex()
-                            .gap(px(8.))
-                            .child(
-                                Switch::new("infinite")
-                                    .large()
-                                    .checked(infinite)
-                                    .disabled(!engine_on)
-                                    .accessibility_label("Infinite analysis")
-                                    .on_click(move |on, window, cx| {
-                                        let on = *on;
-                                        let set = {
-                                            let page = on_infinite.clone();
-                                            move |on: bool, cx: &mut App| {
-                                                crate::prefs::set(cx, INFINITE, on);
-                                                let _ = page
-                                                    .update(cx, |page, cx| page.engine_changed(cx));
-                                            }
-                                        };
-                                        set(on, cx);
-                                        crate::setting_notice::offer(
-                                            crate::setting_notice::switched(
-                                                "Infinite analysis",
-                                                on,
-                                            ),
-                                            move |_, cx| set(!on, cx),
-                                            window,
-                                            cx,
-                                        );
-                                    }),
-                            )
-                            .child(described(
-                                "Infinite analysis",
-                                Some("Keep searching past depth 26"),
-                            )),
-                    )
-                    .child(
-                        h_flex()
-                            .gap(px(8.))
-                            .child(
-                                Switch::new("arrows")
-                                    .large()
-                                    .checked(arrows)
-                                    .disabled(!engine_on)
-                                    .accessibility_label("Show engine arrows")
-                                    .on_click(move |on, window, cx| {
-                                        let on = *on;
-                                        let set = {
-                                            let page = on_arrows.clone();
-                                            move |on: bool, cx: &mut App| {
-                                                crate::prefs::set(cx, ARROWS, on);
-                                                page.update(cx, |page, cx| page.redraw(cx)).ok();
-                                            }
-                                        };
-                                        set(on, cx);
-                                        crate::setting_notice::offer(
-                                            crate::setting_notice::switched("Engine arrows", on),
-                                            move |_, cx| set(!on, cx),
-                                            window,
-                                            cx,
-                                        );
-                                    }),
-                            )
-                            .child(described("Show engine arrows", None)),
-                    )
-                    .child(
-                        h_flex()
-                            .gap(px(8.))
-                            .child(
-                                Switch::new("threat")
-                                    .large()
-                                    .checked(threat)
-                                    .disabled(!engine_on)
-                                    .accessibility_label("Show threat")
-                                    .on_click(move |_, _, cx| {
-                                        let _ =
-                                            on_threat.update(cx, |page, cx| page.toggle_threat(cx));
-                                    }),
-                            )
-                            .child(described(
-                                "Show threat",
-                                Some("The opponent's best move if it were their turn (X)"),
-                            )),
-                    )
-                    .child(
-                        h_flex()
-                            .gap(px(8.))
-                            .child(
-                                Switch::new("cloud")
-                                    .large()
-                                    .checked(cloud_on)
-                                    .disabled(!allowed)
-                                    .accessibility_label("Lichess cloud evaluation")
-                                    .on_click(|on, _, cx| {
-                                        let on = *on;
-                                        crate::settings::change(cx, move |s| {
-                                            s.core.cloud_eval = on
-                                        });
-                                    }),
-                            )
-                            .child(described(
-                                "Lichess cloud evaluation",
-                                Some("Sends positions to Lichess"),
-                            )),
-                    )
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(div().text_size(px(14.)).child("Engine lines"))
-                            .child(
-                                div().w(px(112.)).child(
-                                    Select::new(&lines_choice)
-                                        .small()
-                                        .disabled(!engine_on && !cloud_on)
-                                        .accessibility_label("Engine lines"),
-                                ),
-                            ),
-                    )
+                    .child(crate::widgets::setting_row(
+                        described("Infinite analysis", Some("Keep searching past depth 26")),
+                        Switch::new("infinite")
+                            .large()
+                            .checked(infinite)
+                            .disabled(!engine_on)
+                            .accessibility_label("Infinite analysis")
+                            .on_click(move |on, window, cx| {
+                                let on = *on;
+                                let set = {
+                                    let page = on_infinite.clone();
+                                    move |on: bool, cx: &mut App| {
+                                        crate::prefs::set(cx, INFINITE, on);
+                                        let _ = page.update(cx, |page, cx| page.engine_changed(cx));
+                                    }
+                                };
+                                set(on, cx);
+                                crate::setting_notice::offer(
+                                    crate::setting_notice::switched("Infinite analysis", on),
+                                    move |_, cx| set(!on, cx),
+                                    window,
+                                    cx,
+                                );
+                            }),
+                    ))
+                    .child(crate::widgets::setting_row(
+                        described("Show engine arrows", None),
+                        Switch::new("arrows")
+                            .large()
+                            .checked(arrows)
+                            .disabled(!engine_on)
+                            .accessibility_label("Show engine arrows")
+                            .on_click(move |on, window, cx| {
+                                let on = *on;
+                                let set = {
+                                    let page = on_arrows.clone();
+                                    move |on: bool, cx: &mut App| {
+                                        crate::prefs::set(cx, ARROWS, on);
+                                        page.update(cx, |page, cx| page.redraw(cx)).ok();
+                                    }
+                                };
+                                set(on, cx);
+                                crate::setting_notice::offer(
+                                    crate::setting_notice::switched("Engine arrows", on),
+                                    move |_, cx| set(!on, cx),
+                                    window,
+                                    cx,
+                                );
+                            }),
+                    ))
+                    .child(crate::widgets::setting_row(
+                        described(
+                            "Show threat",
+                            Some("The opponent's best move if it were their turn (X)"),
+                        ),
+                        Switch::new("threat")
+                            .large()
+                            .checked(threat)
+                            .disabled(!engine_on)
+                            .accessibility_label("Show threat")
+                            .on_click(move |_, _, cx| {
+                                let _ = on_threat.update(cx, |page, cx| page.toggle_threat(cx));
+                            }),
+                    ))
+                    .child(crate::widgets::setting_row(
+                        described(
+                            "Lichess cloud evaluation",
+                            Some("Sends positions to Lichess"),
+                        ),
+                        Switch::new("cloud")
+                            .large()
+                            .checked(cloud_on)
+                            .disabled(!allowed)
+                            .accessibility_label("Lichess cloud evaluation")
+                            .on_click(|on, _, cx| {
+                                let on = *on;
+                                crate::settings::change(cx, move |s| s.core.cloud_eval = on);
+                            }),
+                    ))
+                    .child(crate::widgets::setting_row(
+                        described("Engine lines", None),
+                        div().w(px(112.)).child(
+                            Select::new(&lines_choice)
+                                .small()
+                                .disabled(!engine_on && !cloud_on)
+                                .accessibility_label("Engine lines"),
+                        ),
+                    ))
             });
         let status = self.engine_status(cx);
         let head = h_flex()

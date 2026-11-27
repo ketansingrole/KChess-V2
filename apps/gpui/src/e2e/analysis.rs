@@ -635,11 +635,11 @@ fn the_engine_settings_stay_inside_their_popover(cx: &mut gpui_kit::TestAppConte
         edge.is_some()
     });
     let edge = edge.expect("found");
-    for title in [
-        "Infinite analysis",
-        "Show engine arrows",
-        "Show threat",
-        "Lichess cloud evaluation",
+    for (title, switch) in [
+        ("Infinite analysis", "infinite"),
+        ("Show engine arrows", "arrows"),
+        ("Show threat", "threat"),
+        ("Lichess cloud evaluation", "cloud"),
     ] {
         let right = app
             .find(gpui_kit::ElementId::NamedChild(
@@ -651,6 +651,18 @@ fn the_engine_settings_stay_inside_their_popover(cx: &mut gpui_kit::TestAppConte
         assert!(
             right <= edge + gpui_kit::px(0.5),
             "{title} ends at {right:?}, past the popover's {edge:?}"
+        );
+        // Regression: the switches led their rows, while the list of lines under them ended its
+        // own. Each switch now ends its row, after its title, as in Settings.
+        let switch = app.find(switch).bounds();
+        assert!(
+            switch.left() >= right,
+            "{title}'s switch {switch:?} follows its title"
+        );
+        assert!(
+            (switch.right() - edge).abs() <= gpui_kit::px(0.5),
+            "{title}'s switch ends at {:?}, where the lines' list ends ({edge:?})",
+            switch.right()
         );
     }
 }
