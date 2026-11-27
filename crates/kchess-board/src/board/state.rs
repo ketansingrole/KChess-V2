@@ -172,6 +172,17 @@ pub struct BoardState {
 }
 
 impl BoardState {
+    /// The standard starting position, White at the bottom and nothing to move: a board before
+    /// its page shows anything.
+    pub fn start() -> BoardState {
+        BoardState::of(
+            &VariantPosition::Chess(shakmaty::Chess::default()),
+            Color::White,
+            None,
+            None,
+        )
+    }
+
     /// A position as the board shows it; `movable` is the side the player may move.
     pub fn of(
         position: &VariantPosition,

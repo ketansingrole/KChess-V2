@@ -89,18 +89,7 @@ impl EndgameDrills {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> EndgameDrills {
-        let board = cx.new(|_| {
-            ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start(
-                    kchess_domain::variant::Variant::Standard,
-                    crate::game::STANDARD_FEN,
-                )
-                .unwrap_or_default(),
-                Color::White,
-                None,
-                None,
-            ))
-        });
+        let board = cx.new(|_| ChessBoard::new(BoardState::start()));
         let (move_box, typed) = crate::game::surface::MoveBox::new(Self::typed_move, window, cx);
         let settings = cx.global::<SettingsHandle>().0.clone();
         let voice = crate::voice::handle(cx);

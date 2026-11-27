@@ -483,16 +483,8 @@ impl GuessMoves {
     /// `text` said clearly, with voice on: as the recognizer's phrase reaches the page.
     #[cfg(any(test, feature = "test-support"))]
     pub fn hear_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.voice.control.enabled = true;
-        let heard = crate::voice::Heard {
-            text: text.into(),
-            raw: text.into(),
-            confidence: 1.,
-            words: Vec::new(),
-            unclear: false,
-        };
-        let owner = self.voice.control.owner;
-        self.voice_heard(&crate::voice::VoiceEvent::Heard { owner, heard }, cx);
+        let heard = self.voice.control.hear_clearly(text);
+        self.voice_heard(&heard, cx);
     }
 
     /// `uci` from the position at `ply` as `position::canonical_uci` writes it, so guesses, the

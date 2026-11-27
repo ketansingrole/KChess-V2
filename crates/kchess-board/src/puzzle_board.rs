@@ -14,7 +14,6 @@ use kchess_domain::variant::Setup;
 use shakmaty::Color;
 
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
-use crate::game::STANDARD_FEN;
 use crate::game::puzzle::{OnBoard, PuzzleStatus};
 use crate::theme::{Palette, radii, tint};
 use crate::voice::moves::{
@@ -119,18 +118,7 @@ impl PuzzleBoard {
     }
 
     pub fn new(material: bool, window: &mut Window, cx: &mut Context<Self>) -> PuzzleBoard {
-        let board = cx.new(|_| {
-            ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start(
-                    kchess_domain::variant::Variant::Standard,
-                    STANDARD_FEN,
-                )
-                .unwrap_or_default(),
-                Color::White,
-                None,
-                None,
-            ))
-        });
+        let board = cx.new(|_| ChessBoard::new(BoardState::start()));
         let (move_box, typed) = crate::game::surface::MoveBox::new(Self::typed_move, window, cx);
         let voice = crate::voice::handle(cx);
         let subscriptions = vec![
@@ -562,10 +550,8 @@ impl PuzzleBoard {
     /// `text` said clearly, with voice on: as the recognizer's phrase reaches the board.
     #[cfg(any(test, feature = "test-support"))]
     pub fn hear(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.voice.control.enabled = true;
-        let heard = crate::voice::Heard::clear(text);
-        let owner = self.voice.control.owner;
-        self.voice_heard(&crate::voice::VoiceEvent::Heard { owner, heard }, cx);
+        let heard = self.voice.control.hear_clearly(text);
+        self.voice_heard(&heard, cx);
     }
 
     /// What voice answered to the last phrase.

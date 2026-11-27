@@ -49,20 +49,8 @@ impl ComputerPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.voice.control.enabled = true;
-        let heard = crate::voice::Heard {
-            text: text.into(),
-            raw: text.into(),
-            confidence: 1.,
-            words: Vec::new(),
-            unclear: false,
-        };
-        let owner = self.voice.control.owner;
-        self.voice_heard(
-            &crate::voice::VoiceEvent::Heard { owner, heard },
-            window,
-            cx,
-        );
+        let heard = self.voice.control.hear_clearly(text);
+        self.voice_heard(&heard, window, cx);
     }
 
     pub(super) fn voice_heard(

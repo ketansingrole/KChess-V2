@@ -157,18 +157,7 @@ pub struct Coordinates {
 
 impl Coordinates {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Coordinates {
-        let board = cx.new(|_| {
-            ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start(
-                    kchess_domain::variant::Variant::Standard,
-                    STANDARD_FEN,
-                )
-                .unwrap_or_default(),
-                Color::White,
-                None,
-                None,
-            ))
-        });
+        let board = cx.new(|_| ChessBoard::new(BoardState::start()));
         let voice = crate::voice::handle(cx);
         let (square_box, typed) = SquareBox::new(Self::typed, window, cx);
         let subscriptions = vec![
@@ -368,16 +357,8 @@ impl Coordinates {
     /// A phrase heard in Name the square, as voice would hand it over.
     #[cfg(any(test, feature = "test-support"))]
     pub fn hear_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.voice.enabled = true;
-        let heard = crate::voice::Heard {
-            text: text.into(),
-            raw: text.into(),
-            confidence: 1.,
-            words: Vec::new(),
-            unclear: false,
-        };
-        let owner = self.voice.owner;
-        self.voice_heard(&VoiceEvent::Heard { owner, heard }, cx);
+        let heard = self.voice.hear_clearly(text);
+        self.voice_heard(&heard, cx);
     }
 
     /// The square asked for in Name the square.
