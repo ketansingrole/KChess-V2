@@ -23,6 +23,7 @@ KChess stays connected to Lichess when it is left open for a long time, so chall
 - Filters, search fields and buttons that share a row are the same height.
 - The board editor speaks up only when the position is not legal yet.
 - Over the board leaves whose turn it is to the board, and speaks up for a check or a paused clock.
+- Insights looks like the rest of KChess: its figures and breakdowns sit in cards, and its filters match the other pages.
 - A game or run with no clock shows ∞ where it said Untimed or No clock.
 
 ### Fixed

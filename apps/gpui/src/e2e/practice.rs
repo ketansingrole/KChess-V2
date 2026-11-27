@@ -625,6 +625,13 @@ fn an_insights_endgame_opens_the_positions_it_let_go(cx: &mut gpui_kit::TestAppC
     });
     let line = app.find(("insights-endgame-won", 0usize));
     assert_eq!(line.label(), Some("KR vs K: 1 let go"));
+    // Below the headline and the breakdown cards, the line starts under the window's edge:
+    // scrolled to, as a player would.
+    let middle = app.with_window(|window, _| {
+        let size = window.viewport_size();
+        gpui_kit::point(size.width * 0.6, size.height / 2.)
+    });
+    app.scroll_point(middle, gpui_kit::px(-400.));
     app.click(("insights-endgame-won", 0usize));
     app.find("drill-hint");
     let drill = app.with_window(|_, cx| {

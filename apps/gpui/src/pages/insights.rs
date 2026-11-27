@@ -184,7 +184,7 @@ fn time_use(time: Option<&TimeUseReport>, theirs: bool, palette: &Palette) -> Op
             )
     });
     Some(
-        v_flex()
+        widgets::card(palette)
             .id("insights-time-use")
             .test_support()
             .gap(px(8.))
@@ -577,7 +577,10 @@ impl InsightsPage {
 
 /// A headline figure: its name, value and a line under it.
 fn figure(label: &str, value: String, sub: Option<String>, palette: &Palette) -> Div {
+    // The figures share their card's width rather than bunching at its left.
     v_flex()
+        .flex_1()
+        .min_w(px(140.))
         .gap(px(2.))
         .child(
             div()
@@ -637,42 +640,38 @@ fn headline(report: &InsightsReport, palette: &Palette) -> Div {
             .map_or("–".into(), |average| format!("{average:.1}%"));
         (average, sub)
     });
-    h_flex()
-        .flex_wrap()
-        .items_start()
-        .gap(px(32.))
-        .child(figure(
-            "Games",
-            widgets::format_count(total),
-            Some(format!(
-                "{} won · {} drawn · {} lost",
-                widgets::format_count(win),
-                widgets::format_count(draw),
-                widgets::format_count(loss)
-            )),
-            palette,
-        ))
-        .child(figure("Score", format!("{score}%"), None, palette))
-        .child(figure(
-            "Streaks",
-            format!(
-                "{} / {}",
-                report.streaks.longest_win, report.streaks.longest_loss
+    // In a card as every page's content is: drawn bare on the page, the figures and the
+    // breakdowns under them looked like another app's.
+    widgets::card(palette).child(
+        h_flex()
+            .flex_wrap()
+            .items_start()
+            .gap(px(32.))
+            .child(figure(
+                "Games",
+                widgets::format_count(total),
+                Some(format!(
+                    "{} won · {} drawn · {} lost",
+                    widgets::format_count(win),
+                    widgets::format_count(draw),
+                    widgets::format_count(loss)
+                )),
+                palette,
+            ))
+            .child(figure("Score", format!("{score}%"), None, palette))
+            .child(figure(
+                "Streaks",
+                format!(
+                    "{} / {}",
+                    report.streaks.longest_win, report.streaks.longest_loss
+                ),
+                Some(now),
+                palette,
+            ))
+            .children(
+                accuracy.map(|(average, sub)| figure("Accuracy", average, Some(sub), palette)),
             ),
-            Some(now),
-            palette,
-        ))
-        .children(accuracy.map(|(average, sub)| figure("Accuracy", average, Some(sub), palette)))
-}
-
-/// A filter only as wide as its choice, so the four fit beside the figures.
-fn fit(select: &Choices, choices: &[(&str, &str)], cx: &App) -> Div {
-    let chosen = select.read(cx).selected_value().cloned();
-    let label = choices
-        .iter()
-        .find(|(value, _)| Some(*value) == chosen.as_deref())
-        .map_or(choices[0].1, |(_, label)| label);
-    div().w(px(label.chars().count() as f32 * 7. + 40.))
+    )
 }
 
 /// `.insight-sections { columns: 3 300px }`: sections kept whole and in order, split into as many
@@ -713,7 +712,7 @@ fn result_rows(rows: Rows, palette: &Palette) -> Vec<AnyElement> {
 
 /// One breakdown: its title and its rows.
 fn section(title: &'static str, rows: Vec<AnyElement>, palette: &Palette) -> Div {
-    v_flex()
+    widgets::card(palette)
         .w_full()
         .gap(px(8.))
         .child(div().mb(px(4.)).child(widgets::heading(title, palette)))
@@ -871,51 +870,37 @@ impl Render for InsightsPage {
         let palette = *cx.global::<Palette>();
         let offered = self.offered.len();
         self.sync_variants(window, cx);
-        let variant_label =
-            crate::game::variant_label(&Self::chosen(&self.variant, cx)).to_string();
         let filters = h_flex()
             .gap(px(8.))
             .flex_wrap()
             .when(offered > 1, |row| {
                 row.child(
-                    div().w(px(160.)).child(
-                        Select::new(&self.account_select)
-                            .small()
-                            .accessibility_label("Account"),
-                    ),
+                    div()
+                        .w(px(180.))
+                        .child(Select::new(&self.account_select).accessibility_label("Account")),
                 )
             })
             .child(
-                fit(&self.speed, &SPEEDS, cx).child(
-                    Select::new(&self.speed)
-                        .small()
-                        .accessibility_label("Speed"),
-                ),
+                div()
+                    .w(px(170.))
+                    .child(Select::new(&self.speed).accessibility_label("Speed")),
             )
             .child(
-                fit(&self.period, &PERIODS, cx).child(
-                    Select::new(&self.period)
-                        .small()
-                        .accessibility_label("Period"),
-                ),
+                div()
+                    .w(px(150.))
+                    .child(Select::new(&self.period).accessibility_label("Period")),
             )
             .child(
-                fit(&self.rated, &RATED, cx).child(
-                    Select::new(&self.rated)
-                        .small()
-                        .accessibility_label("Rated or casual"),
-                ),
+                div()
+                    .w(px(170.))
+                    .child(Select::new(&self.rated).accessibility_label("Rated or casual")),
             )
             // Only for an account with variant games.
             .when(self.variant_keys.len() > 1, |row| {
                 row.child(
                     div()
-                        .w(px(variant_label.chars().count() as f32 * 7. + 40.))
-                        .child(
-                            Select::new(&self.variant)
-                                .small()
-                                .accessibility_label("Variant"),
-                        ),
+                        .w(px(160.))
+                        .child(Select::new(&self.variant).accessibility_label("Variant")),
                 )
             });
         let report = self.report.clone();
@@ -1045,7 +1030,7 @@ impl Render for InsightsPage {
             .overflow_y_scroll()
             .child(
                 v_flex()
-                    .gap(px(24.))
+                    .gap(px(16.))
                     .px(side_padding(window))
                     .pt(PAGE_TOP)
                     .pb(PAGE_BOTTOM)
@@ -1138,16 +1123,16 @@ impl InsightsPage {
         // Each section's height for balancing: its title and a row per entry.
         let heights: Vec<f32> = parts
             .iter()
-            .map(|(_, rows)| 30. + rows.len() as f32 * 34. + 28.)
+            .map(|(_, rows)| 70. + rows.len() as f32 * 34. + 16.)
             .collect();
-        let columns = ((f32::from(width) + 40.) / 340.).floor().clamp(1., 3.) as usize;
+        let columns = ((f32::from(width) + 16.) / 316.).floor().clamp(1., 3.) as usize;
         let mut starts = balance(&heights, columns);
         starts.push(parts.len());
         let mut parts = parts.into_iter();
         let column_list: Vec<Div> = starts
             .windows(2)
             .map(|range| {
-                v_flex().flex_1().min_w_0().gap(px(28.)).children(
+                v_flex().flex_1().min_w_0().gap(px(16.)).children(
                     parts
                         .by_ref()
                         .take(range[1] - range[0])
@@ -1156,11 +1141,11 @@ impl InsightsPage {
             })
             .collect();
         v_flex()
-            .gap(px(28.))
-            .child(h_flex().items_start().gap(px(40.)).children(column_list))
+            .gap(px(16.))
+            .child(h_flex().items_start().gap(px(16.)).children(column_list))
             .children(time_use(report.time_use.as_ref(), theirs, palette))
             .child(
-                v_flex()
+                widgets::card(palette)
                     .gap(px(8.))
                     .child(widgets::heading("Openings", palette))
                     .children(best.map(|(top, bottom)| {
@@ -1257,7 +1242,7 @@ mod tests {
     #[test]
     fn sections_balance_into_columns_as_css_does() {
         let rows = [2., 6., 5., 4., 7., 6., 9.];
-        let heights: Vec<f32> = rows.iter().map(|rows| 30. + rows * 34. + 28.).collect();
+        let heights: Vec<f32> = rows.iter().map(|rows| 70. + rows * 34. + 16.).collect();
         assert_eq!(balance(&heights, 3), vec![0, 3, 5]);
         assert_eq!(balance(&heights, 1), vec![0]);
     }
