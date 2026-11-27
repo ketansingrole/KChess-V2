@@ -4,6 +4,23 @@
 use super::Harness;
 use super::fake_lichess::Handle;
 
+/// Whether the app listens to `lichess`'s account on its own event stream: the lobby says that
+/// stream is open, and Lichess is sending one with this login. Not how many streams opened: a
+/// sign-in also starts the core's quiet watcher for the account, which on a slow machine opens
+/// before the lobby takes the account over, so two open and the second is the app's.
+fn listening(cx: &gpui_kit::App, lichess: &Handle) -> bool {
+    let session = lichess.lock();
+    session.listening > 0
+        && crate::online::handle(cx)
+            .read(cx)
+            .lobby
+            .as_ref()
+            .is_some_and(|lobby| {
+                lobby.account.eq_ignore_ascii_case(&session.username)
+                    && lobby.phase == kchess_contracts::types::OnlinePhase::Connected
+            })
+}
+
 /// Signed in by an earlier launch with a game under way, on its page.
 pub(super) fn in_a_game(cx: &mut gpui_kit::TestAppContext) -> (Harness, Handle) {
     let (app, lichess) = Harness::signed_in(cx, true);
@@ -309,9 +326,7 @@ fn a_game_that_starts_comes_to_its_board_and_says_so(cx: &mut gpui_kit::TestAppC
             s.frontend.notify_background = true;
         })
     });
-    app.wait_for("the event stream to open", |_, _| {
-        lichess.lock().streams == 1
-    });
+    app.wait_for("the event stream to open", |_, cx| listening(cx, &lichess));
     gpui_kit::VisualTestContext::from_window(app.window, &app.cx).deactivate_window();
     lichess.start_game();
     app.wait_for("the Online page", |_, cx| {
@@ -343,32 +358,48 @@ fn a_game_under_way_comes_to_the_board_when_signing_in(cx: &mut gpui_kit::TestAp
 #[gpui_kit::test]
 fn signing_in_starts_listening_for_challenges(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, lichess) = Harness::signed_in(cx, false);
-    app.wait_for("the event stream to open", |_, _| {
-        lichess.lock().streams == 1
-    });
+    app.wait_for("the event stream to open", |_, cx| listening(cx, &lichess));
 }
 
-/// The app ends up reading the active account's stream and no other, and a connect does not open
-/// the previous account's again. It did: the resume a connect starts reopened the stream the core
-/// last kept, the old account's, before the app named the new one. That abandoned request reached
-/// Lichess ten seconds late on a PC whose network filter holds loopback connections, and the test,
-/// which compared when streams opened, took it for the stream the app kept.
+/// The app's own event stream follows the active account, and a connect does not open the
+/// previous account's again. It did: the resume a connect starts reopened the stream the core
+/// last kept, the old account's, before the app named the new one. The other accounts are still
+/// followed by the core's quiet watchers (one per connected account), so counting streams cannot
+/// tell that reopening from the old account's watcher: the lobby's own reports can.
 #[gpui_kit::test]
 fn switching_accounts_moves_the_event_stream(cx: &mut gpui_kit::TestAppContext) {
+    use crate::core::{AppCore, ClientEvent, CoreEvent};
+    use gpui_kit::AppContext as _;
+    struct Lobbies {
+        /// The account of each lobby report, in order.
+        accounts: Vec<String>,
+        _events: gpui_kit::Subscription,
+    }
+
     let (mut app, first) = Harness::signed_in(cx, false);
-    app.wait_for("the first account's stream", |_, _| {
-        first.lock().streams == 1
+    app.wait_for("the first account's stream", |_, cx| listening(cx, &first));
+    let lobbies = app.cx.update(|cx| {
+        let events = cx.global::<AppCore>().events.clone();
+        cx.new(|cx| Lobbies {
+            accounts: Vec::new(),
+            _events: cx.subscribe(
+                &events,
+                |lobbies: &mut Lobbies, _, event: &ClientEvent, _| {
+                    if let ClientEvent::Event(CoreEvent::OnlineLobby(lobby)) = event {
+                        lobbies.accounts.push(lobby.account.clone());
+                    }
+                },
+            ),
+        })
     });
     let second = app.connect("Second", false);
-    let listens_to =
-        |one: &Handle, other: &Handle| one.lock().listening > 0 && other.lock().listening == 0;
-    app.wait_for("the second account's stream", |_, _| {
-        listens_to(&second, &first)
+    app.wait_for("the second account's stream", |_, cx| {
+        listening(cx, &second)
     });
-    assert_eq!(
-        first.lock().streams,
-        1,
-        "the old account's stream opened again"
+    let reported = app.cx.update(|cx| lobbies.read(cx).accounts.clone());
+    assert!(
+        reported.iter().all(|account| account == "Second"),
+        "the old account's stream opened again: {reported:?}"
     );
 
     app.open("Play on Lichess");
@@ -376,25 +407,23 @@ fn switching_accounts_moves_the_event_stream(cx: &mut gpui_kit::TestAppContext) 
     app.settle();
     app.press("down");
     app.press("enter");
-    app.wait_for("the first account's stream again", |_, _| {
-        listens_to(&first, &second)
+    app.wait_for("the first account's stream again", |_, cx| {
+        listening(cx, &first)
     });
 }
 
 #[gpui_kit::test]
 fn a_refreshed_login_brings_back_the_event_stream(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, expired) = Harness::signed_in(cx, false);
-    app.wait_for("the event stream to open", |_, _| {
-        expired.lock().streams == 1
-    });
+    app.wait_for("the event stream to open", |_, cx| listening(cx, &expired));
     expired.lock().revoked = true;
     app.wait_for("the app to stop syncing", |_, cx| {
         !crate::accounts::handle(cx).read(cx).working()
     });
 
     let refreshed = app.connect("Tester", false);
-    app.wait_for("the event stream with the new login", |_, _| {
-        refreshed.lock().streams == 1
+    app.wait_for("the event stream with the new login", |_, cx| {
+        listening(cx, &refreshed)
     });
 }
 
