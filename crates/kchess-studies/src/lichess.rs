@@ -553,7 +553,7 @@ impl StudiesPage {
                 widgets::StudyCard {
                     id: format!("lichess-{id}"),
                     name: item.name.clone(),
-                    board,
+                    picture: board.map(widgets::CardPicture::Board),
                     location,
                     description: None,
                     edited: (item.updated_at > 0)

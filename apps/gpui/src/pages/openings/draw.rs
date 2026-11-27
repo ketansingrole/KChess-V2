@@ -16,7 +16,7 @@ impl OpeningsPage {
         widgets::StudyCard {
             id: item.name.clone(),
             name: item.name.clone(),
-            board: Some(board.into()),
+            picture: Some(widgets::CardPicture::Board(board.into())),
             location: item.eco.clone(),
             description: Some(item.san.clone()),
             edited: None,

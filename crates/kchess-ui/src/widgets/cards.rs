@@ -30,13 +30,21 @@ impl Choice {
     }
 }
 
-/// What a study card shows: a study or an opening as a card in a grid.
+/// A card's picture.
+pub enum CardPicture {
+    /// A position as a small board: a still picture, kept from frame to frame until it changes.
+    Board(AnyView),
+    /// A picture of its own shape, a book's cover say, fitted in whole.
+    Image(std::sync::Arc<RenderImage>),
+}
+
+/// What a study card shows: a study, an opening or a book as a card in a grid.
 #[derive(IntoElement)]
 pub struct StudyCard {
     pub id: String,
     pub name: String,
-    /// The position as a small board; a book stands in when there is none.
-    pub board: Option<AnyView>,
+    /// Its picture; a book stands in when there is none.
+    pub picture: Option<CardPicture>,
     /// The first detail line (where it is kept, or an opening's code).
     pub location: String,
     /// The second line (its players and event, or an opening's moves).
@@ -119,8 +127,8 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
                 .bg(palette.bg)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| open(window, cx))
-                .child(match card.board {
-                    Some(board) => {
+                .child(match card.picture {
+                    Some(CardPicture::Board(board)) => {
                         // A still picture: kept from frame to frame until it changes.
                         let mut style = StyleRefinement::default();
                         style.size.width = Some(relative(1.).into());
@@ -130,6 +138,10 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
                             .child(board.cached(style))
                             .into_any_element()
                     }
+                    Some(CardPicture::Image(image)) => img(image)
+                        .size_full()
+                        .object_fit(ObjectFit::Contain)
+                        .into_any_element(),
                     None => icon("book-open")
                         .size(px(48.))
                         .text_color(palette.text_muted)
