@@ -558,7 +558,7 @@ pub fn import_card(cx: &App, primary: bool, palette: &Palette) -> impl IntoEleme
                     .when(!primary, |button| button.outline())
                     .small()
                     .icon(icon("import"))
-                    .label("Import PGN…")
+                    .label("Import PGN")
                     .on_click(|_, window, cx| choose_and_import(window, cx)),
             )
             .into_any_element()
