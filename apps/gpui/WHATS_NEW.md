@@ -9,7 +9,11 @@ with nothing there.
 
 ## Unreleased
 
-KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving.
+The board editor sets up well-known openings and endgames in one click, and KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving.
+
+### Added
+
+- Set the board in the board editor sets up the starting position, an empty board, a popular opening or a classic endgame such as the Lucena or Philidor position.
 
 ### Fixed
 
