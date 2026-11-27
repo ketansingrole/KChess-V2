@@ -141,7 +141,7 @@ fn build_command(cargo: &Path, profile: &Path, package: &str, name: &str) -> Com
     // (ring's) would rebuild for it, and the next outer build rebuild them back (2026-11-10:
     // about 7 s for every test that built).
     for (key, _) in std::env::vars_os() {
-        if key.to_str().is_some_and(is_cargo_test_var) {
+        if key.to_str().is_some_and(is_package_variable) {
             build.env_remove(key);
         }
     }
@@ -156,9 +156,10 @@ fn build_command(cargo: &Path, profile: &Path, package: &str, name: &str) -> Com
     build
 }
 
-/// A variable Cargo sets for the package it builds or tests (`CARGO_MANIFEST_DIR`, `OUT_DIR`,
-/// `CARGO_PKG_*`…), not for every build.
-fn is_cargo_test_var(key: &str) -> bool {
+/// A variable Cargo sets for the package it builds, runs or tests (`CARGO_MANIFEST_DIR`,
+/// `OUT_DIR`, `CARGO_PKG_*`…), not for every build: a build started from inside one leaves them
+/// out, or build scripts that watch one (ring's) rebuild for it and back.
+pub fn is_package_variable(key: &str) -> bool {
     key.starts_with("CARGO_PKG_")
         || key.starts_with("CARGO_BIN_EXE_")
         || matches!(
@@ -400,7 +401,7 @@ mod tests {
             "{removed:?}"
         );
         for key in removed {
-            assert!(is_cargo_test_var(key.to_str().unwrap()), "{key:?}");
+            assert!(is_package_variable(key.to_str().unwrap()), "{key:?}");
         }
     }
 
@@ -408,6 +409,7 @@ mod tests {
     fn cargos_package_variables_are_told_apart() {
         for key in [
             "CARGO_PKG_NAME",
+            "CARGO_PKG_VERSION_MAJOR",
             "CARGO_BIN_EXE_tool",
             "CARGO_MANIFEST_DIR",
             "CARGO_MANIFEST_PATH",
@@ -417,16 +419,18 @@ mod tests {
             "CARGO_BIN_NAME",
             "OUT_DIR",
         ] {
-            assert!(is_cargo_test_var(key), "{key}");
+            assert!(is_package_variable(key), "{key}");
         }
         for key in [
             "CARGO",
             "CARGO_HOME",
             "CARGO_TARGET_DIR",
+            "CARGO_INCREMENTAL",
+            "CARGO_BUILD_JOBS",
             "PATH",
             "RUSTFLAGS",
         ] {
-            assert!(!is_cargo_test_var(key), "{key}");
+            assert!(!is_package_variable(key), "{key}");
         }
     }
 }

@@ -9,7 +9,6 @@
 
 use std::fs::{self, File};
 use std::io::Write as _;
-use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, Once};
 use std::time::SystemTime;
@@ -36,22 +35,10 @@ pub fn report_panics() {
     });
 }
 
-/// `thread 'name' panicked at file:line: message`, as Rust's own hook words it, then the backtrace.
-fn describe(info: &PanicHookInfo<'_>) -> String {
-    let payload = info.payload();
-    let message = payload
-        .downcast_ref::<&str>()
-        .copied()
-        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-        .unwrap_or("Box<dyn Any>");
-    let thread = std::thread::current();
-    let name = thread.name().unwrap_or("<unnamed>");
-    let at = info
-        .location()
-        .map(|at| format!(" at {}:{}", at.file(), at.line()))
-        .unwrap_or_default();
+/// The panic as Rust's own hook words it, then the backtrace.
+fn describe(info: &std::panic::PanicHookInfo<'_>) -> String {
     let backtrace = std::backtrace::Backtrace::force_capture();
-    format!("thread '{name}' panicked{at}: {message}\n{backtrace}")
+    format!("{}\n{backtrace}", kchess_host::panic_message(info))
 }
 
 /// Report the runs before this one that ended without quitting, then mark this one as running.
