@@ -183,6 +183,16 @@ fn tests(app: bool) -> Result {
 /// of its components so that only the jobs that measure download it.
 const COVERAGE_TOOLS: [&str; 3] = ["component", "add", "llvm-tools-preview"];
 
+/// What `coverage` runs, in order. cargo-llvm-cov asks before installing the pinned toolchain's
+/// llvm-tools, which a command run here cannot answer (`util::run`): they are installed first, a
+/// no-op when they are there.
+fn coverage_commands(nextest: bool, report: &str) -> [(&'static str, Vec<&str>); 2] {
+    [
+        ("rustup", COVERAGE_TOOLS.to_vec()),
+        ("cargo", coverage_args(nextest, report)),
+    ]
+}
+
 /// `cargo llvm-cov`'s arguments: through nextest when it is installed.
 fn coverage_args(nextest: bool, report: &str) -> Vec<&str> {
     let mut args = vec!["llvm-cov"];
@@ -214,10 +224,9 @@ fn coverage() -> Result {
     std::fs::create_dir_all(report.parent().unwrap_or(&root()))
         .map_err(|cause| cause.to_string())?;
     let path = report.to_string_lossy().to_string();
-    // cargo-llvm-cov asks before installing the pinned toolchain's llvm-tools, which a command
-    // run here cannot answer (`util::run`): installed first, a no-op when it is there.
-    run("rustup", &COVERAGE_TOOLS)?;
-    run("cargo", &coverage_args(nextest(), &path))?;
+    for (program, args) in coverage_commands(nextest(), &path) {
+        run(program, &args)?;
+    }
     let text = std::fs::read_to_string(&report).map_err(|cause| cause.to_string())?;
     let summary: serde_json::Value =
         serde_json::from_str(&text).map_err(|cause| cause.to_string())?;
@@ -1394,12 +1403,12 @@ checksum = "aa"
 
     #[test]
     fn coverage_installs_its_tools_before_it_measures() {
-        assert_eq!(COVERAGE_TOOLS, ["component", "add", "llvm-tools-preview"]);
-        let source = std::fs::read_to_string(root().join("tooling/xtask/src/check.rs")).unwrap();
-        let body = &source[source.find("fn coverage() -> Result").unwrap()..];
-        let tools = body.find("run(\"rustup\", &COVERAGE_TOOLS)?").unwrap();
-        let measured = body.find("coverage_args(nextest(), &path)").unwrap();
-        assert!(tools < measured, "the tools are installed before the run");
+        let [(installs, tools), (measures, args)] = coverage_commands(true, "summary.json");
+        assert_eq!(
+            (installs, tools),
+            ("rustup", vec!["component", "add", "llvm-tools-preview"])
+        );
+        assert_eq!((measures, args[0]), ("cargo", "llvm-cov"));
     }
 
     #[test]
