@@ -244,7 +244,7 @@ fn a_player_lookup_checks_the_name_and_survives_a_failed_request(
     let mut app = open(cx, "Players", true);
     app.click_label("Lichess username");
     app.type_text("!");
-    app.click("players-lookup");
+    app.press("enter");
     wait_for_label(
         &mut app,
         "players-error",
@@ -255,8 +255,8 @@ fn a_player_lookup_checks_the_name_and_survives_a_failed_request(
     app.click_label("Lichess username");
     app.press("secondary-a");
     app.type_text("carol");
-    app.click("players-lookup");
-    // Lookup spins while the request is out (a refused connection takes a while on Windows),
+    app.press("enter");
+    // The field spins while the request is out (a refused connection takes a while on Windows),
     // so wait for the failure itself.
     use gpui_kit::test::TestWindowExt as _;
     app.wait_for("the failed lookup's message", |window, _| {
@@ -265,7 +265,14 @@ fn a_player_lookup_checks_the_name_and_survives_a_failed_request(
             .and_then(|error| error.label().map(str::to_string))
             .is_some_and(|error| !error.is_empty() && !error.starts_with("Lichess usernames"))
     });
-    assert!(app.enabled("players-lookup"));
+    // The name stays to try again.
+    app.with_window(|window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        let field = window
+            .try_find_by_label("Lichess username")
+            .expect("the field");
+        assert_eq!(field.value(), Some("carol"));
+    });
 }
 
 #[gpui_kit::test]
@@ -273,8 +280,6 @@ fn the_player_search_drops_a_stale_message_and_forgets_recent_names(
     cx: &mut gpui_kit::TestAppContext,
 ) {
     let mut app = open(cx, "Players", true);
-    // Nothing typed: nothing to look up.
-    assert!(!app.enabled("players-lookup"));
     app.cx.update(|cx| {
         crate::prefs::set(cx, "kchess:players-recent", ["alice", "bob"]);
     });
@@ -292,7 +297,10 @@ fn the_player_search_drops_a_stale_message_and_forgets_recent_names(
         use gpui_kit::test::TestWindowExt as _;
         window.try_find("players-error").is_none()
     });
-    assert!(app.shows(("players-suggestion", 1usize)));
+    // Emptied, the field lists the players looked up lately under it, to clear.
+    app.press("secondary-a");
+    app.press("backspace");
+    app.find(("players-suggestion", 1usize));
     app.click("players-recent-clear");
     app.wait_for("the recent names to go", |window, _| {
         use gpui_kit::test::TestWindowExt as _;
@@ -307,20 +315,37 @@ fn the_player_search_drops_a_stale_message_and_forgets_recent_names(
 #[gpui_kit::test]
 fn players_cannot_be_looked_up_offline(cx: &mut gpui_kit::TestAppContext) {
     let mut app = open(cx, "Players", false);
-    assert!(!app.enabled("players-lookup"));
+    // The field takes no name to look up.
+    app.click_label("Lichess username");
+    app.type_text("carol");
+    app.press("enter");
+    app.with_window(|window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        let field = window
+            .try_find_by_label("Lichess username")
+            .expect("the field");
+        assert_eq!(field.value().unwrap_or_default(), "");
+    });
+    assert!(!app.shows("players-error"));
 }
 
 #[gpui_kit::test]
 fn a_player_is_followed_without_an_account_and_stays_followed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = open(cx, "Following", true);
-    assert!(!app.enabled("friends-follow"));
     assert!(!app.shows("friends-sync"));
+    // The name typed is offered under the field, as on Players, and Enter follows them.
     app.click_label("Lichess username to follow");
     app.type_text("carol");
-    assert!(app.enabled("friends-follow"));
-    app.click("friends-follow");
+    app.find("friends-match-typed");
+    app.press("enter");
     app.find("friends-sync");
-    assert!(!app.enabled("friends-follow"), "the name was taken");
+    app.with_window(|window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        let field = window
+            .try_find_by_label("Lichess username to follow")
+            .expect("the field");
+        assert_eq!(field.value().unwrap_or_default(), "", "the name was taken");
+    });
 
     let mut app = app.restart();
     app.open("Following");
@@ -483,20 +508,30 @@ fn following_keeps_its_order_as_players_come_online(cx: &mut gpui_kit::TestAppCo
     };
     let before = names(&mut app);
     let second = before[1].trim_start_matches('@').to_string();
-    let online = UserPresence {
-        online: true,
+    let presence = |online: bool| UserPresence {
+        online,
         playing: false,
         signal: None,
         playing_id: None,
     };
-    app.with_window(|_, cx| {
-        crate::shell::view::<FriendsPage>(cx)
-            .expect("the page")
-            .update(cx, |page, cx| {
-                page.presence_arrived([(second.clone(), online.clone())], cx);
-                cx.notify();
-            })
-    });
+    let arrive = |app: &mut Harness, users: Vec<(String, UserPresence)>| {
+        app.with_window(|_, cx| {
+            crate::shell::view::<FriendsPage>(cx)
+                .expect("the page")
+                .update(cx, |page, cx| {
+                    page.presence_arrived(users, cx);
+                    cx.notify();
+                })
+        })
+    };
+    // Presence as the page opened: the list is sorted by the first report, so the page's own,
+    // late on a slow runner, could not be the one that comes online (Windows Stress, 2026-11-27).
+    let offline = before
+        .iter()
+        .map(|name| (name.trim_start_matches('@').to_string(), presence(false)))
+        .collect();
+    arrive(&mut app, offline);
+    arrive(&mut app, vec![(second.clone(), presence(true))]);
     assert_eq!(names(&mut app), before, "kept while the page is open");
     app.open("Home");
     app.open("Following");
@@ -556,7 +591,6 @@ fn a_player_is_messaged_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     let (mut app, _lichess) = Harness::signed_in(cx, false);
     app.open("Players");
-    app.find("players-lookup");
     app.cx.update(|cx| {
         let page =
             crate::shell::view::<crate::pages::players::PlayersPage>(cx).expect("the Players page");
@@ -589,6 +623,47 @@ fn a_player_is_messaged_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     super::palette::wait_for_first(&mut app, "Message");
     app.press("enter");
     app.find("message-send");
+}
+
+/// The search offers the name typed under the field, as Quick Pick does, and Enter looks it up;
+/// an open player has a way back to the leaderboard, which before had none.
+#[gpui_kit::test]
+fn a_player_is_found_and_left_for_the_leaderboard(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestQueryExt as _;
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Players");
+    app.click_label("Lichess username");
+    app.type_text("Rival");
+    assert_eq!(
+        app.find("players-match-typed").label(),
+        Some("Look up Rival")
+    );
+    app.cx.update(|cx| {
+        let page =
+            crate::shell::view::<crate::pages::players::PlayersPage>(cx).expect("the Players page");
+        page.update(cx, |page, cx| {
+            page.show_profile(
+                kchess_contracts::types::LichessUser {
+                    username: "Rival".into(),
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+    });
+    app.click("players-back");
+    app.wait_gone("players-back");
+    app.with_window(|window, _| {
+        let field = window
+            .try_find_by_label("Lichess username")
+            .expect("the field");
+        assert_eq!(field.value().unwrap_or_default(), "");
+    });
+    let open = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::players::PlayersPage>(cx)
+            .is_some_and(|page| page.read(cx).username().is_some())
+    });
+    assert!(!open, "no player is open");
 }
 
 /// With players followed and none of them playing, Watch's Following tab says so.
@@ -626,18 +701,15 @@ fn a_failed_leaderboard_can_be_tried_again(cx: &mut gpui_kit::TestAppContext) {
     app.find(("players-board-row", 0usize));
 }
 
-/// Follow `name` from the Following page. Follow waits while the accounts are busy, as they are
-/// with signing in's first sync, so the click waits for it too.
+/// Follow `name` from the Following page. Following waits while the accounts are busy, as they
+/// are with signing in's first sync, so Enter waits for it too.
 fn follow(app: &mut Harness, name: &str) {
+    app.wait_for_app("the accounts to settle", |cx| {
+        !crate::accounts::handle(cx).read(cx).busy
+    });
     app.click_label("Lichess username to follow");
     app.type_text(name);
-    app.wait_for("Follow", |window, _| {
-        use gpui_kit::test::TestWindowExt as _;
-        window
-            .try_find(gpui_kit::ElementId::from("friends-follow"))
-            .is_some_and(|follow| follow.disabled() != Some(true))
-    });
-    app.click("friends-follow");
+    app.press("enter");
 }
 
 /// A restarted core counts its online sessions from the start again: its reports are followed,

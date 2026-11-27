@@ -26,7 +26,7 @@ use crate::game::played::GameOrigin;
 use crate::game::view;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
-use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
+use crate::widgets::{self, KeyboardFocus as _, Side};
 use kchess_board::analysis::Opening;
 use kchess_nav::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, panel_style};
 use kchess_ui::icon;
@@ -158,6 +158,24 @@ fn past_result(entry: &TvPastGame) -> &'static str {
         (None, Some("aborted" | "noStart")) => "Aborted",
         (None, Some(_)) => "½–½",
     }
+}
+
+/// A player's row of the crosstable beside a TV game.
+#[derive(Debug, PartialEq)]
+struct CrossRow {
+    title: Option<String>,
+    name: String,
+    /// Points in the match being played now, when there is one.
+    current: Option<f64>,
+    all_time: f64,
+}
+
+/// The crosstable's two rows, top player first, and how many games each column counts.
+#[derive(Debug, PartialEq)]
+struct CrossRows {
+    rows: [CrossRow; 2],
+    games: i64,
+    current_games: Option<i64>,
 }
 
 pub struct Live {
@@ -402,29 +420,30 @@ impl Live {
         Some((format_clock(millis), running))
     }
 
-    /// "All time 3–2 · 5 games" and the current match.
-    fn score_lines(&self) -> Vec<(&'static str, String, f64)> {
+    /// The pairing's crosstable: a row for each player in the board's order (its top player
+    /// first), with their points in the current match, if there is one, and of all time.
+    fn crosstable(&self) -> Option<CrossRows> {
         let (Some((_, table)), Some(frame)) = (&self.head_to_head, &self.frame) else {
-            return Vec::new();
+            return None;
         };
-        let white = frame.white.name.to_lowercase();
-        let black = frame.black.name.to_lowercase();
-        let score = |users: &BTreeMap<String, f64>| {
-            format!(
-                "{}–{}",
-                points(users.get(&white).copied().unwrap_or_default()),
-                points(users.get(&black).copied().unwrap_or_default())
-            )
+        let bottom = self.orientation();
+        let matchup = table.matchup.as_ref().filter(|today| today.nb_games > 0);
+        let row = |side: Color| {
+            let player = player_of(&frame.white, &frame.black, side);
+            let key = player.name.to_lowercase();
+            let of = |users: &BTreeMap<String, f64>| users.get(&key).copied().unwrap_or_default();
+            CrossRow {
+                title: player.title.clone(),
+                name: player.name.clone(),
+                current: matchup.map(|matchup| of(&matchup.users)),
+                all_time: of(&table.users),
+            }
         };
-        let mut lines = vec![("All time", score(&table.users), table.nb_games as f64)];
-        if let Some(matchup) = table.matchup.as_ref().filter(|today| today.nb_games > 0) {
-            lines.push((
-                "Current match",
-                score(&matchup.users),
-                matchup.nb_games as f64,
-            ));
-        }
-        lines
+        Some(CrossRows {
+            rows: [row(!bottom), row(bottom)],
+            games: table.nb_games,
+            current_games: matchup.map(|matchup| matchup.nb_games),
+        })
     }
 
     /// A channel's earlier games (`Previously on this channel`), each opened on the analysis
@@ -582,55 +601,138 @@ impl WatchPage {
         } else {
             None
         };
+        // What is on, as a line of the panel rather than a box: the speed's icon, the game,
+        // and Live (or Back to live) at the end.
         let banner = h_flex()
             .gap(px(8.))
+            .min_h(px(28.))
             .child(
-                div().flex_1().min_w_0().child(
-                    widgets::StatusBanner::new(Tone::Plain, banner_icon, title.into())
-                        .when_some(detail.map(Into::into), |banner, value| banner.detail(value)),
-                ),
+                banner_icon
+                    .size(px(16.))
+                    .flex_none()
+                    .text_color(palette.text_muted),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .id("watch-title")
+                            .test_support()
+                            .truncate()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(palette.highlighted)
+                            .child(title),
+                    )
+                    .children(detail.map(|detail| {
+                        div()
+                            .truncate()
+                            .text_size(px(12.))
+                            .text_color(palette.text_muted)
+                            .child(detail)
+                    })),
             )
             .children(action);
-        let scores = self.live.score_lines();
-        let head_to_head = (!scores.is_empty()).then(|| {
-            let white = frame.white.name.clone();
-            let black = frame.black.name.clone();
-            h_flex()
-                .flex_wrap()
-                .gap(px(16.))
-                .px(px(12.))
-                .py(px(8.))
+        // Who leads, in green, and who trails, in red, column by column, as Lichess's
+        // crosstable shows them; the current match's column stands out.
+        let head_to_head = self.live.crosstable().map(|table| {
+            let lead = |mine: f64, theirs: f64| {
+                if mine > theirs {
+                    palette.win
+                } else if mine < theirs {
+                    palette.loss
+                } else {
+                    palette.text
+                }
+            };
+            let games = |count: i64| widgets::format_counted(count as f64, "game", "games");
+            let current_tip: Option<SharedString> = table
+                .current_games
+                .map(|count| format!("This match · {}", games(count)).into());
+            let all_tip: SharedString = format!("All time · {}", games(table.games)).into();
+            let [top, bottom] = &table.rows;
+            let rows = [(top, bottom), (bottom, top)].into_iter().enumerate().map(
+                |(index, (row, other))| {
+                    h_flex()
+                        .id(("watch-h2h-row", index))
+                        .test_support()
+                        .aria_label(format!(
+                            "{}{}: {}all time {}",
+                            row.title
+                                .as_deref()
+                                .map(|title| format!("{title} "))
+                                .unwrap_or_default(),
+                            row.name,
+                            row.current
+                                .map(|current| format!("this match {}, ", points(current)))
+                                .unwrap_or_default(),
+                            points(row.all_time),
+                        ))
+                        .h(px(28.))
+                        .gap(px(6.))
+                        .child(
+                            h_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .gap(px(4.))
+                                .px(px(10.))
+                                .children(row.title.clone().map(|title| {
+                                    div()
+                                        .flex_none()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(palette.warning)
+                                        .child(title)
+                                }))
+                                .child(div().min_w_0().truncate().child(row.name.clone())),
+                        )
+                        .children(row.current.zip(other.current).map(|(mine, theirs)| {
+                            div()
+                                .id(("watch-h2h-current", index))
+                                .w(px(40.))
+                                .h_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(crate::theme::tint(palette.info, 18.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(lead(mine, theirs))
+                                .when_some(current_tip.clone(), |cell, tip| {
+                                    cell.tooltip(move |window, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new(tip.clone())
+                                            .build(window, cx)
+                                    })
+                                })
+                                .child(points(mine))
+                        }))
+                        .child({
+                            let tip = all_tip.clone();
+                            div()
+                                .id(("watch-h2h-all", index))
+                                .w(px(48.))
+                                .pr(px(10.))
+                                .text_right()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(lead(row.all_time, other.all_time))
+                                .tooltip(move |window, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(tip.clone())
+                                        .build(window, cx)
+                                })
+                                .child(points(row.all_time))
+                        })
+                },
+            );
+            v_flex()
+                .id("watch-h2h")
+                .test_support()
                 .rounded(radii::BOX)
+                .overflow_hidden()
                 .border_1()
                 .border_color(palette.border)
-                .bg(palette.elevated)
+                .bg(palette.bg)
                 .text_size(px(13.))
-                .child(
-                    h_flex()
-                        .gap(px(4.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(kchess_board::player_search::player_link(
-                            "watch-h2h-white",
-                            white,
-                            palette.primary,
-                        ))
-                        .child("–")
-                        .child(kchess_board::player_search::player_link(
-                            "watch-h2h-black",
-                            black,
-                            palette.primary,
-                        )),
-                )
-                .children(scores.into_iter().map(|(label, score, games)| {
-                    h_flex()
-                        .gap(px(8.))
-                        .child(div().text_color(palette.text_muted).child(label))
-                        .child(div().font_weight(FontWeight::MEDIUM).child(score))
-                        .child(div().text_color(palette.text_muted).child(format!(
-                            "{games} game{}",
-                            if games == 1. { "" } else { "s" }
-                        )))
-                }))
+                .font_features(widgets::tabular())
+                .children(rows.collect::<Vec<_>>())
         });
         let setup = self.live.setup();
         let moves = self.live.moves();
@@ -1107,6 +1209,47 @@ mod tests {
             (none, live.past_games(cx, &palette).is_some())
         });
         assert_eq!(shown, (true, true));
+    }
+
+    /// The crosstable lists the players in the board's order, its top player first, and turns
+    /// with the board, so each row sits beside its player.
+    #[gpui_kit::test]
+    fn the_crosstable_lists_the_top_player_first(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = kchess_board::testing::Started::new(cx);
+        let tables = app.with_window(|_, cx| {
+            let mut live = super::Live::new(cx);
+            live.frame = Some(frame(json!({ "black": { "name": "B", "title": "GM" } })));
+            live.head_to_head = Some((
+                "a|b".into(),
+                serde_json::from_value(json!({
+                    "users": { "a": 3.5, "b": 1.5 }, "nbGames": 5,
+                    "matchup": { "users": { "a": 1.0, "b": 0.0 }, "nbGames": 1 },
+                }))
+                .expect("a crosstable"),
+            ));
+            let rows = |live: &super::Live| {
+                live.crosstable()
+                    .expect("a crosstable")
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        (
+                            row.title.clone(),
+                            row.name.clone(),
+                            row.current,
+                            row.all_time,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
+            // White at the foot of the board: Black is on top.
+            let white_below = rows(&live);
+            live.flipped = true;
+            (white_below, rows(&live))
+        });
+        let a = (None, "A".to_string(), Some(1.), 3.5);
+        let b = (Some("GM".to_string()), "B".to_string(), Some(0.), 1.5);
+        assert_eq!(tables, (vec![b.clone(), a.clone()], vec![a, b]));
     }
 
     fn past(fields: serde_json::Value) -> TvPastGame {

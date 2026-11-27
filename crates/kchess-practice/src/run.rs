@@ -24,7 +24,7 @@ pub const LENGTHS: [(u32, &str); 5] = [
     (60, "1 min"),
     (120, "2 min"),
     (300, "5 min"),
-    (0, "Untimed"),
+    (0, "∞"),
 ];
 
 /// The clock of one run: a countdown from its length, or a stopwatch when untimed.
@@ -203,7 +203,7 @@ impl Tally {
     }
 }
 
-/// The label of a length (`30s`, `1 min`, `Untimed`).
+/// The label of a length (`30s`, `1 min`, `∞` for untimed).
 pub fn length_label(seconds: u32) -> String {
     LENGTHS
         .iter()
@@ -504,7 +504,7 @@ mod tests {
         assert_eq!(record_variant("find", 30, 30), "find");
         assert_eq!(record_variant("find", 120, 30), "find-120s");
         assert_eq!(length_label(60), "1 min");
-        assert_eq!(length_label(0), "Untimed");
+        assert_eq!(length_label(0), "∞");
     }
 
     #[test]

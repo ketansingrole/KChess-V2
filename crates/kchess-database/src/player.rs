@@ -148,11 +148,25 @@ impl PlayerDialog {
                 this.error = None;
                 cx.notify();
             }),
-            cx.subscribe(&dialog.username, |this, _, event: &InputEvent, cx| {
-                if let InputEvent::Change = event {
-                    this.search_names(cx);
-                }
-            }),
+            cx.subscribe_in(
+                &dialog.username,
+                window,
+                |this, input, event: &InputEvent, window, cx| {
+                    let focused = input.read(cx).focus_handle(cx).is_focused(window);
+                    this.names.follow(event, focused);
+                    match event {
+                        InputEvent::Change => this.search_names(cx),
+                        // The row chosen in the list under the field takes its place.
+                        InputEvent::PressEnter { .. } => {
+                            if let Some(name) = this.names.entered("") {
+                                this.pick(name, window, cx);
+                            }
+                        }
+                        _ => {}
+                    }
+                    cx.notify();
+                },
+            ),
         ];
         dialog
             .username
@@ -172,8 +186,9 @@ impl PlayerDialog {
     /// Lichess players whose names start with what is typed, once typing settles; Chess.com has
     /// no search to ask.
     fn search_names(&mut self, cx: &mut Context<Self>) {
+        // Chess.com's matches go, and the list stays open for Lichess's when it comes back.
         if self.site != GameSite::Lichess {
-            self.names.clear();
+            self.names.forget();
             return;
         }
         let typed = self.username.read(cx).value().to_string();
@@ -362,32 +377,29 @@ impl Render for PlayerDialog {
             )
         };
         // The name in the field is not offered again.
-        let typed = self.username.read(cx).value().trim().to_string();
-        let dialog = cx.entity().downgrade();
-        let suggestions = player_search::name_rows(
-            "player-match",
-            &self.names,
-            self.known_names(cx),
-            Some(typed.as_str()),
-            &palette,
-            |name| {
-                let dialog = dialog.clone();
-                Box::new(move |_, window, cx| {
-                    dialog
-                        .update(cx, |this, cx| this.pick(name.clone(), window, cx))
-                        .ok();
-                })
+        let typed = self.username.read(cx).value().to_string();
+        let field = Input::new(&self.username)
+            .aria_label("Username")
+            .into_any_element();
+        let search = player_search::name_search(
+            player_search::NameSearch {
+                id: "player-match",
+                field,
+                typed: &typed,
+                typed_hint: None,
+                known: self.known_names(cx),
+                shown: Some(typed.as_str()),
             },
+            &self.names,
+            |dialog: &mut Self| &mut dialog.names,
+            |dialog, name, window, cx| dialog.pick(name, window, cx),
+            &palette,
+            cx,
         );
         v_flex()
             .gap(px(12.))
             .child(sites)
-            .child(
-                v_flex()
-                    .gap(px(8.))
-                    .child(Input::new(&self.username).aria_label("Username"))
-                    .children(suggestions),
-            )
+            .child(search)
             .child(
                 div().w(px(200.)).child(
                     Select::new(&self.period_select)

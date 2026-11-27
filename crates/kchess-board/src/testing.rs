@@ -107,6 +107,7 @@ impl Started {
             kchess_app::settings::init_for_tests(cx);
             kchess_app::accounts::init(cx);
             crate::live_game::init(cx);
+            crate::game_db::init(cx);
             let colors = kchess_ui::theme::colors("kchess", &[], false);
             cx.set_global(kchess_ui::theme::Palette::of(&colors, false));
             crate::voice::init(cx);

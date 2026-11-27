@@ -9,19 +9,38 @@ with nothing there.
 
 ## Unreleased
 
-KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving. Settings → Storage shows what KChess keeps on your computer and helps you free up space.
+The board editor sets up well-known openings and endgames in one click, and Guess the move has 22 famous games and takes games from your databases. Settings → Storage shows what KChess keeps and helps you free up space, KChess stays connected to Lichess when left open, and many pages are cleaner.
 
 ### Added
 
+- Set the board in the board editor sets up the starting position, an empty board, a popular opening or a classic endgame such as the Lucena or Philidor position.
+- Guess the move lists 22 famous games by era, from McDonnell against La Bourdonnais in 1834 to Kasparov's Immortal in 1999.
+- Guess the move can take a game from your databases. Search for a player and you guess the moves as them.
 - Clean up in Settings → Storage removes the files earlier versions of KChess left behind, which nothing uses any more.
 
 ### Changed
 
+- The choices beside the board in Practice and Puzzles each fit on one row. Their switches, and those in the engine settings, sit at the end of the row, as in Settings.
+- While the engine works out its other lines, their rows show placeholders that the lines fill as they arrive. Pointing at a move in a line shows its position at once, under the lines, and the board follows you from move to move.
+- On the Database page, Import PGN comes first and the downloads share one Add games menu. With no databases yet, the page shows where to drop a PGN file.
+- On the Watch page, a TV game shows the players' head-to-head as a table: this match and all time, the leader in green.
+- Moves are listed the same way on every page: the Analysis board and Books show numbered rows like the game pages, with variations and comments under the move they branch from. Move lists are more compact, with every other row shaded.
+- Searching for a player on Players, Following, Guess the move and the database's player download lists matching Lichess players under the field as you type; pick one with the arrows or the pointer. Players has a way back to the leaderboard.
+- On the Books page, your books end with a card to open another, an open book has a way back to them, and its page buttons float at the foot of its pages. The diagram buttons sit under the board.
+- Filters, search fields and buttons that share a row are the same height.
+- The board editor speaks up only when the position is not legal yet.
+- Over the board leaves whose turn it is to the board, and speaks up for a check or a paused clock.
+- Insights looks like the rest of KChess: its figures and breakdowns sit in cards, and its filters match the other pages.
+- A game or run with no clock shows ∞ where it said Untimed or No clock.
 - Settings → Storage shows what KChess keeps on your computer in a bar and a list, largest first, each in its own colour, with Update or Delete beside what you downloaded. Your disk's free space is shown with what you can still download.
 
 ### Fixed
 
+- In a long game the move list keeps the move on the board in view, the newest as it is played, instead of staying at the first moves until you scroll.
 - Challenges and new Lichess games keep arriving when KChess has been open for many hours. A quiet connection used to stop for good after a few network drops, until you restarted KChess.
+- The analysis board no longer shifts sideways when you turn the engine off.
+- Looking up a Lichess player who doesn't exist names them, instead of saying "Lichess has no such thing."
+- Many smaller fixes.
 
 ## 2026.11.10 (2026-11-27)
 

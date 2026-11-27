@@ -456,7 +456,6 @@ impl HistoryPage {
                     .child(
                         div().w(px(200.)).child(
                             Input::new(&self.search_input)
-                                .small()
                                 .cleanable(true)
                                 .prefix(icon("search").size(px(14.)))
                                 .aria_label("Search by opponent or opening"),
@@ -465,7 +464,6 @@ impl HistoryPage {
                     .child(
                         Button::new("history-export-all")
                             .outline()
-                            .small()
                             .icon(icon("download"))
                             .label("Export")
                             .tooltip("Save the games listed as one PGN file")

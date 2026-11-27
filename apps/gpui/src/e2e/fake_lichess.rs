@@ -80,8 +80,10 @@ pub struct Session {
     pub writes: Vec<String>,
     /// Events still to send on the account's event stream, in order (a challenge received).
     pub events: Vec<Value>,
-    /// The challenges Lichess lists for the account (`GET /api/challenge`): each one sent on the
-    /// event stream, until the app accepts or declines it.
+    /// The challenge events sent on the account's event stream that the app has not accepted or
+    /// declined. Lichess lists them (`GET /api/challenge`) and sends them again on every event
+    /// stream that opens: the stream that took one may be a watcher the lobby then replaced,
+    /// which leaves challenges to the lobby (Windows Stress, 2026-11-27).
     pub inbox: Vec<Value>,
     /// The account's game download waits until this is cleared: a sync still running.
     pub hold_games: bool,
@@ -723,8 +725,11 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
                     session.variant,
                 )
             };
-            let first =
-                start.then(|| json!({ "type": "gameStart", "game": summary(elsewhere, variant) }));
+            let first: Vec<Value> = start
+                .then(|| json!({ "type": "gameStart", "game": summary(elsewhere, variant) }))
+                .into_iter()
+                .chain(session.lock().inbox.iter().cloned())
+                .collect();
             let listening = session.clone();
             // A refused game's announcement comes after the refusal, the order that once lost it.
             let waited = Instant::now();
@@ -741,11 +746,11 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
             let queued = session.clone();
             // Until the app hangs up (a keep-alive fails to send) or the login is revoked; the
             // events a test queues go out as they come.
-            let ended = stream(out, first.into_iter().collect(), open, move |_| {
+            let ended = stream(out, first, open, move |_| {
                 let mut session = queued.lock();
                 let event = (!session.events.is_empty()).then(|| session.events.remove(0))?;
                 if event["type"] == "challenge" {
-                    session.inbox.push(event["challenge"].clone());
+                    session.inbox.push(event.clone());
                 }
                 Some(event)
             });
@@ -803,7 +808,12 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
             stream(out, Vec::new(), open, |_| None)
         }
         ("GET", "/api/challenge") => {
-            let inbox = session.lock().inbox.clone();
+            let inbox: Vec<Value> = session
+                .lock()
+                .inbox
+                .iter()
+                .map(|event| event["challenge"].clone())
+                .collect();
             reply(out, &json!({ "in": inbox, "out": [] }))
         }
         ("POST", p) if p.starts_with("/api/challenge/") => {
@@ -813,7 +823,9 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
                 .strip_prefix("/api/challenge/")
                 .and_then(|rest| rest.split('/').next())
             {
-                answered.inbox.retain(|listed| listed["id"] != id);
+                answered
+                    .inbox
+                    .retain(|event| event["challenge"]["id"] != id);
             }
             drop(answered);
             reply(out, &json!({ "ok": true }))

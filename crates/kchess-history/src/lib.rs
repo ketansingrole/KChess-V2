@@ -139,10 +139,10 @@ pub fn move_count(plies: usize) -> String {
     format!("{moves} {}", if moves == 1 { "move" } else { "moves" })
 }
 
-/// "300+3" as "5+3", each side of a split clock; "-" as "Untimed".
+/// "300+3" as "5+3", each side of a split clock; "-" (no clock) as "∞".
 fn time_label(control: &str) -> String {
     if control == "-" {
-        return "Untimed".into();
+        return "∞".into();
     }
     control
         .split(" / ")
@@ -1228,7 +1228,7 @@ mod tests {
 
     #[test]
     fn time_controls_read_in_minutes() {
-        assert_eq!(time_label("-"), "Untimed");
+        assert_eq!(time_label("-"), "∞");
         assert_eq!(time_label("300+3"), "5+3");
         assert_eq!(time_label("180+2 / 600+2"), "3+2 / 10+2");
         assert_eq!(time_label("90+0"), "1.5+0");

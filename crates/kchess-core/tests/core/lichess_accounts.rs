@@ -523,6 +523,10 @@ async fn a_missing_user_is_named_in_the_error() {
     let error = lichess.profile("nobody").await.unwrap_err();
     assert_eq!(error.message, r#"No such Lichess user "nobody"."#);
     assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::NotFound));
+    // Their recent games too: Guess the move said "Lichess has no such thing."
+    let error = lichess.recent_games("nobody", false).await.unwrap_err();
+    assert_eq!(error.message, r#"No such Lichess user "nobody"."#);
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::NotFound));
 }
 
 #[tokio::test]

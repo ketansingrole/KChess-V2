@@ -332,6 +332,34 @@ pub struct PvMove {
     pub fen: String,
 }
 
+/// Each move of a line as `(ply, SAN)`, `ply` the half-moves before it (0 for White's first),
+/// with the number a scoresheet writes before it: "12." before White's moves, "12…" before the
+/// line's first move when Black plays it, nothing before Black's others.
+pub fn numbered<'a>(
+    moves: impl IntoIterator<Item = (u32, &'a str)>,
+) -> Vec<(Option<String>, &'a str)> {
+    moves
+        .into_iter()
+        .enumerate()
+        .map(|(index, (ply, san))| {
+            let number = move_number(ply, index == 0);
+            ((!number.is_empty()).then_some(number), san)
+        })
+        .collect()
+}
+
+/// A line as one line of text: "1. e4 c5 2. Nf3", or "12… Nc6 13. Bb5" from Black's move.
+pub fn numbered_line<'a>(moves: impl IntoIterator<Item = (u32, &'a str)>) -> String {
+    numbered(moves)
+        .into_iter()
+        .map(|(number, san)| match number {
+            Some(number) => format!("{number} {san}"),
+            None => san.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// "1.", "1…", or nothing: the number printed before the move at `ply`.
 fn move_number(ply: u32, always: bool) -> String {
     let number = ply / 2 + 1;
@@ -660,6 +688,29 @@ fn continues_line(children: &mut [TreeNode]) {
 
 #[cfg(test)]
 mod tests {
+
+    /// Books, the repertoire check and the Visualise drill each numbered a line their own way;
+    /// one numbering now serves them, a line from Black's move opening "12…".
+    #[test]
+    fn a_line_is_numbered_as_a_scoresheet_writes_it() {
+        assert_eq!(
+            numbered_line([(0, "e4"), (1, "c5"), (2, "Nf3")]),
+            "1. e4 c5 2. Nf3"
+        );
+        assert_eq!(
+            numbered_line([(23, "Nc6"), (24, "Bb5"), (25, "a6")]),
+            "12… Nc6 13. Bb5 a6"
+        );
+        assert_eq!(
+            numbered([(1, "e5"), (2, "Nf3")]),
+            [
+                (Some("1…".to_string()), "e5"),
+                (Some("2.".to_string()), "Nf3")
+            ]
+        );
+        assert_eq!(numbered_line([]), "");
+    }
+
     /// A variant game's tree is written with its Variant header, and its FEN only when it starts
     /// elsewhere than its variant does, so it reads back in that variant.
     #[test]

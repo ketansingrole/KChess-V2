@@ -42,8 +42,57 @@ fn wait_for_fen(app: &mut Harness, expected: &str) {
     });
 }
 
+/// Set the editor's board to the position Set the board names `name`, found by searching for it.
+fn set_board(app: &mut Harness, name: &str) {
+    app.click_label("Set the board");
+    app.type_text(name);
+    app.press("enter");
+    app.settle();
+}
+
 fn clipboard(app: &mut Harness) -> Option<String> {
     app.cx.read_from_clipboard().and_then(|item| item.text())
+}
+
+/// The main line's first move as the sheet draws it: the row's height, and where the number
+/// column starts in the sheet, how wide it is and where the move follows it.
+fn sheet_geometry(
+    app: &mut Harness,
+    sheet: &'static str,
+    number: impl Into<gpui_kit::ElementId>,
+    first: impl Into<gpui_kit::ElementId>,
+) -> [gpui_kit::Pixels; 4] {
+    let sheet = app.find(sheet).bounds();
+    let number = app.find(number).bounds();
+    let first = app.find(first).bounds();
+    [
+        first.size.height,
+        number.origin.x - sheet.origin.x,
+        number.size.width,
+        first.origin.x - number.origin.x,
+    ]
+}
+
+/// The analysis board flowed its main line as a paragraph of moves while every game page listed
+/// them on a scoresheet, so one game looked different on each page: its rows are now as high and
+/// its numbers in the same column as on a game page's sheet.
+#[gpui_kit::test]
+fn the_main_line_is_the_game_pages_scoresheet(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    let analysis = sheet_geometry(&mut app, "analysis-sheet", "tree-number-e2e4", "tree-e2e4");
+
+    app.open("Over the board");
+    super::local::wait_resumed(&mut app);
+    super::local::type_moves(&mut app, &["e4"]);
+    let played = sheet_geometry(
+        &mut app,
+        "local-moves",
+        ("move-number", 0usize),
+        ("move", 0usize),
+    );
+    assert_eq!(analysis, played);
 }
 
 /// The move list names the opening the moves up to the shown one reached, as the game pages do,
@@ -533,14 +582,91 @@ fn the_tool_under_the_engine_is_chosen_and_remembered(cx: &mut gpui_kit::TestApp
     assert_eq!(app.find("Review").selected(), Some(true));
 }
 
+/// The board and the engine's status hold still as the engine turns off and on. Regression: the
+/// board moved 8 px left when the evaluation bar went, its place kept without the gap after it,
+/// and the status 16 px left when the spinner's place went with the engine.
 #[gpui_kit::test]
 fn the_engine_can_be_switched_off_and_on(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
     assert_eq!(app.find("engine-on").checked(), Some(true));
+    let at = |app: &mut Harness| {
+        (
+            app.find("analysis-board").bounds().origin,
+            app.find("engine-status").bounds().origin.x,
+        )
+    };
+    let on = at(&mut app);
     app.click("engine-on");
     assert_eq!(app.find("engine-on").checked(), Some(false));
+    assert_eq!(at(&mut app), on, "the board and the status hold still");
     app.click("engine-on");
     assert_eq!(app.find("engine-on").checked(), Some(true));
+}
+
+/// Regression: the engine lines still to come read as a bare "…", like text cut short. The
+/// scripted engine sends one line of the three shown: the other two hold their rows as
+/// placeholders, named as lines still calculating, each as tall as a line.
+#[gpui_kit::test]
+fn engine_lines_still_to_come_hold_their_rows(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    wait_for_search(&mut app);
+    let heights: Vec<_> = [1usize, 2]
+        .into_iter()
+        .map(|index| {
+            let pending = app.find(("pv-pending", index));
+            assert_eq!(pending.label(), Some("Line still calculating"));
+            pending.bounds().size.height
+        })
+        .collect();
+    assert_eq!(
+        heights[0], heights[1],
+        "both placeholders are a line's height"
+    );
+    assert!(
+        !app.shows(("pv-pending", 0usize)),
+        "the line that came is shown"
+    );
+}
+
+/// A move of an engine line shows the position it reaches at once, and the one preview stays as
+/// the pointer crosses to the next move and the gap between them, moving on to that move, until
+/// the pointer leaves the lines. Regression: each move had its own tooltip, half a second late,
+/// which closed and opened again at every move crossed.
+#[gpui_kit::test]
+fn an_engine_line_previews_each_move_under_the_pointer(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    wait_for_search(&mut app);
+    let first = app.find("pv-0-0").bounds();
+    let second = app.find("pv-0-1").bounds();
+    assert!(!app.shows("pv-preview"));
+    // No time passes: the preview is there on the move itself.
+    app.move_mouse(first.center());
+    let shown = app.find("pv-preview").bounds();
+    let named = |app: &mut Harness, at: usize| {
+        let id = gpui_kit::SharedString::from(format!("pv-0-{at}"));
+        let played = app.find(id).label().map(str::to_string);
+        format!("Position after {}", played.expect("a move is named"))
+    };
+    let after_first = named(&mut app, 0);
+    assert_eq!(app.find("pv-preview").label(), Some(after_first.as_str()));
+    // Between the two moves: the same preview, where it was.
+    app.move_mouse(gpui_kit::point(
+        second.left() - gpui_kit::px(0.5),
+        second.center().y,
+    ));
+    assert_eq!(app.find("pv-preview").bounds(), shown);
+    assert_eq!(app.find("pv-preview").label(), Some(after_first.as_str()));
+    // On the second move, it shows that move, where it was.
+    app.move_mouse(second.center());
+    let after_second = named(&mut app, 1);
+    assert_eq!(app.find("pv-preview").label(), Some(after_second.as_str()));
+    assert_eq!(app.find("pv-preview").bounds(), shown, "it holds still");
+    // Off the lines, it goes.
+    app.move_mouse(gpui_kit::point(
+        first.left(),
+        first.top() - gpui_kit::px(60.),
+    ));
+    app.wait_gone("pv-preview");
 }
 
 /// Show threat's hint, "The opponent's best move if it were their turn (X)", once ran past the
@@ -558,11 +684,11 @@ fn the_engine_settings_stay_inside_their_popover(cx: &mut gpui_kit::TestAppConte
         edge.is_some()
     });
     let edge = edge.expect("found");
-    for title in [
-        "Infinite analysis",
-        "Show engine arrows",
-        "Show threat",
-        "Lichess cloud evaluation",
+    for (title, switch) in [
+        ("Infinite analysis", "infinite"),
+        ("Show engine arrows", "arrows"),
+        ("Show threat", "threat"),
+        ("Lichess cloud evaluation", "cloud"),
     ] {
         let right = app
             .find(gpui_kit::ElementId::NamedChild(
@@ -574,6 +700,18 @@ fn the_engine_settings_stay_inside_their_popover(cx: &mut gpui_kit::TestAppConte
         assert!(
             right <= edge + gpui_kit::px(0.5),
             "{title} ends at {right:?}, past the popover's {edge:?}"
+        );
+        // Regression: the switches led their rows, while the list of lines under them ended its
+        // own. Each switch now ends its row, after its title, as in Settings.
+        let switch = app.find(switch).bounds();
+        assert!(
+            switch.left() >= right,
+            "{title}'s switch {switch:?} follows its title"
+        );
+        assert!(
+            (switch.right() - edge).abs() <= gpui_kit::px(0.5),
+            "{title}'s switch ends at {:?}, where the lines' list ends ({edge:?})",
+            switch.right()
         );
     }
 }
@@ -727,7 +865,10 @@ fn a_position_can_be_taken_from_the_analysis_board_to_the_editor(
 #[gpui_kit::test]
 fn the_editor_starts_from_the_standard_position(cx: &mut gpui_kit::TestAppContext) {
     let mut app = editor(cx);
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
     assert!(app.enabled("analyse-position"));
     assert_eq!(app.find(("editor-turn", 0usize)).selected(), Some(true));
     for key in ["K", "Q", "k", "q"] {
@@ -735,11 +876,49 @@ fn the_editor_starts_from_the_standard_position(cx: &mut gpui_kit::TestAppContex
     }
 }
 
+/// Set the board sets up an opening as the Openings page lists it and an endgame Practice
+/// drills, side to move and castling with them, and shows no choice after: the same one sets the
+/// edited board up again.
+#[gpui_kit::test]
+fn set_the_board_sets_up_an_opening_and_an_endgame(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = editor(cx);
+    set_board(&mut app, "Ruy Lopez");
+    wait_for_fen(
+        &mut app,
+        "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 0 1",
+    );
+    assert_eq!(app.find(("editor-turn", 1usize)).selected(), Some(true));
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
+    assert!(app.enabled("analyse-position"));
+
+    const LUCENA: &str = "1K1k4/1P6/8/8/8/8/r7/2R5 w - - 0 1";
+    set_board(&mut app, "Lucena");
+    wait_for_fen(&mut app, LUCENA);
+    // The choice is not left showing once the board is set: it would name the board after edits.
+    let shown = app.with_window(|window, _| {
+        window
+            .try_find_by_label("Set the board")
+            .and_then(|select| select.value().map(str::to_string))
+    });
+    assert_eq!(shown.as_deref(), Some("Set the board"));
+    assert_eq!(app.find(("editor-turn", 0usize)).selected(), Some(true));
+    assert_eq!(app.find("castling-K").checked(), Some(false));
+    // Edited, the same endgame is set up again from the start.
+    app.click("remove-pieces-White");
+    app.click_square("b7", true);
+    wait_for_fen(&mut app, "1K1k4/8/8/8/8/8/r7/2R5 w - - 0 1");
+    set_board(&mut app, "Lucena");
+    wait_for_fen(&mut app, LUCENA);
+}
+
 /// ⌘Z takes back the editor's changes one by one, and ⇧⌘Z redoes them.
 #[gpui_kit::test]
 fn the_editor_undoes_and_redoes_its_changes(cx: &mut gpui_kit::TestAppContext) {
     let mut app = editor(cx);
-    app.click("clear-board");
+    set_board(&mut app, "Empty board");
     wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
     app.click(("editor-turn", 1usize));
     wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 b - - 0 1");
@@ -753,7 +932,7 @@ fn the_editor_undoes_and_redoes_its_changes(cx: &mut gpui_kit::TestAppContext) {
     app.press("shift-secondary-z");
     wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
     // A new change drops what was undone.
-    app.click("start-position");
+    set_board(&mut app, "Starting position");
     wait_for_fen(&mut app, START_FEN);
     app.press("shift-secondary-z");
     wait_for_fen(&mut app, START_FEN);
@@ -772,13 +951,16 @@ fn the_editor_sets_up_a_variant_position(cx: &mut gpui_kit::TestAppContext) {
         app.press("down");
     }
     app.press("enter");
-    app.click("start-position");
+    set_board(&mut app, "Starting position");
     wait_for_fen(
         &mut app,
         "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1",
     );
     // White has no king, which only Horde allows.
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
     app.click("analyse-position");
     app.wait_for("the Horde game on the analysis board", |_, cx| {
         crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx).is_some_and(|page| {
@@ -799,7 +981,10 @@ fn the_editor_sets_up_a_variant_position(cx: &mut gpui_kit::TestAppContext) {
         &mut app,
         "rnb1kbnr/ppp1pppp/8/q7/8/2N5/PPPP1PPP/R1BQKBNR[Pp] w KQkq - 0 1",
     );
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
     let variant = app.cx.update(|cx| {
         crate::shell::view::<crate::pages::editor::EditorPage>(cx)
             .map(|page| page.read(cx).game_setup())
@@ -831,7 +1016,7 @@ fn a_spare_piece_is_a_named_button_that_is_chosen(cx: &mut gpui_kit::TestAppCont
 #[gpui_kit::test]
 fn an_empty_board_is_no_position_to_analyse(cx: &mut gpui_kit::TestAppContext) {
     let mut app = editor(cx);
-    app.click("clear-board");
+    set_board(&mut app, "Empty board");
     wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
     assert_eq!(app.status(), "Not a legal position yet");
     for action in ["analyse-position", "play-stockfish", "play-friend"] {
@@ -840,15 +1025,18 @@ fn an_empty_board_is_no_position_to_analyse(cx: &mut gpui_kit::TestAppContext) {
     // Castling needs the king and rook at home.
     assert!(!app.enabled("castling-K"));
 
-    app.click("start-position");
+    set_board(&mut app, "Starting position");
     wait_for_fen(&mut app, START_FEN);
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
 }
 
 #[gpui_kit::test]
 fn a_position_set_up_with_pieces_is_analysed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = editor(cx);
-    app.click("clear-board");
+    set_board(&mut app, "Empty board");
     for (piece, squares) in [
         ("spare-White-King", &["g1"][..]),
         ("spare-White-Rook", &["a1"]),
@@ -861,7 +1049,10 @@ fn a_position_set_up_with_pieces_is_analysed(cx: &mut gpui_kit::TestAppContext) 
         }
     }
     wait_for_fen(&mut app, "6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1");
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
 
     app.click("analyse-position");
     app.find("analysis-more");
@@ -898,7 +1089,10 @@ fn the_side_to_move_and_castling_rights_show_in_the_fen(cx: &mut gpui_kit::TestA
         &mut app,
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1",
     );
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
     app.click("castling-K");
     app.click("castling-q");
     wait_for_fen(
@@ -936,7 +1130,10 @@ fn chess960_castling_is_kept_and_a_moved_king_drops_its_own(cx: &mut gpui_kit::T
             "{key}"
         );
     }
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
 }
 
 #[gpui_kit::test]
@@ -949,7 +1146,10 @@ fn a_typed_fen_sets_the_board_and_one_that_is_not_legal_is_not_analysed(
     app.type_text("bad-fen");
     app.press("enter");
     // Nothing changed behind the refused text.
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
 
     app.press("secondary-a");
     app.type_text("4k3/8/8/8/8/8/4P3/4K3 b - - 0 1");
@@ -1663,7 +1863,7 @@ fn the_squares_to_check_are_marked_until_changed(cx: &mut gpui_kit::TestAppConte
     app.click_square("a3", true);
     wait_for_fen(&mut app, "4k3/8/8/8/4P3/Q7/8/4K3 w - - 0 1");
     assert_eq!(marked(&mut app), [Square::E4]);
-    app.click("start-position");
+    set_board(&mut app, "Starting position");
     wait_for_fen(&mut app, START_FEN);
     assert!(marked(&mut app).is_empty());
     assert!(!app.shows("editor-marked"));
@@ -1712,7 +1912,7 @@ fn a_picture_read_from_the_wrong_side_is_turned_around(cx: &mut gpui_kit::TestAp
     app.click("editor-turn-around");
     wait_for_fen(&mut app, "1k6/8/8/8/8/8/1P6/R3K2R w KQ - 0 1");
     assert_eq!(page(&mut app), [Square::B2]);
-    app.click("start-position");
+    set_board(&mut app, "Starting position");
     wait_for_fen(&mut app, START_FEN);
     assert!(!app.shows("editor-turn-around"));
 }

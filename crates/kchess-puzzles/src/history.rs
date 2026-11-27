@@ -449,11 +449,7 @@ impl Render for PuzzleHistory {
                     .gap(px(12.))
                     .flex_wrap()
                     .child(div().w(px(160.)).when(any, |slot| {
-                        slot.child(
-                            Select::new(&self.filter)
-                                .small()
-                                .accessibility_label("Puzzle mode"),
-                        )
+                        slot.child(Select::new(&self.filter).accessibility_label("Puzzle mode"))
                     }))
                     .when(any, |row| row.child(result_pills)),
             )
@@ -461,7 +457,6 @@ impl Render for PuzzleHistory {
                 row.child(
                     Button::new("puzzle-history-refresh")
                         .outline()
-                        .small()
                         .icon(icon("refresh-cw"))
                         .label("Refresh")
                         .tooltip("Load the latest puzzle history from Lichess")

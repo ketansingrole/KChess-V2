@@ -487,7 +487,7 @@ fn game_options_play_the_clock_picked(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
     app.click("game-options");
     app.wait_for("the dialog with no clock", |window, _| {
-        clock(window).as_deref() == Some("No clock")
+        clock(window).as_deref() == Some("∞")
     });
     app.click_label("Clock");
     app.press("down");
@@ -589,7 +589,7 @@ fn a_downloaded_player_plays_their_own_openings(cx: &mut gpui_kit::TestAppContex
     };
     let mut app = Harness::start(cx);
     app.open("Game database");
-    app.click("database-player");
+    super::database::add_games(&mut app, "Player's games…");
     app.fill_in_dialog("Username", SCOUTED);
     app.click("player-download");
     app.wait_for_app("their games", |cx| {

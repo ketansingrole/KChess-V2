@@ -25,10 +25,7 @@ fn controls_read_like_lichess() {
         days: Number::from(1),
     };
     assert_eq!(describe_control(&days), "1 day per move");
-    assert_eq!(
-        describe_control(&ChallengeTimeControl::Unlimited),
-        "No clock"
-    );
+    assert_eq!(describe_control(&ChallengeTimeControl::Unlimited), "∞");
 }
 
 /// A resume is counted as it starts, so an answer to an earlier one is known for stale.

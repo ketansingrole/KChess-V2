@@ -1034,6 +1034,8 @@ impl Lichess {
                 .await
         })
         .await
+        // Named, as a profile is: Guess the move said "Lichess has no such thing."
+        .map_err(|failure| no_such_user(username, failure))
     }
 
     /// A player's games as PGN (`/api/games/user/{name}` asked `query`), each piece of the text

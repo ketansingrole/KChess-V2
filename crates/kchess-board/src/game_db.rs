@@ -5,8 +5,9 @@ use std::path::PathBuf;
 
 use futures::FutureExt as _;
 
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
@@ -474,8 +475,9 @@ pub fn choose_and_import(window: &mut Window, cx: &mut App) {
         .detach();
 }
 
-/// Import a PGN file, and the import's progress with Cancel while it runs.
-pub fn import_card(cx: &App, palette: &Palette) -> impl IntoElement + use<> {
+/// Import a PGN file, and the import's progress with Cancel while it runs; `primary` where
+/// importing is the page's main action.
+pub fn import_card(cx: &App, primary: bool, palette: &Palette) -> impl IntoElement + use<> {
     let handle = cx.global::<GameDbHandle>().0.clone();
     let this = handle.read(cx);
     let hint = |text: String| {
@@ -552,10 +554,11 @@ pub fn import_card(cx: &App, palette: &Palette) -> impl IntoElement + use<> {
         h_flex()
             .child(
                 Button::new("gamedb-import")
-                    .outline()
+                    .when(primary, |button| button.primary())
+                    .when(!primary, |button| button.outline())
                     .small()
                     .icon(icon("import"))
-                    .label("Import PGN…")
+                    .label("Import PGN")
                     .on_click(|_, window, cx| choose_and_import(window, cx)),
             )
             .into_any_element()

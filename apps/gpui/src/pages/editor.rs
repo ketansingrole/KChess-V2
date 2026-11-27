@@ -9,6 +9,7 @@ use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Redo, Undo};
+use gpui_kit::component::searchable_list::{SearchableGroup, SearchableVec};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
     Disableable as _, IndexPath, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -29,7 +30,7 @@ use crate::theme::{Palette, radii, tint};
 use crate::voice::control::{BarSpec, Control};
 use crate::voice::{Attempt, VoiceEvent, VoiceOutcome, VoiceSource};
 use crate::widgets::Pressable as _;
-use crate::widgets::{self, KeyboardFocus as _, Pill, Tone};
+use crate::widgets::{self, Choice, KeyboardFocus as _, Pill, Tone};
 use kchess_domain::editor::{self, EditorSetup};
 use kchess_domain::variant::{Setup, Variant};
 use kchess_domain::voice::{self, EditorAction};
@@ -52,6 +53,44 @@ const CASTLING: [(&str, &str); 4] = [
     ("k", "Black O-O"),
     ("q", "Black O-O-O"),
 ];
+
+/// Set the board's first two choices; every other one's value is its FEN.
+const PRESET_START: &str = "start";
+const PRESET_EMPTY: &str = "empty";
+
+type Presets = SearchableVec<SearchableGroup<Choice>>;
+
+/// What Set the board offers: the starting position and an empty board, the popular openings as
+/// the Openings page lists them, and the endgames Practice drills, under their groups.
+fn presets() -> Presets {
+    let mut endgames: Vec<SearchableGroup<Choice>> = Vec::new();
+    for drill in &kchess_domain::training::data::data().endgame_drills {
+        let choice = Choice::new(drill.fen.clone(), drill.title.clone());
+        match endgames
+            .iter_mut()
+            .find(|group| group.title == drill.group.as_str())
+        {
+            Some(group) => group.items.push(choice),
+            None => endgames.push(SearchableGroup::new(drill.group.clone()).item(choice)),
+        }
+    }
+    SearchableVec::new(
+        [
+            SearchableGroup::new("").items([
+                Choice::new(PRESET_START, "Starting position"),
+                Choice::new(PRESET_EMPTY, "Empty board"),
+            ]),
+            SearchableGroup::new("Openings").items(
+                crate::pages::openings::popular_positions()
+                    .into_iter()
+                    .map(|(name, fen)| Choice::new(fen, name)),
+            ),
+        ]
+        .into_iter()
+        .chain(endgames)
+        .collect::<Vec<_>>(),
+    )
+}
 
 /// The FEN of `fen` (the editor's standard one) in `variant`: Crazyhouse adds the pockets and
 /// Three-check the checks left, as pasted (empty pockets, three checks each, otherwise).
@@ -132,6 +171,8 @@ pub struct EditorPage {
     /// The variant the position is played in.
     variant: Variant,
     variant_select: Entity<SelectState<Vec<SharedString>>>,
+    /// Set the board: a preset position, chosen and then shown unchosen again.
+    preset_select: Entity<SelectState<Presets>>,
     /// A Crazyhouse position's pockets and a Three-check one's checks left, from its FEN.
     pockets: Option<ByColor<ByRole<u8>>>,
     checks: Option<ByColor<RemainingChecks>>,
@@ -187,6 +228,8 @@ impl EditorPage {
                 cx,
             )
         });
+        let preset_select =
+            cx.new(|cx| SelectState::new(presets(), None, window, cx).searchable(true));
         let settings = cx.global::<SettingsHandle>().0.clone();
         let subscriptions = vec![
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
@@ -230,6 +273,17 @@ impl EditorPage {
                     }
                 },
             ),
+            cx.subscribe_in(
+                &preset_select,
+                window,
+                |this, select, event: &SelectEvent<Presets>, window, cx| {
+                    if let SelectEvent::Confirm(Some(preset)) = event {
+                        this.set_preset(preset, cx);
+                        // Unchosen again, so it never names a board edited since.
+                        select.update(cx, |select, cx| select.set_selected_index(None, window, cx));
+                    }
+                },
+            ),
             cx.subscribe(&settings, |this, _, _: &SettingsChanged, cx| {
                 this.redraw(cx)
             }),
@@ -244,6 +298,7 @@ impl EditorPage {
             setup: EditorSetup::start(),
             variant: Variant::Standard,
             variant_select,
+            preset_select,
             pockets: None,
             checks: None,
             orientation: Color::White,
@@ -471,13 +526,38 @@ impl EditorPage {
         if text.trim() == self.fen() {
             return;
         }
-        if self.read_fen(&text) {
-            self.marked.clear();
-            self.from_picture = false;
-            self.changed(cx);
-        } else {
+        if !self.take_fen(&text, cx) {
             self.fen_error = Some("That is not a valid FEN".into());
             cx.notify();
+        }
+    }
+
+    /// The board set up from a FEN, as typed in the FEN box. False when it is no FEN.
+    fn take_fen(&mut self, fen: &str, cx: &mut Context<Self>) -> bool {
+        if !self.read_fen(fen) {
+            return false;
+        }
+        self.marked.clear();
+        self.from_picture = false;
+        self.changed(cx);
+        true
+    }
+
+    /// The position Set the board offers as `preset`: the variant's start, an empty board, or a
+    /// FEN.
+    fn set_preset(&mut self, preset: &str, cx: &mut Context<Self>) {
+        match preset {
+            PRESET_START => self.start_position(cx),
+            PRESET_EMPTY => self.clear_board(cx),
+            fen => {
+                if !self.take_fen(fen, cx) {
+                    crate::log::write(
+                        kchess_contracts::Level::Warn,
+                        "editor",
+                        &format!("a preset is no FEN: {fen}"),
+                    );
+                }
+            }
         }
     }
 
@@ -938,40 +1018,16 @@ impl Render for EditorPage {
             .min_h_0()
             .overflow_y_scroll()
             .gap(px(16.))
-            .child(
+            // Only what stops the analysis: a legal position needs no word, and the side to
+            // move is the choice below.
+            .children(problem.clone().map(|problem| {
                 widgets::StatusBanner::new(
-                    if problem.is_some() {
-                        Tone::Alert
-                    } else {
-                        Tone::Plain
-                    },
-                    if problem.is_some() {
-                        icon("triangle-alert")
-                    } else {
-                        icon("circle-check")
-                    },
-                    if problem.is_some() {
-                        "Not a legal position yet".into()
-                    } else {
-                        "Ready to analyse".into()
-                    },
+                    Tone::Alert,
+                    icon("triangle-alert"),
+                    "Not a legal position yet".into(),
                 )
-                .detail(
-                    problem
-                        .clone()
-                        .unwrap_or_else(|| {
-                            format!(
-                                "{} to move",
-                                if turn == Color::White {
-                                    "White"
-                                } else {
-                                    "Black"
-                                }
-                            )
-                        })
-                        .into(),
-                ),
-            )
+                .detail(problem.into())
+            }))
             // A position read from a picture: the squares it was unsure of are ringed.
             .when(!self.marked.is_empty(), |panel| {
                 panel.child(
@@ -1069,18 +1125,13 @@ impl Render for EditorPage {
                     .flex_wrap()
                     .gap(px(8.))
                     .child(
-                        Button::new("start-position")
-                            .outline()
-                            .icon(icon("rotate-ccw"))
-                            .label("Starting position")
-                            .on_click(cx.listener(|this, _, _, cx| this.start_position(cx))),
-                    )
-                    .child(
-                        Button::new("clear-board")
-                            .outline()
-                            .icon(icon("eraser"))
-                            .label("Clear board")
-                            .on_click(cx.listener(|this, _, _, cx| this.clear_board(cx))),
+                        div().flex_1().min_w(px(160.)).child(
+                            Select::new(&self.preset_select)
+                                .placeholder("Set the board")
+                                .search_placeholder("Search positions")
+                                .menu_max_h(px(360.))
+                                .accessibility_label("Set the board"),
+                        ),
                     )
                     .child(
                         Button::new("flip-board")
