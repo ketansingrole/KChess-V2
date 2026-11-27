@@ -53,6 +53,35 @@ pub fn open_alert_dialog(
     });
 }
 
+/// Asks before something that cannot be undone: `title`, what it does, and the danger button
+/// `ok` beside Cancel, which runs `act`.
+pub fn confirm_danger(
+    window: &mut Window,
+    cx: &mut App,
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
+    ok: impl Into<SharedString>,
+    act: impl Fn(&mut Window, &mut App) + 'static,
+) {
+    use gpui_kit::component::button::ButtonVariant;
+    let (title, description, ok) = (title.into(), description.into(), ok.into());
+    let act = std::rc::Rc::new(act);
+    open_alert_dialog(window, cx, move |dialog, _, _| {
+        let act = act.clone();
+        dialog
+            .title(title.clone())
+            .description(description.clone())
+            .ok_text(ok.clone())
+            .ok_variant(ButtonVariant::Danger)
+            .cancel_text("Cancel")
+            .show_cancel(true)
+            .on_ok(move |_, window, cx| {
+                act(window, cx);
+                true
+            })
+    });
+}
+
 /// A dialog's last row: its buttons on the right, anything `leading` on the left, and what went
 /// wrong between them, spoken as it appears. A line of its own above the buttons grew the dialog,
 /// which the kit keeps centred, so the button just pressed moved under the pointer as the error

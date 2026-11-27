@@ -2,8 +2,6 @@
 
 use crate::log::ResultExt as _;
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::component::button::ButtonVariant;
-use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 
@@ -87,20 +85,14 @@ pub fn replace_read(
         run(&*load, window, cx);
         return;
     }
-    crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-        let (load, run) = (load.clone(), run.clone());
-        dialog
-            .title("Replace the unsaved analysis?")
-            .description("The analysis board has moves that are not saved as a study")
-            .ok_text("Replace")
-            .ok_variant(ButtonVariant::Danger)
-            .cancel_text("Cancel")
-            .show_cancel(true)
-            .on_ok(move |_, window, cx| {
-                run(&*load, window, cx);
-                true
-            })
-    });
+    crate::widgets::confirm_danger(
+        window,
+        cx,
+        "Replace the unsaved analysis?",
+        "The analysis board has moves that are not saved as a study",
+        "Replace",
+        move |window, cx| run(&*load, window, cx),
+    );
 }
 
 /// An empty analysis board.

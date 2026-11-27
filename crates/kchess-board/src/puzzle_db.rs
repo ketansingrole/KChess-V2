@@ -2,8 +2,7 @@
 //! (`puzzleDbStatus`, `puzzledb:progress`), downloading, cancelling and deleting it, and the card
 //! that shows it on Puzzles, and its row in Settings → Storage.
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -144,22 +143,16 @@ impl PuzzleDb {
 
     fn ask_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let db = cx.entity().downgrade();
-        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let db = db.clone();
-            dialog
-                .title("Delete the puzzle database?")
-                .description(
-                    "This removes the puzzles stored on this computer. Storm, Streak, Rush and offline puzzles stop working until you download it again. Your scores are kept.",
-                )
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    let _ = db.update(cx, |db, cx| db.delete(cx));
-                    true
-                })
-        });
+        crate::widgets::confirm_danger(
+            window,
+            cx,
+            "Delete the puzzle database?",
+            "This removes the puzzles stored on this computer. Storm, Streak, Rush and offline puzzles stop working until you download it again. Your scores are kept.",
+            "Delete",
+            move |_, cx| {
+                let _ = db.update(cx, |db, cx| db.delete(cx));
+            },
+        );
     }
 
     fn delete(&mut self, cx: &mut Context<Self>) {

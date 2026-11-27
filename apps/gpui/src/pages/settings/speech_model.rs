@@ -2,8 +2,7 @@
 //! size, or its download's progress, with Download and Delete.
 
 use futures::StreamExt as _;
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _};
 use gpui_kit::*;
 use kchess_contracts::voice::{Phase, Progress, Status};
@@ -118,20 +117,16 @@ impl SettingsPage {
 
     fn ask_delete_voice_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
-        widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let this = this.clone();
-            dialog
-                .title("Delete the speech model?")
-                .description("Voice input stops working until you download it again (about 50 MB).")
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    this.update(cx, |this, cx| this.delete_voice_model(cx)).ok();
-                    true
-                })
-        });
+        widgets::confirm_danger(
+            window,
+            cx,
+            "Delete the speech model?",
+            "Voice input stops working until you download it again (about 50 MB).",
+            "Delete",
+            move |_, cx| {
+                this.update(cx, |this, cx| this.delete_voice_model(cx)).ok();
+            },
+        );
     }
 
     fn delete_voice_model(&mut self, cx: &mut Context<Self>) {

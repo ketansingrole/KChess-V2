@@ -5,8 +5,7 @@
 use kchess_contracts::calls;
 use std::collections::HashMap;
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -288,22 +287,16 @@ impl VoiceHistory {
 
     fn ask_clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
-        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let this = this.clone();
-            dialog
-                .title("Clear voice history?")
-                .description(
-                    "Every logged phrase is deleted. Export it first if you want to keep it.",
-                )
-                .ok_text("Clear")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    let _ = this.update(cx, |this, cx| this.clear(cx));
-                    true
-                })
-        });
+        crate::widgets::confirm_danger(
+            window,
+            cx,
+            "Clear voice history?",
+            "Every logged phrase is deleted. Export it first if you want to keep it.",
+            "Clear",
+            move |_, cx| {
+                let _ = this.update(cx, |this, cx| this.clear(cx));
+            },
+        );
     }
 
     fn clear(&mut self, cx: &mut Context<Self>) {

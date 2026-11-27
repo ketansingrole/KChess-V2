@@ -3,8 +3,7 @@
 //! and deleting it, and the background game review.
 
 use crate::log::ResultExt as _;
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -255,24 +254,17 @@ impl SettingsPage {
 
     pub(super) fn ask_delete_engine(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let page = cx.entity().downgrade();
-        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let page = page.clone();
-            dialog
-                .title("Delete downloaded Stockfish?")
-                .description(
-                    "This removes the copy KChess downloaded. The bundled engine and any \
-                     executable you chose yourself are not touched, and you can download it again \
-                     later.",
-                )
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, window, cx| {
-                    let _ = page.update(cx, |page, cx| page.delete_engine(window, cx));
-                    true
-                })
-        });
+        crate::widgets::confirm_danger(
+            window,
+            cx,
+            "Delete downloaded Stockfish?",
+            "This removes the copy KChess downloaded. The bundled engine and any executable you \
+             chose yourself are not touched, and you can download it again later.",
+            "Delete",
+            move |window, cx| {
+                let _ = page.update(cx, |page, cx| page.delete_engine(window, cx));
+            },
+        );
     }
 
     /// Delete the downloaded engine; when it was in use, the bundled one takes over.

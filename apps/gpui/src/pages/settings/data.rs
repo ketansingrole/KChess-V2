@@ -1,7 +1,7 @@
 //! Settings → Storage's accounts and housekeeping: what KChess downloaded from Lichess for each
 //! account and keeps on this computer, clearing the local scores, and the diagnostics export.
 
-use gpui_kit::component::button::{Button, ButtonVariant};
+use gpui_kit::component::button::Button;
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -136,20 +136,16 @@ impl SettingsPage {
 
     fn ask_clear_runs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
-        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let this = this.clone();
-            dialog
-                .title("Clear your local scores?")
-                .description("This deletes the Storm, Streak, Rush and board-training scores and the endgame and lesson progress stored on this computer. Nothing on Lichess is affected.")
-                .ok_text("Clear")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    let _ = this.update(cx, |this, cx| this.clear_runs(cx));
-                    true
-                })
-        });
+        crate::widgets::confirm_danger(
+            window,
+            cx,
+            "Clear your local scores?",
+            "This deletes the Storm, Streak, Rush and board-training scores and the endgame and lesson progress stored on this computer. Nothing on Lichess is affected.",
+            "Clear",
+            move |_, cx| {
+                let _ = this.update(cx, |this, cx| this.clear_runs(cx));
+            },
+        );
     }
 
     fn clear_runs(&mut self, cx: &mut Context<Self>) {

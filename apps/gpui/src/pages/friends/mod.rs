@@ -16,9 +16,8 @@ use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
@@ -346,52 +345,46 @@ impl FriendsPage {
 
     fn ask_remove(name: String, games: f64, stored: f64, window: &mut Window, cx: &mut App) {
         let account = crate::accounts::handle(cx).read(cx).active(cx);
-        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let name = name.clone();
-            dialog
-                .title("Stop following this player?")
-                .description(format!(
-                    "@{name} and their {} stored games ({}) will be deleted from this device. They stay removed until you add them again.{}",
-                    widgets::format_count(games),
-                    widgets::format_bytes(stored),
-                    account
-                        .as_ref()
-                        .map_or(String::new(), |account| format!(
-                            " @{account} stops following them on Lichess."
-                        ))
-                ))
-                .ok_text("Remove")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, window, cx| {
-                    let name = name.clone();
-                    crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.remove(name, window, cx));
-                    true
-                })
-        });
+        let description = format!(
+            "@{name} and their {} stored games ({}) will be deleted from this device. They stay removed until you add them again.{}",
+            widgets::format_count(games),
+            widgets::format_bytes(stored),
+            account.as_ref().map_or(String::new(), |account| format!(
+                " @{account} stops following them on Lichess."
+            ))
+        );
+        crate::widgets::confirm_danger(
+            window,
+            cx,
+            "Stop following this player?",
+            description,
+            "Remove",
+            move |window, cx| {
+                let name = name.clone();
+                crate::accounts::handle(cx)
+                    .update(cx, |accounts, cx| accounts.remove(name, window, cx));
+            },
+        );
     }
 
     fn ask_clear(name: String, games: f64, stored: f64, window: &mut Window, cx: &mut App) {
-        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let name = name.clone();
-            dialog
-                .title("Clear this player's synced data?")
-                .description(format!(
-                    "Deletes @{name}'s {} stored games and cached profile ({}) from this device. They stay in Following, and syncing again downloads everything afresh.",
-                    widgets::format_count(games),
-                    widgets::format_bytes(stored)
-                ))
-                .ok_text("Clear data")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, window, cx| {
-                    let name = name.clone();
-                    crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.clear_data(name, window, cx));
-                    true
-                })
-        });
+        let description = format!(
+            "Deletes @{name}'s {} stored games and cached profile ({}) from this device. They stay in Following, and syncing again downloads everything afresh.",
+            widgets::format_count(games),
+            widgets::format_bytes(stored)
+        );
+        crate::widgets::confirm_danger(
+            window,
+            cx,
+            "Clear this player's synced data?",
+            description,
+            "Clear data",
+            move |window, cx| {
+                let name = name.clone();
+                crate::accounts::handle(cx)
+                    .update(cx, |accounts, cx| accounts.clear_data(name, window, cx));
+            },
+        );
     }
 
     /// Run an action as its button does, if it is still allowed.

@@ -24,8 +24,7 @@ pub mod target;
 mod tidy;
 
 use gpui_kit::base::TestSupportExt as _;
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
@@ -770,20 +769,11 @@ impl DatabasePage {
                 ),
             ),
         };
-        widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let (id, chosen) = (info.id.clone(), chosen.clone());
-            dialog
-                .title(title.clone())
-                .description(description.clone())
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    let db = cx.global::<GameDbHandle>().0.clone();
-                    db.update(cx, |db, cx| db.delete_games(id.clone(), chosen.clone(), cx));
-                    true
-                })
+        widgets::confirm_danger(window, cx, title, description, "Delete", move |_, cx| {
+            let db = cx.global::<GameDbHandle>().0.clone();
+            db.update(cx, |db, cx| {
+                db.delete_games(info.id.clone(), chosen.clone(), cx)
+            });
         });
     }
 

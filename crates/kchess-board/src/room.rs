@@ -2,8 +2,6 @@
 //! asked for, and one that would leave the disk almost full asks first. The game databases, the
 //! puzzles, the speech model and Stockfish all go through it.
 
-use gpui_kit::component::button::ButtonVariant;
-use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::*;
 use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
@@ -79,21 +77,14 @@ fn ask_for_room(
     cx: &mut App,
     start: impl Fn(&mut Window, &mut App) + 'static,
 ) {
-    let start = std::rc::Rc::new(start);
-    widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-        let start = start.clone();
-        dialog
-            .title("Your disk is almost full")
-            .description(description.clone())
-            .ok_text(go)
-            .ok_variant(ButtonVariant::Danger)
-            .cancel_text("Cancel")
-            .show_cancel(true)
-            .on_ok(move |_, window, cx| {
-                start(window, cx);
-                true
-            })
-    });
+    widgets::confirm_danger(
+        window,
+        cx,
+        "Your disk is almost full",
+        description,
+        go,
+        start,
+    );
 }
 
 #[cfg(test)]
