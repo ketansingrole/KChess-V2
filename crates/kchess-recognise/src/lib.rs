@@ -206,10 +206,17 @@ impl Recogniser {
                 cell.paper = paper;
             }
         }
+        if blur == 0. {
+            let overlays = squares::overlays(&cells, size);
+            for cell in &mut cells {
+                cell.overlays.clone_from(&overlays);
+            }
+        }
         let reads = self.read_squares(&cells, size, colours, blur, paper);
         // Coordinates printed in the edge squares say which way up the board is where they
         // can be read; else the pieces do.
-        let numbered = squares::ones_at_bottom(&cells, size);
+        let numbered = squares::ones_at_bottom(&cells, size)
+            .or_else(|| squares::margin_ones_at_bottom(picture, &grid));
         Ok(position::assemble(&reads, blur > 0., numbered))
     }
 
@@ -287,6 +294,7 @@ impl Recogniser {
                     crisp,
                     paper,
                     floor,
+                    overlays: Vec::new(),
                 };
                 let shape = squares::silhouette(size, &cell, &[]).ok()?;
                 Some(Reference {
@@ -413,6 +421,7 @@ fn plain(colour: [f32; 3], blur: f32, paper: f32) -> Cell {
         crisp: Vec::new(),
         paper,
         floor: 0.,
+        overlays: Vec::new(),
     }
 }
 

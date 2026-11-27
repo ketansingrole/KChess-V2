@@ -33,6 +33,15 @@ pub(crate) struct Cell {
     /// On a textured picture, the least brightness its squares' texture shows once averaged,
     /// however unevenly its lines are drawn; else 0.
     pub floor: f32,
+    /// Colours laid over the board, see-through, as an arrow drawn across squares is.
+    pub overlays: Vec<Overlay>,
+}
+
+/// A colour laid over the board: what shows is `alpha` of `colour` over what is beneath.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Overlay {
+    pub alpha: f32,
+    pub colour: [f32; 3],
 }
 
 /// How far in from a cell's edges its neighbours' colours reach: a pixel when the board is
@@ -117,6 +126,7 @@ impl Cell {
             crisp: Vec::new(),
             paper: 0.,
             floor: 0.,
+            overlays: Vec::new(),
         }
     }
 }
@@ -266,9 +276,146 @@ fn off_the_way(colour: [f32; 3], from: [f32; 3], to: [f32; 3]) -> f32 {
     )
 }
 
+/// How far `colour` is from `background` under `overlay`, at any share of it from none (an
+/// arrow's edges blend into the square) to the overlay laid twice (where two arrows of its
+/// colour cross).
+fn beneath(colour: [f32; 3], background: [f32; 3], overlay: &Overlay) -> f32 {
+    let to = [0, 1, 2].map(|c| overlay.alpha * (overlay.colour[c] - background[c]));
+    let along = [0, 1, 2].map(|c| colour[c] - background[c]);
+    let length = to.iter().map(|v| v * v).sum::<f32>();
+    if length < 1. {
+        return f32::MAX;
+    }
+    let share = (along.iter().zip(&to).map(|(a, t)| a * t).sum::<f32>() / length)
+        .clamp(0., 2. - overlay.alpha);
+    along
+        .iter()
+        .zip(&to)
+        .map(|(a, t)| (a - share * t).powi(2))
+        .sum::<f32>()
+        .sqrt()
+}
+
+/// How near a pixel must be to a square's colour under an overlay to be the square.
+const OVERLAID: f32 = 15.;
+
+/// The see-through colours laid over the board (an arrow drawn across it, a marked square's
+/// tint), up to `MOST_OVERLAYS`. A piece stays inside its square; what crosses the line between
+/// a light square and a dark one, showing each through it in the same share, is laid over them.
+/// Over a pixel pair either side of the line, `pixel = square + alpha * (colour - square)`, so
+/// their difference is the squares' own times `1 - alpha`. The pairs that bands across the lines
+/// agree on, `AGREEING` of a square's side in all, are an overlay.
+pub(crate) fn overlays(cells: &[Cell], size: usize) -> Vec<Overlay> {
+    if cells.len() != 64 {
+        return Vec::new();
+    }
+    let inset = inset(size, 0.);
+    let mut found: Vec<Overlay> = Vec::new();
+    for index in 0..64 {
+        let (row, column) = (index / 8, index % 8);
+        let right = (column < 7).then(|| (index + 1, true));
+        let below = (row < 7).then(|| (index + 8, false));
+        for (next, across) in [right, below].into_iter().flatten() {
+            let (a, b) = (&cells[index], &cells[next]);
+            let between = [0, 1, 2].map(|c| a.background[c] - b.background[c]);
+            let apart = between.iter().map(|v| v * v).sum::<f32>();
+            if apart < 400. {
+                continue;
+            }
+            // Each pixel pair along the line, in order, and what overlay it shows if any.
+            let mut along = Vec::new();
+            for t in inset..size - inset {
+                let (ia, ib) = if across {
+                    (t * size + size - 1 - inset, t * size + inset)
+                } else {
+                    ((size - 1 - inset) * size + t, inset * size + t)
+                };
+                let (pa, pb) = (a.rgb[ia], b.rgb[ib]);
+                if distance(pa, a.background) <= DIFFERENT
+                    || distance(pb, b.background) <= DIFFERENT
+                {
+                    along.push(None);
+                    continue;
+                }
+                let differ = [0, 1, 2].map(|c| pa[c] - pb[c]);
+                let through = differ.iter().zip(&between).map(|(d, e)| d * e).sum::<f32>() / apart;
+                let alpha = 1. - through;
+                // What is left of their difference once the squares' share is taken out.
+                let left = differ
+                    .iter()
+                    .zip(&between)
+                    .map(|(d, e)| (d - through * e).powi(2))
+                    .sum::<f32>()
+                    .sqrt();
+                if !(0.15..0.95).contains(&alpha) || left > OVERLAID {
+                    along.push(None);
+                    continue;
+                }
+                let colour = [0, 1, 2].map(|c| {
+                    ((pa[c] - through * a.background[c]) + (pb[c] - through * b.background[c]))
+                        / 2.
+                        / alpha
+                });
+                along.push(Some(Overlay { alpha, colour }));
+            }
+            // An overlay crosses the line as a band, the same all the way across it; a piece's
+            // edge reaching over the line crosses it at a pixel or two, blended differently at
+            // each.
+            let even = |a: &Option<Overlay>, b: &Option<Overlay>| {
+                a.zip(*b).is_some_and(|(a, b)| {
+                    (a.alpha - b.alpha).abs() < 0.05 && distance(a.colour, b.colour) < 20.
+                })
+            };
+            for run in along.chunk_by(even) {
+                if run.len() >= BAND {
+                    found.extend(run.iter().flatten());
+                }
+            }
+        }
+    }
+    let near = |a: &Overlay, b: &Overlay| {
+        (a.alpha - b.alpha).abs() < 0.1 && distance(a.colour, b.colour) < 40.
+    };
+    let mut kept = Vec::new();
+    while kept.len() < MOST_OVERLAYS {
+        let Some(best) = found
+            .iter()
+            .max_by_key(|a| found.iter().filter(|b| near(a, b)).count())
+            .copied()
+        else {
+            break;
+        };
+        let agree: Vec<Overlay> = found.iter().filter(|b| near(&best, b)).copied().collect();
+        if (agree.len() as f32) < AGREEING * size as f32 {
+            break;
+        }
+        let mut alphas: Vec<f32> = agree.iter().map(|overlay| overlay.alpha).collect();
+        alphas.sort_by(f32::total_cmp);
+        let colour =
+            median_colour(agree.iter().map(|overlay| overlay.colour)).unwrap_or(best.colour);
+        kept.push(Overlay {
+            alpha: alphas[alphas.len() / 2],
+            colour,
+        });
+        found.retain(|b| !near(&best, b));
+    }
+    kept
+}
+
+/// The fewest pixels across that an overlay crossing a line between squares shows.
+const BAND: usize = 3;
+
+/// How many pixel pairs, as a share of a square's side, must agree on an overlay: an arrow
+/// two squares long and a sixth of a square wide crosses lines for about a third of one.
+const AGREEING: f32 = 0.15;
+
+/// The most overlays a board is read with: a website's arrows come in a few colours.
+const MOST_OVERLAYS: usize = 4;
+
 /// Which of a cell's pixels differ from its colour, leaving out the outermost (a neighbour's
 /// colour bleeds into them when the board is placed a pixel off), a coordinate label's in
-/// `labels`, and lone specks (a compressed picture's noise).
+/// `labels`, the square's colour under an overlay, and lone specks (a compressed picture's
+/// noise).
 fn differing(size: usize, cell: &Cell, labels: &[Label]) -> Vec<bool> {
     let Cell {
         background, blur, ..
@@ -297,7 +444,18 @@ fn differing(size: usize, cell: &Cell, labels: &[Label]) -> Vec<bool> {
             };
             // Darker than the texture ever is, however much it strays.
             let darker = luma(colour) < cell.floor - DIFFERENT;
+            // Under one overlay, or under one laid over another where two arrows cross.
+            let overlaid = cell.overlays.iter().any(|overlay| {
+                beneath(colour, background, overlay) < OVERLAID
+                    || cell.overlays.iter().any(|under| {
+                        let laid = [0, 1, 2].map(|c| {
+                            background[c] + under.alpha * (under.colour[c] - background[c])
+                        });
+                        under != overlay && beneath(colour, laid, overlay) < OVERLAID
+                    })
+            });
             !label
+                && !overlaid
                 && band(size, index, blur).1 >= inset
                 && (apart > threshold || darker || enclosed[index])
         })
@@ -875,51 +1033,143 @@ pub(crate) fn ones_at_bottom(cells: &[Cell], size: usize) -> Option<bool> {
         for column in [0, 7] {
             let ranks: Vec<Option<(usize, usize)>> =
                 (0..8).map(|row| mark(row * 8 + column, corner)).collect();
-            if ranks.iter().flatten().count() < 4 {
-                continue;
-            }
-            // The "8", two holes, at the top or the bottom alone.
-            let eight = |row: usize| ranks[row].is_some_and(|(_, holes)| holes == 2);
-            if eight(0) && !eight(7) {
-                votes += 1;
-            } else if eight(7) && !eight(0) {
-                votes -= 1;
-            }
-            // The "1", the narrowest by two pixels and a quarter.
-            let mut widths: Vec<(usize, usize)> = ranks
-                .iter()
-                .enumerate()
-                .filter_map(|(row, mark)| mark.map(|(wide, _)| (wide, row)))
-                .collect();
-            widths.sort_unstable();
-            if let [(narrowest, row), (next, _), ..] = widths[..]
-                && narrowest + 2 <= next
-                && narrowest as f32 <= 0.75 * next as f32
-            {
-                votes += match row {
-                    7 => 1,
-                    0 => -1,
-                    _ => 0,
-                };
-            }
+            votes += ranks_vote(&ranks);
         }
         for row in [0, 7] {
             let files: Vec<Option<(usize, usize)>> = (0..8)
                 .map(|column| mark(row * 8 + column, corner))
                 .collect();
-            if files.iter().flatten().count() < 4 {
-                continue;
-            }
-            let holes = |column: usize| files[column].map(|(_, holes)| holes);
-            match (holes(0), holes(7)) {
-                (Some(1), Some(0)) => votes += 1,
-                (Some(0), Some(1)) => votes -= 1,
-                _ => {}
-            }
+            votes += files_vote(&files);
         }
     }
     (votes != 0).then_some(votes > 0)
 }
+
+/// What a side's rank numbers, each a mark's width and holes from the top row down, say of which
+/// way up the board is: 1 when White is at the bottom, -1 when Black is, 0 when they do not tell.
+/// The "8" is the one with two holes, at the top or the bottom alone; the "1" is the narrowest,
+/// by two pixels and a quarter.
+fn ranks_vote(ranks: &[Option<(usize, usize)>]) -> i32 {
+    if ranks.iter().flatten().count() < 4 {
+        return 0;
+    }
+    let mut votes = 0;
+    let eight = |row: usize| ranks[row].is_some_and(|(_, holes)| holes == 2);
+    if eight(0) && !eight(7) {
+        votes += 1;
+    } else if eight(7) && !eight(0) {
+        votes -= 1;
+    }
+    let mut widths: Vec<(usize, usize)> = ranks
+        .iter()
+        .enumerate()
+        .filter_map(|(row, mark)| mark.map(|(wide, _)| (wide, row)))
+        .collect();
+    widths.sort_unstable();
+    if let [(narrowest, row), (next, _), ..] = widths[..]
+        && narrowest + 2 <= next
+        && narrowest as f32 <= 0.75 * next as f32
+    {
+        votes += match row {
+            7 => 1,
+            0 => -1,
+            _ => 0,
+        };
+    }
+    votes
+}
+
+/// What a side's file letters, from the left column, say of which way up the board is, as
+/// `ranks_vote`: the "a" has a hole and the "h" none.
+fn files_vote(files: &[Option<(usize, usize)>]) -> i32 {
+    if files.iter().flatten().count() < 4 {
+        return 0;
+    }
+    let holes = |column: usize| files[column].map(|(_, holes)| holes);
+    match (holes(0), holes(7)) {
+        (Some(1), Some(0)) => 1,
+        (Some(0), Some(1)) => -1,
+        _ => 0,
+    }
+}
+
+/// Which way up the board is by coordinates printed around it, beside each row and below or
+/// above each column, as `ones_at_bottom`: `Some(true)` when White is at the bottom.
+pub(crate) fn margin_ones_at_bottom(picture: &Picture, grid: &Grid) -> Option<bool> {
+    let reach = grid.width.min(grid.height) * 0.6;
+    let (right, bottom) = (grid.x + 8. * grid.width, grid.y + 8. * grid.height);
+    let row = |row: usize| {
+        (
+            grid.y + row as f32 * grid.height,
+            grid.y + (row + 1) as f32 * grid.height,
+        )
+    };
+    let column = |column: usize| {
+        (
+            grid.x + column as f32 * grid.width,
+            grid.x + (column + 1) as f32 * grid.width,
+        )
+    };
+    let mut votes = 0;
+    for (from, to) in [(grid.x - reach, grid.x), (right, right + reach)] {
+        let ranks: Vec<Option<(usize, usize)>> = (0..8)
+            .map(|at| {
+                let (top, bottom) = row(at);
+                glyph(picture, [from, top, to, bottom])
+            })
+            .collect();
+        votes += ranks_vote(&ranks);
+    }
+    for (from, to) in [(grid.y - reach, grid.y), (bottom, bottom + reach)] {
+        let files: Vec<Option<(usize, usize)>> = (0..8)
+            .map(|at| {
+                let (left, right) = column(at);
+                glyph(picture, [left, from, right, to])
+            })
+            .collect();
+        votes += files_vote(&files);
+    }
+    (votes != 0).then_some(votes > 0)
+}
+
+/// The largest mark standing alone in a region of `picture` (`[left, top, right, bottom]`, cut
+/// to the picture): its width and how many holes it has. The marks touching the region's edges
+/// (a frame's line, the board, the page beyond) are left out, and specks.
+fn glyph(picture: &Picture, [left, top, right, bottom]: [f32; 4]) -> Option<(usize, usize)> {
+    let (left, top) = (left.max(0.).ceil() as usize, top.max(0.).ceil() as usize);
+    let right = right.min(picture.width as f32).floor() as usize;
+    let bottom = bottom.min(picture.height as f32).floor() as usize;
+    if right < left + 3 || bottom < top + 5 {
+        return None;
+    }
+    let (width, height) = (right - left, bottom - top);
+    let at = |x: usize, y: usize| picture.rgb[(top + y) * picture.width + left + x];
+    let background =
+        median_colour((0..width * height).map(|index| at(index % width, index / width)))?;
+    // The region's ink in a square as wide as its longer side, as `parts` reads.
+    let side = width.max(height);
+    let ink: Vec<bool> = (0..side * side)
+        .map(|index| {
+            let (x, y) = (index % side, index / side);
+            x < width && y < height && distance(at(x, y), background) > GLYPH_INK
+        })
+        .collect();
+    let (pixels, bounds) = parts(side, &ink)
+        .into_iter()
+        .filter(|(pixels, [left, top, right, bottom])| {
+            pixels.len() >= 4
+                && *left > 0
+                && *top > 0
+                && *right < width
+                && *bottom < height
+                && (bottom - top) as f32 >= 0.15 * height as f32
+        })
+        .max_by_key(|(pixels, _)| pixels.len())?;
+    Some((bounds[2] - bounds[0], holes(side, &pixels, bounds)))
+}
+
+/// How far a coordinate's pixels stand from the margin's colour.
+const GLYPH_INK: f32 = 60.;
 
 /// How many holes a mark has: parts of its bounds it does not cover and encloses.
 fn holes(size: usize, pixels: &[usize], [left, top, right, bottom]: Bounds) -> usize {

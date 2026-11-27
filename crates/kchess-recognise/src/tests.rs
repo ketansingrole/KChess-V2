@@ -286,7 +286,7 @@ fn coordinate_labels_are_left_out() {
 /// A board drawn from Black's side with only its kings, each on the other's home rank, reads
 /// as White's from the pieces alone; its coordinates tell which way up it is: along the side,
 /// the "8" with two holes and the narrow "1", or along the bottom, the "a" with a hole and the
-/// "h" with none.
+/// "h" with none; printed inside the edge squares or around the board.
 #[test]
 fn coordinates_tell_which_way_up_a_board_is() {
     let fen = "4K3/8/8/8/8/8/8/4k3 w - - 0 1";
@@ -297,7 +297,7 @@ fn coordinates_tell_which_way_up_a_board_is() {
         .board;
     let pieces = set("cburnett");
     let square = 60u32;
-    let margin = 10;
+    let margin = 30;
     let plain = picture(&board, &pieces, square as usize, false, margin);
     let read = |image: image::RgbaImage| {
         recogniser()
@@ -315,13 +315,16 @@ fn coordinates_tell_which_way_up_a_board_is() {
         One,
         Arch,
     }
+    // In the square's other colour, as a website prints it on the square.
+    let other = |row: u32, column: u32| {
+        if (row + column) % 2 == 1 {
+            image::Rgba([240, 217, 181, 255])
+        } else {
+            image::Rgba([181, 136, 99, 255])
+        }
+    };
     let draw =
-        |image: &mut image::RgbaImage, glyph: Glyph, at: (u32, u32), row: u32, column: u32| {
-            let colour = if (row + column) % 2 == 1 {
-                image::Rgba([240, 217, 181, 255])
-            } else {
-                image::Rgba([181, 136, 99, 255])
-            };
+        |image: &mut image::RgbaImage, glyph: Glyph, at: (u32, u32), colour: image::Rgba<u8>| {
             let (left, top) = at;
             let (width, height) = if glyph == Glyph::One {
                 (3, 16)
@@ -355,12 +358,11 @@ fn coordinates_tell_which_way_up_a_board_is() {
             &mut ranks,
             glyph,
             (margin + 3, margin + row * square + 3),
-            row,
-            0,
+            other(row, 0),
         );
     }
     assert!(!read(ranks).white_at_bottom);
-    let mut files = plain;
+    let mut files = plain.clone();
     for column in 0..8 {
         let glyph = match column {
             0 => Glyph::Arch,
@@ -370,9 +372,105 @@ fn coordinates_tell_which_way_up_a_board_is() {
             margin + column * square + square - 13,
             margin + 8 * square - 19,
         );
-        draw(&mut files, glyph, at, 7, column);
+        draw(&mut files, glyph, at, other(7, column));
     }
     assert!(!read(files).white_at_bottom);
+    // Around the board, in ink on the page: the ranks to the left of each row and the files
+    // below each column.
+    let ink = image::Rgba([40, 40, 40, 255]);
+    let mut beside = plain.clone();
+    for row in 0..8 {
+        let glyph = match row {
+            0 => Glyph::One,
+            7 => Glyph::Eight,
+            _ => Glyph::Box,
+        };
+        let left = if glyph == Glyph::One { 14 } else { 10 };
+        draw(&mut beside, glyph, (left, margin + row * square + 22), ink);
+    }
+    assert!(!read(beside).white_at_bottom);
+    let mut below = plain;
+    for column in 0..8 {
+        let glyph = match column {
+            0 => Glyph::Arch,
+            _ => Glyph::Box,
+        };
+        let at = (margin + column * square + 25, margin + 8 * square + 7);
+        draw(&mut below, glyph, at, ink);
+    }
+    assert!(!read(below).white_at_bottom);
+}
+
+/// Arrows drawn over a board as websites draw them, see-through, from square to square and over
+/// the pieces on their way, crossing each other, are left out of the squares: a square under one
+/// alone is empty, a piece under one is the piece. Each arrow is two squares long or more: one a
+/// square long crosses a single line between squares, on small squares too little of one to be
+/// told from a piece.
+#[test]
+fn arrows_over_the_board_are_left_out() {
+    // As websites colour them: green, red, blue and orange.
+    const COLOURS: [[f32; 3]; 4] = [
+        [21., 120., 27.],
+        [136., 32., 32.],
+        [0., 48., 136.],
+        [230., 143., 0.],
+    ];
+    let pieces = set("cburnett");
+    kchess_testkit::random::check(12, |rng: &mut Rng| {
+        let board = random_position(rng);
+        let square = 40 + rng.below(30);
+        let white_at_bottom = rng.chance(50);
+        let margin = 10;
+        let mut image = picture(&board, &pieces, square, white_at_bottom, margin);
+        let alpha = 0.5 + rng.below(30) as f32 / 100.;
+        let width = square as f32 * (0.15 + rng.below(10) as f32 / 100.);
+        let centre = |at: usize| {
+            let (column, row) = (at % 8, at / 8);
+            [
+                margin as f32 + (column as f32 + 0.5) * square as f32,
+                margin as f32 + (row as f32 + 0.5) * square as f32,
+            ]
+        };
+        let arrows = 1 + rng.below(3);
+        let mut drawn = Vec::new();
+        while drawn.len() < arrows {
+            let from = rng.below(64);
+            let to = (from + 1 + rng.below(63)) % 64;
+            let apart = (from % 8).abs_diff(to % 8).max((from / 8).abs_diff(to / 8));
+            if apart < 2 {
+                continue;
+            }
+            let colour = *rng.pick(&COLOURS).unwrap();
+            drawn.push((centre(from), centre(to), colour));
+            let ([x0, y0], [x1, y1]) = (centre(from), centre(to));
+            let (dx, dy) = (x1 - x0, y1 - y0);
+            let length = dx.hypot(dy);
+            // Each pixel within half the arrow's width of the line between the centres, once.
+            for (x, y, pixel) in image.enumerate_pixels_mut() {
+                let (px, py) = (x as f32 + 0.5 - x0, y as f32 + 0.5 - y0);
+                let along = (px * dx + py * dy) / length;
+                let off = (px * dy - py * dx).abs() / length;
+                if (0. ..=length).contains(&along) && off <= width / 2. {
+                    for c in 0..3 {
+                        let beneath = f32::from(pixel[c]);
+                        pixel[c] = (beneath + alpha * (colour[c] - beneath)).round() as u8;
+                    }
+                }
+            }
+        }
+        let read = recogniser()
+            .read_image(&image::DynamicImage::ImageRgba8(image))
+            .unwrap();
+        let wrong: Vec<Square> = Square::ALL
+            .into_iter()
+            .filter(|&at| read.board.piece_at(at) != board.piece_at(at))
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "{square} pixels, alpha {alpha}, arrows {drawn:?}: {wrong:?} of {}",
+            read.fen
+        );
+    });
 }
 
 /// How a printed diagram is drawn: dark squares hatched with lines `spacing` pixels apart along
