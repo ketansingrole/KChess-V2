@@ -42,6 +42,14 @@ fn wait_for_fen(app: &mut Harness, expected: &str) {
     });
 }
 
+/// Set the editor's board to the position Set the board names `name`, found by searching for it.
+fn set_board(app: &mut Harness, name: &str) {
+    app.click_label("Set the board");
+    app.type_text(name);
+    app.press("enter");
+    app.settle();
+}
+
 fn clipboard(app: &mut Harness) -> Option<String> {
     app.cx.read_from_clipboard().and_then(|item| item.text())
 }
@@ -827,11 +835,45 @@ fn the_editor_starts_from_the_standard_position(cx: &mut gpui_kit::TestAppContex
     }
 }
 
+/// Set the board sets up an opening as the Openings page lists it and an endgame Practice
+/// drills, side to move and castling with them, and shows no choice after: the same one sets the
+/// edited board up again.
+#[gpui_kit::test]
+fn set_the_board_sets_up_an_opening_and_an_endgame(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = editor(cx);
+    set_board(&mut app, "Ruy Lopez");
+    wait_for_fen(
+        &mut app,
+        "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 0 1",
+    );
+    assert_eq!(app.find(("editor-turn", 1usize)).selected(), Some(true));
+    assert_eq!(app.status(), "Ready to analyse");
+
+    const LUCENA: &str = "1K1k4/1P6/8/8/8/8/r7/2R5 w - - 0 1";
+    set_board(&mut app, "Lucena");
+    wait_for_fen(&mut app, LUCENA);
+    // The choice is not left showing once the board is set: it would name the board after edits.
+    let shown = app.with_window(|window, _| {
+        window
+            .try_find_by_label("Set the board")
+            .and_then(|select| select.value().map(str::to_string))
+    });
+    assert_eq!(shown.as_deref(), Some("Set the board"));
+    assert_eq!(app.find(("editor-turn", 0usize)).selected(), Some(true));
+    assert_eq!(app.find("castling-K").checked(), Some(false));
+    // Edited, the same endgame is set up again from the start.
+    app.click("remove-pieces-White");
+    app.click_square("b7", true);
+    wait_for_fen(&mut app, "1K1k4/8/8/8/8/8/r7/2R5 w - - 0 1");
+    set_board(&mut app, "Lucena");
+    wait_for_fen(&mut app, LUCENA);
+}
+
 /// ⌘Z takes back the editor's changes one by one, and ⇧⌘Z redoes them.
 #[gpui_kit::test]
 fn the_editor_undoes_and_redoes_its_changes(cx: &mut gpui_kit::TestAppContext) {
     let mut app = editor(cx);
-    app.click("clear-board");
+    set_board(&mut app, "Empty board");
     wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
     app.click(("editor-turn", 1usize));
     wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 b - - 0 1");
@@ -845,7 +887,7 @@ fn the_editor_undoes_and_redoes_its_changes(cx: &mut gpui_kit::TestAppContext) {
     app.press("shift-secondary-z");
     wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
     // A new change drops what was undone.
-    app.click("start-position");
+    set_board(&mut app, "Starting position");
     wait_for_fen(&mut app, START_FEN);
     app.press("shift-secondary-z");
     wait_for_fen(&mut app, START_FEN);
@@ -864,7 +906,7 @@ fn the_editor_sets_up_a_variant_position(cx: &mut gpui_kit::TestAppContext) {
         app.press("down");
     }
     app.press("enter");
-    app.click("start-position");
+    set_board(&mut app, "Starting position");
     wait_for_fen(
         &mut app,
         "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1",
@@ -929,7 +971,7 @@ fn a_spare_piece_is_a_named_button_that_is_chosen(cx: &mut gpui_kit::TestAppCont
 #[gpui_kit::test]
 fn an_empty_board_is_no_position_to_analyse(cx: &mut gpui_kit::TestAppContext) {
     let mut app = editor(cx);
-    app.click("clear-board");
+    set_board(&mut app, "Empty board");
     wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
     assert_eq!(app.status(), "Not a legal position yet");
     for action in ["analyse-position", "play-stockfish", "play-friend"] {
@@ -938,7 +980,7 @@ fn an_empty_board_is_no_position_to_analyse(cx: &mut gpui_kit::TestAppContext) {
     // Castling needs the king and rook at home.
     assert!(!app.enabled("castling-K"));
 
-    app.click("start-position");
+    set_board(&mut app, "Starting position");
     wait_for_fen(&mut app, START_FEN);
     assert!(
         !app.shows("status-banner"),
@@ -949,7 +991,7 @@ fn an_empty_board_is_no_position_to_analyse(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn a_position_set_up_with_pieces_is_analysed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = editor(cx);
-    app.click("clear-board");
+    set_board(&mut app, "Empty board");
     for (piece, squares) in [
         ("spare-White-King", &["g1"][..]),
         ("spare-White-Rook", &["a1"]),
@@ -1776,7 +1818,7 @@ fn the_squares_to_check_are_marked_until_changed(cx: &mut gpui_kit::TestAppConte
     app.click_square("a3", true);
     wait_for_fen(&mut app, "4k3/8/8/8/4P3/Q7/8/4K3 w - - 0 1");
     assert_eq!(marked(&mut app), [Square::E4]);
-    app.click("start-position");
+    set_board(&mut app, "Starting position");
     wait_for_fen(&mut app, START_FEN);
     assert!(marked(&mut app).is_empty());
     assert!(!app.shows("editor-marked"));
@@ -1825,7 +1867,7 @@ fn a_picture_read_from_the_wrong_side_is_turned_around(cx: &mut gpui_kit::TestAp
     app.click("editor-turn-around");
     wait_for_fen(&mut app, "1k6/8/8/8/8/8/1P6/R3K2R w KQ - 0 1");
     assert_eq!(page(&mut app), [Square::B2]);
-    app.click("start-position");
+    set_board(&mut app, "Starting position");
     wait_for_fen(&mut app, START_FEN);
     assert!(!app.shows("editor-turn-around"));
 }

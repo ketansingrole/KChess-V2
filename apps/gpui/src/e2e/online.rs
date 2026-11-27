@@ -508,20 +508,30 @@ fn following_keeps_its_order_as_players_come_online(cx: &mut gpui_kit::TestAppCo
     };
     let before = names(&mut app);
     let second = before[1].trim_start_matches('@').to_string();
-    let online = UserPresence {
-        online: true,
+    let presence = |online: bool| UserPresence {
+        online,
         playing: false,
         signal: None,
         playing_id: None,
     };
-    app.with_window(|_, cx| {
-        crate::shell::view::<FriendsPage>(cx)
-            .expect("the page")
-            .update(cx, |page, cx| {
-                page.presence_arrived([(second.clone(), online.clone())], cx);
-                cx.notify();
-            })
-    });
+    let arrive = |app: &mut Harness, users: Vec<(String, UserPresence)>| {
+        app.with_window(|_, cx| {
+            crate::shell::view::<FriendsPage>(cx)
+                .expect("the page")
+                .update(cx, |page, cx| {
+                    page.presence_arrived(users, cx);
+                    cx.notify();
+                })
+        })
+    };
+    // Presence as the page opened: the list is sorted by the first report, so the page's own,
+    // late on a slow runner, could not be the one that comes online (Windows Stress, 2026-11-27).
+    let offline = before
+        .iter()
+        .map(|name| (name.trim_start_matches('@').to_string(), presence(false)))
+        .collect();
+    arrive(&mut app, offline);
+    arrive(&mut app, vec![(second.clone(), presence(true))]);
     assert_eq!(names(&mut app), before, "kept while the page is open");
     app.open("Home");
     app.open("Following");

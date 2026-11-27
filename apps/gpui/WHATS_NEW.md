@@ -9,7 +9,11 @@ with nothing there.
 
 ## Unreleased
 
-KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving. Player search, Books, the engine lines, the Watch page, move lists and the panels beside the board are cleaner and easier to read.
+The board editor sets up well-known openings and endgames in one click, and KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving. Player search, Books, the engine lines, the Watch page, move lists and the panels beside the board are cleaner and easier to read.
+
+### Added
+
+- Set the board in the board editor sets up the starting position, an empty board, a popular opening or a classic endgame such as the Lucena or Philidor position.
 
 ### Changed
 
