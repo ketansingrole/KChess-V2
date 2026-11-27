@@ -66,6 +66,12 @@ pub fn run_with(command: &mut Command) -> Result {
     run_shown(command, &[])
 }
 
+/// Runs `command` like `run_with`, letting it print nothing for `quiet` (or the longer limit
+/// `KCHESS_QUIET_MINUTES` sets): for a step known to be quieter than any other.
+pub fn run_quiet_for(command: &mut Command, quiet: Duration) -> Result {
+    run_watched(command, &[], quiet_limit().max(quiet))
+}
+
 /// Runs `program` with `args` like `run`, but never shows the `secrets` among them: a failure
 /// message (printed and kept in build logs) names them `<redacted>`.
 // Only notarization (macOS) passes secrets; its test runs on any Unix.
@@ -75,9 +81,15 @@ pub fn run_redacted(program: &str, args: &[&str], secrets: &[&str]) -> Result {
 }
 
 /// How long a command may print nothing before it is taken for hung and stopped: longer than the
-/// quietest step xtask runs (a release link with LTO), far shorter than the hours a stuck one
-/// cost. `KCHESS_QUIET_MINUTES` sets another limit for a step known to be slower.
+/// quietest step xtask runs but the release build's (`RELEASE_BUILD_QUIET`), far shorter than the
+/// hours a stuck one cost. `KCHESS_QUIET_MINUTES` sets another limit for a step known to be slower.
 const QUIET: Duration = Duration::from_secs(20 * 60);
+
+/// The release build's: its link optimises the whole program as one (fat LTO, one codegen unit),
+/// printing nothing until it ends. On CI's macOS runner that took 8 minutes for 2026.11.9's
+/// package (2026-11-22) and 20 for 2026.11.10's five days later, when the second run passed the
+/// 20-minute limit and was stopped. The job's own `timeout-minutes` still ends a real hang.
+pub const RELEASE_BUILD_QUIET: Duration = Duration::from_secs(45 * 60);
 
 fn quiet_limit() -> Duration {
     std::env::var("KCHESS_QUIET_MINUTES")
@@ -427,6 +439,15 @@ mod tests {
     }
 
     #[cfg(unix)]
+    /// The release build waits longer for its silent link than any other step waits.
+    #[test]
+    fn the_release_build_may_be_quiet_longest() {
+        assert!(RELEASE_BUILD_QUIET > QUIET);
+        if std::env::var_os("KCHESS_QUIET_MINUTES").is_none() {
+            assert_eq!(quiet_limit().max(RELEASE_BUILD_QUIET), RELEASE_BUILD_QUIET);
+        }
+    }
+
     #[test]
     fn a_command_that_keeps_printing_runs_past_the_quiet_limit() {
         run_watched(
