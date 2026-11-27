@@ -53,7 +53,7 @@ impl AnalysisPage {
                                     .label("Cancel")
                                     .on_click(move |_, window, cx| {
                                         // A link still being fetched is dropped with it.
-                                        let _ = page.update(cx, |page, _| page.importing = None);
+                                        page.update(cx, |page, _| page.importing = None).ok();
                                         window.close_dialog(cx);
                                     })
                                     .into_any_element()
@@ -65,7 +65,7 @@ impl AnalysisPage {
                                 .loading(importing)
                                 .disabled(text.read(cx).value().trim().is_empty())
                                 .on_click(move |_, window, cx| {
-                                    let _ = run.update(cx, |page, cx| page.run_import(window, cx));
+                                    run.update(cx, |page, cx| page.run_import(window, cx)).ok();
                                 })
                                 .into_any_element(),
                         ],
@@ -216,7 +216,7 @@ impl AnalysisPage {
         window.refresh();
         cx.spawn_in(window, async move |this, cx| {
             let pgn = pgn.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 // Dismissed meanwhile (Cancel, Escape or a click outside): nobody waits for it.
                 if this.importing != Some(turn) || !window.has_active_dialog(cx) {
                     this.importing = this.importing.filter(|pending| *pending != turn);
@@ -249,7 +249,8 @@ impl AnalysisPage {
                     });
                     window.refresh();
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }

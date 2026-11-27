@@ -1,8 +1,7 @@
 use super::*;
 use crate::test_host::TestHost;
 use kchess_contracts::types::{
-    ExplorerSpeed, GameDbResult, GameDbSide, GameDbSort, GameDbStructure, PositionLookupKind,
-    SavedLookup,
+    GameDbResult, GameDbSide, GameDbSort, GameDbStructure, PositionLookupKind, SavedLookup, Speed,
 };
 use kchess_domain::pgn::{make_pgn, parse_pgn};
 use kchess_domain::rules;
@@ -2054,21 +2053,21 @@ async fn a_deep_search_keeps_the_games_of_a_length_speed_material_structure_and_
         ),
         (
             GameDbQuery {
-                speed: Some(ExplorerSpeed::Classical),
+                speed: Some(Speed::Classical),
                 ..base()
             },
             &["Carlsbad"],
         ),
         (
             GameDbQuery {
-                speed: Some(ExplorerSpeed::Blitz),
+                speed: Some(Speed::Blitz),
                 ..base()
             },
             &["Isolated"],
         ),
         (
             GameDbQuery {
-                speed: Some(ExplorerSpeed::Bullet),
+                speed: Some(Speed::Bullet),
                 ..base()
             },
             &["Ending"],
@@ -2105,7 +2104,7 @@ async fn a_deep_search_keeps_the_games_of_a_length_speed_material_structure_and_
         (
             GameDbQuery {
                 structure: Some(GameDbStructure::Carlsbad),
-                speed: Some(ExplorerSpeed::Blitz),
+                speed: Some(Speed::Blitz),
                 ..base()
             },
             &[],
@@ -2160,7 +2159,7 @@ async fn a_deep_search_keeps_the_games_of_a_length_speed_material_structure_and_
         (
             GameDbQuery {
                 pieces: Some("Bg5".into()),
-                speed: Some(ExplorerSpeed::Classical),
+                speed: Some(Speed::Classical),
                 ..base()
             },
             &["Carlsbad"],
@@ -2172,7 +2171,7 @@ async fn a_deep_search_keeps_the_games_of_a_length_speed_material_structure_and_
     // A deep search pages like any other.
     let page = games
         .games(GameDbQuery {
-            speed: Some(ExplorerSpeed::Blitz),
+            speed: Some(Speed::Blitz),
             min_moves: Some(1),
             offset: 0,
             limit: 1,

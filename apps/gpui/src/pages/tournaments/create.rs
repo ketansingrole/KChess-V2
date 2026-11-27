@@ -137,7 +137,7 @@ impl CreateArena {
         let variant = select(
             kchess_domain::variant::Variant::ALL
                 .iter()
-                .map(|variant| Choice::new(variant.key(), variant.label()))
+                .map(|variant| Choice::new(variant.as_str(), variant.label()))
                 .collect(),
             "standard".into(),
         );
@@ -266,7 +266,8 @@ impl CreateArena {
                     Ok(Reply::NeedsReconnect) => this.reconnect = true,
                     Ok(Reply::Done(created)) => {
                         window.close_dialog(cx);
-                        let _ = page.update(cx, |page, cx| page.created(&created, window, cx));
+                        page.update(cx, |page, cx| page.created(&created, window, cx))
+                            .ok();
                     }
                     Err(_) => {}
                 }

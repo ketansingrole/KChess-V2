@@ -10,14 +10,8 @@ wire_enum!(#[doc = "`opening` is the Lichess games database, `masters` over-the-
     Database = "database",
 });
 
-wire_enum!(#[doc = "Time control of an opening-explorer game pool."] ExplorerSpeed, EXPLORER_SPEEDS {
-    UltraBullet = "ultraBullet",
-    Bullet = "bullet",
-    Blitz = "blitz",
-    Rapid = "rapid",
-    Classical = "classical",
-    Correspondence = "correspondence",
-});
+/// Time control of an opening-explorer game pool.
+pub use kchess_domain::perf::{SPEEDS, Speed};
 
 union!(#[doc = "Whether play is rated or casual."] LookupMode { Rated = "rated", Casual = "casual" });
 
@@ -27,7 +21,7 @@ union!(#[doc = "Whether play is rated or casual."] LookupMode { Rated = "rated",
 pub struct LookupOptions {
     /// Lichess and player databases.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub speeds: Option<Vec<ExplorerSpeed>>,
+    pub speeds: Option<Vec<Speed>>,
     /// Lichess database: rating groups (each is the lower bound of its band).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ratings: Option<Vec<u32>>,

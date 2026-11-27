@@ -71,7 +71,7 @@ impl Ai {
             let Some(status) = read.await.warn_on_err() else {
                 return;
             };
-            let _ = this.update(cx, |this, cx| this.adopt(status, cx));
+            this.update(cx, |this, cx| this.adopt(status, cx)).ok();
         })
         .detach();
     }
@@ -86,13 +86,14 @@ impl Ai {
                 AiModelList::Listed { models } => models,
                 AiModelList::Refused { .. } => Vec::new(),
             };
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.models = models
                     .into_iter()
                     .map(|model| (model.slug, model.name))
                     .collect();
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -108,7 +109,7 @@ impl Ai {
         let connected = cx.global::<AppCore>().request(calls::AiConnect {});
         cx.spawn_in(window, async move |this, cx| {
             let result = connected.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 cx.notify();
                 match result {
@@ -122,7 +123,8 @@ impl Ai {
                         window.push_notification(kchess_app::loading::failure("ai", &cause), cx)
                     }
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -133,7 +135,7 @@ impl Ai {
             let Some(status) = done.await.warn_on_err() else {
                 return;
             };
-            let _ = this.update(cx, |this, cx| this.adopt(status, cx));
+            this.update(cx, |this, cx| this.adopt(status, cx)).ok();
         })
         .detach();
     }
@@ -148,10 +150,11 @@ impl Ai {
             let Some(status) = saved.await.warn_on_err() else {
                 return;
             };
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.status = status;
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -188,21 +191,20 @@ enum Phase {
 pub struct Explainer {
     request: Option<AiRequest>,
     phase: Option<Phase>,
-    asked: u64,
+    asked: kchess_app::loading::Epoch,
 }
 
 impl Explainer {
     pub fn ask(&mut self, request: AiRequest, on_answer: Option<OnAnswer>, cx: &mut Context<Self>) {
-        self.asked += 1;
-        let asked = self.asked;
+        let asked = self.asked.start();
         self.request = Some(request.clone());
         self.phase = Some(Phase::Asking);
         cx.notify();
         let answer = cx.global::<AppCore>().request(calls::AiExplain { request });
         cx.spawn(async move |this, cx| {
             let result = answer.await;
-            let _ = this.update(cx, |this, cx| {
-                if this.asked != asked {
+            this.update(cx, |this, cx| {
+                if !this.asked.is_current(asked) {
                     return;
                 }
                 this.phase = Some(match result {
@@ -217,7 +219,8 @@ impl Explainer {
                 });
                 cx.notify();
                 handle(cx).update(cx, |ai, cx| ai.refresh(cx));
-            });
+            })
+            .ok();
         })
         .detach();
     }

@@ -96,7 +96,9 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
     cx.spawn(async move |cx| {
         let executor = cx.background_executor().clone();
         let timer = |after: Duration| executor.timer(after);
-        let _ = window.update(cx, |_, window, cx| set_up(scenario, window, cx));
+        window
+            .update(cx, |_, window, cx| set_up(scenario, window, cx))
+            .ok();
         timer(WARM_UP).await;
         let mut collector = cx.update(|cx| cx.foreground_journal().collector());
         // `pages-tour` opens every page once before measuring, each first opening on its own:
@@ -106,7 +108,9 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
             for (page, label) in tour() {
                 let _ = collector.collect_unseen();
                 let opened = std::time::Instant::now();
-                let _ = window.update(cx, |_, window, cx| shell::open(page, window, cx));
+                window
+                    .update(cx, |_, window, cx| shell::open(page, window, cx))
+                    .ok();
                 timer(step_every(scenario)).await;
                 let mut first = Totals {
                     opening: Some((label, opened)),
@@ -133,7 +137,9 @@ pub fn start(window: AnyWindowHandle, cx: &mut App) {
                 // What was drawn before the step belongs to the page before it.
                 totals.add(collector.collect_unseen().entries);
                 let stepped = std::time::Instant::now();
-                let _ = window.update(cx, |_, window, cx| step(scenario, &mut ply, window, cx));
+                window
+                    .update(cx, |_, window, cx| step(scenario, &mut ply, window, cx))
+                    .ok();
                 if scenario == Scenario::PagesTour {
                     totals.opening = Some((tour()[(ply - 1) % tour().len()].1, stepped));
                 }
@@ -236,7 +242,7 @@ fn set_up(scenario: Scenario, window: &mut Window, cx: &mut App) {
 /// `lichess-login`: sign in, then quit once the account is connected. `cargo xtask bench` runs
 /// it before a `lichess-*` scenario on the same profile, which then starts signed in.
 fn log_in_and_quit(window: AnyWindowHandle, cx: &mut App) {
-    let _ = window.update(cx, |_, window, cx| sign_in(window, cx));
+    window.update(cx, |_, window, cx| sign_in(window, cx)).ok();
     cx.spawn(async move |cx| {
         for _ in 0..400 {
             if cx.update(|cx| crate::accounts::handle(cx).read(cx).active(cx).is_some()) {

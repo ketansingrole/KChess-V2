@@ -11,7 +11,6 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
@@ -19,7 +18,7 @@ use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt as _;
 use tokio_util::sync::CancellationToken;
 
-use super::{GameDbService, Reporter, Running, failed, import, progress};
+use super::{GameDbService, Reporter, Running, import};
 use crate::download;
 use crate::host::Level;
 use crate::store::sql::Sql as _;
@@ -246,36 +245,10 @@ impl GameDbService {
         keep: Option<u32>,
         meter: &dyn Meter,
     ) -> Result<GameDbImported> {
-        let result = self.master_install_inner(archive, keep, meter).await;
-        self.inner.logged("broadcast games download", result)
-    }
-
-    async fn master_install_inner(
-        &self,
-        archive: &str,
-        keep: Option<u32>,
-        meter: &dyn Meter,
-    ) -> Result<GameDbImported> {
-        let mut guard = self.claim(ID)?;
-        let running = Arc::clone(&guard.running);
-        let count = match self.bring_months(archive, keep, meter, &running).await {
-            Ok(count) => count,
-            Err(error) => {
-                guard.end = Some(failed(&running, ID, &error));
-                return Err(error);
-            }
-        };
-        let database =
-            self.inner.info(ID).await?.ok_or_else(|| {
-                CoreError::new("The database could not be read after the download.")
-            })?;
-        guard.end = Some(progress(Phase::Done, ID, count, None));
-        drop(guard);
-        Ok(GameDbImported {
-            database,
-            added: count.games,
-            skipped: count.skipped,
+        self.download_run("broadcast games download", ID, |running| async move {
+            self.bring_months(archive, keep, meter, &running).await
         })
+        .await
     }
 
     /// Downloads and reads in each missing month, oldest first: what they added.

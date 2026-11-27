@@ -238,7 +238,8 @@ impl GuessMoves {
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
             let ready = matches!(status.await, Ok(status) if status.ready);
-            let _ = this.update(cx, |this, cx| this.engine_known(ready, cx));
+            this.update(cx, |this, cx| this.engine_known(ready, cx))
+                .ok();
         })
         .detach();
         GuessMoves {
@@ -388,7 +389,7 @@ impl GuessMoves {
                 if !first {
                     cx.background_executor().timer(REPLY).await;
                 }
-                let _ = this.update(cx, |this, cx| this.other_move(cx));
+                this.update(cx, |this, cx| this.other_move(cx)).ok();
             }));
         } else if self.engine_usable(cx) {
             self.start_probe(Probe::Best(self.ply), None, cx);
@@ -453,17 +454,10 @@ impl GuessMoves {
     }
 
     fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) {
-            return;
-        }
         let setup = self.setup_now();
         let taking = self.your_turn();
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice.missed(heard, &setup.fen, taking, cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        let Some(heard) = self.voice.heard(event, &setup.fen, taking, cx) else {
+            return;
         };
         let turn = Turn {
             taking,
@@ -483,16 +477,8 @@ impl GuessMoves {
     /// `text` said clearly, with voice on: as the recognizer's phrase reaches the page.
     #[cfg(any(test, feature = "test-support"))]
     pub fn hear_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.voice.control.enabled = true;
-        let heard = crate::voice::Heard {
-            text: text.into(),
-            raw: text.into(),
-            confidence: 1.,
-            words: Vec::new(),
-            unclear: false,
-        };
-        let owner = self.voice.control.owner;
-        self.voice_heard(&crate::voice::VoiceEvent::Heard { owner, heard }, cx);
+        let heard = self.voice.control.hear_clearly(text);
+        self.voice_heard(&heard, cx);
     }
 
     /// `uci` from the position at `ply` as `position::canonical_uci` writes it, so guesses, the
@@ -855,7 +841,7 @@ impl GuessMoves {
                 .collect(),
             usize::from(self.side == Color::Black),
             move |index, _, cx| {
-                let _ = page.update(cx, |this, cx| {
+                page.update(cx, |this, cx| {
                     let side = if index == 1 {
                         Color::Black
                     } else {
@@ -868,7 +854,8 @@ impl GuessMoves {
                         }
                         cx.notify();
                     }
-                });
+                })
+                .ok();
             },
             false,
             palette,
@@ -1127,7 +1114,7 @@ impl GuessMoves {
             },
             "No moves yet".into(),
             move |ply, _, cx| {
-                let _ = page.update(cx, |this, cx| this.view(ply, cx));
+                page.update(cx, |this, cx| this.view(ply, cx)).ok();
             },
             crate::notation::figurine(cx),
             palette,

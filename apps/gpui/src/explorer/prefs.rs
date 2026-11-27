@@ -10,7 +10,7 @@ pub(super) struct Prefs {
     #[serde(deserialize_with = "lenient")]
     pub(super) kind: PositionLookupKind,
     #[serde(deserialize_with = "known_speeds")]
-    pub(super) speeds: Vec<ExplorerSpeed>,
+    pub(super) speeds: Vec<Speed>,
     pub(super) ratings: Vec<f64>,
     pub(super) player: String,
     #[serde(
@@ -38,11 +38,7 @@ impl Default for Prefs {
     fn default() -> Prefs {
         Prefs {
             kind: PositionLookupKind::Opening,
-            speeds: vec![
-                ExplorerSpeed::Blitz,
-                ExplorerSpeed::Rapid,
-                ExplorerSpeed::Classical,
-            ],
+            speeds: vec![Speed::Blitz, Speed::Rapid, Speed::Classical],
             ratings: Vec::new(),
             player: String::new(),
             color: Color::White,
@@ -65,9 +61,7 @@ fn lenient<'de, D: serde::Deserializer<'de>>(
 }
 
 /// The stored speeds this app knows.
-fn known_speeds<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<ExplorerSpeed>, D::Error> {
+fn known_speeds<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<Speed>, D::Error> {
     let value = serde_json::Value::deserialize(deserializer)?;
     Ok(value
         .as_array()

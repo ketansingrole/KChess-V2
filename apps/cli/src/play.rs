@@ -442,8 +442,9 @@ pub type Choices = (Option<String>, Option<String>, Option<Variant>);
 /// The variant a word names by its Lichess key, in any case (`crazyhouse`, `KingOfTheHill`).
 fn variant_named(word: &str) -> Option<Variant> {
     Variant::ALL
-        .into_iter()
-        .find(|variant| variant.key().eq_ignore_ascii_case(word))
+        .iter()
+        .copied()
+        .find(|variant| variant.as_str().eq_ignore_ascii_case(word))
 }
 
 /// `play`'s level, colour and variant, in any order: `play club black`, `play black crazyhouse`.

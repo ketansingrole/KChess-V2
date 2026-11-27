@@ -34,27 +34,7 @@ fn report(info: &PanicHookInfo<'_>) {
     else {
         return;
     };
-    host.log(Level::Error, "panic", &describe(info));
-}
-
-/// `thread 'name' panicked at file:line: message`, as Rust's default hook words it.
-fn describe(info: &PanicHookInfo<'_>) -> String {
-    let payload = info.payload();
-    let message = payload
-        .downcast_ref::<&str>()
-        .copied()
-        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-        .unwrap_or("Box<dyn Any>");
-    let thread = std::thread::current();
-    let name = thread.name().unwrap_or("<unnamed>");
-    match info.location() {
-        Some(at) => format!(
-            "thread '{name}' panicked at {}:{}: {message}",
-            at.file(),
-            at.line()
-        ),
-        None => format!("thread '{name}' panicked: {message}"),
-    }
+    host.log(Level::Error, "panic", &kchess_host::panic_message(info));
 }
 
 #[cfg(test)]

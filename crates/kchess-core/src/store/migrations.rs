@@ -3,8 +3,8 @@
 
 use rusqlite::Connection;
 
-use super::sql::{Sql as _, transaction};
-use kchess_contracts::error::{CoreError, Result};
+use super::sql;
+use kchess_contracts::error::Result;
 
 /// Ordered schema migrations. Append only: an earlier entry is never edited.
 pub const MIGRATIONS: &[&str] = &[
@@ -286,33 +286,14 @@ pub const MIGRATIONS: &[&str] = &[
 ];
 
 /// Apply every migration newer than the database's `user_version`, each in its own transaction.
+/// A newer release migrated a profile past this list: its tables have columns this one would drop
+/// or reset on its next save, so it is not opened at all (docs/shared-core.md).
 pub fn migrate(db: &Connection) -> Result<()> {
-    migrate_to(db, MIGRATIONS.len())
-}
-
-/// Apply the migrations up to `steps` (the first `steps` of the list), as an earlier release
-/// would have left the database.
-fn migrate_to(db: &Connection, steps: usize) -> Result<()> {
-    let current: i64 = db
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .sql()?;
-    let start = usize::try_from(current).unwrap_or(0);
-    // A newer release migrated this profile: its tables have columns this one would drop or
-    // reset on its next save, so it is not opened at all (docs/shared-core.md).
-    if start > MIGRATIONS.len() {
-        return Err(CoreError::new(
-            "This profile was used by a newer KChess. Update KChess to open it.",
-        ));
-    }
-    for (index, sql) in MIGRATIONS.iter().enumerate().take(steps).skip(start) {
-        transaction(db, || {
-            db.execute_batch(sql).sql()?;
-            // `index` is a loop counter, not user input: PRAGMA takes no bound parameters.
-            db.execute_batch(&format!("PRAGMA user_version = {}", index + 1))
-                .sql()
-        })?;
-    }
-    Ok(())
+    sql::migrate(
+        db,
+        MIGRATIONS,
+        "This profile was used by a newer KChess. Update KChess to open it.",
+    )
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 //! connections look, the board, offers and the opponent leaving, the moves, and the actions for a
 //! game on and over.
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::hover_card::HoverCard;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
@@ -135,20 +135,17 @@ fn flip(cx: &mut App) {
 }
 
 fn ask_resign(window: &mut Window, cx: &mut App) {
-    crate::widgets::open_alert_dialog(window, cx, |dialog: AlertDialog, _, _| {
-        dialog
-            .title("Resign this game?")
-            .description("Your opponent will be awarded the win")
-            .ok_text("Resign")
-            .ok_variant(ButtonVariant::Danger)
-            .cancel_text("Cancel")
-            .show_cancel(true)
-            .on_ok(|_, _, cx| {
-                crate::online::handle(cx)
-                    .update(cx, |online, cx| online.action(OnlineAction::Resign, cx));
-                true
-            })
-    });
+    crate::widgets::confirm_danger(
+        window,
+        cx,
+        "Resign this game?",
+        "Your opponent will be awarded the win",
+        "Resign",
+        |_, cx| {
+            crate::online::handle(cx)
+                .update(cx, |online, cx| online.action(OnlineAction::Resign, cx));
+        },
+    );
 }
 
 /// The game's connection is gone for good: what happened, and the one action that helps. Asked

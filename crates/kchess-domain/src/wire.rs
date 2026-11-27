@@ -8,11 +8,12 @@ macro_rules! union {
     ($(#[$meta:meta])* $name:ident {
         $($(#[$variant_meta:meta])* $variant:ident = $wire:literal),+ $(,)?
     }) => {
-        $(#[$meta])*
         #[derive(
             ::serde::Serialize, ::serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq,
             PartialOrd, Ord, Hash,
         )]
+        // After the derive, so a `#[serde(…)]` among them is the derive's.
+        $(#[$meta])*
         pub enum $name {
             $($(#[$variant_meta])* #[serde(rename = $wire)] $variant,)+
         }

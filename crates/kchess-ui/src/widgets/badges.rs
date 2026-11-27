@@ -14,7 +14,7 @@ pub fn action_notification(
         let (run, note) = (run.clone(), cx.entity().downgrade());
         Button::new(id).label(label).on_click(move |_, window, cx| {
             run(window, cx);
-            let _ = note.update(cx, |note, cx| note.dismiss(window, cx));
+            note.update(cx, |note, cx| note.dismiss(window, cx)).ok();
         })
     })
 }

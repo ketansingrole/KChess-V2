@@ -10,8 +10,7 @@ use kchess_domain::variant::{VARIANTS, Variant};
 
 use super::*;
 use crate::types::{
-    EXPLORER_SPEEDS, ExplorerSpeed, LookupMode, LookupOptions, POSITION_LOOKUP_KINDS,
-    PositionLookupKind,
+    LookupMode, LookupOptions, POSITION_LOOKUP_KINDS, PositionLookupKind, SPEEDS, Speed,
 };
 
 impl Validate for PositionLookupKind {
@@ -59,11 +58,11 @@ impl Validate for LookupOptions {
         let speeds = match sent.speeds {
             Some(speeds) => {
                 for speed in &speeds {
-                    one_of(speed, EXPLORER_SPEEDS, None, "speeds")?;
+                    one_of(speed, SPEEDS, None, "speeds")?;
                 }
                 max_items(&speeds, 6, None, "speeds")?;
                 let read = speeds.into_iter().map(|speed| {
-                    serde_json::from_value::<ExplorerSpeed>(Value::String(speed))
+                    serde_json::from_value::<Speed>(Value::String(speed))
                         .map_err(|error| error.to_string())
                 });
                 Some(read.collect::<Result<_, _>>()?)
@@ -182,7 +181,7 @@ pub fn position_lookup(
         .as_ref()
         .and_then(|options| options.variant)
         .filter(|variant| *variant != Variant::Standard);
-    analysis_position(&fen.0, variant.map(Variant::key))
+    analysis_position(&fen.0, variant.map(Variant::as_str))
 }
 
 #[cfg(test)]

@@ -402,7 +402,8 @@ impl Render for RatingSpeeds {
                 .position(|(label, _)| self.range == *label)
                 .unwrap_or(RANGES.len() - 1),
             move |index, _, cx| {
-                let _ = page.update(cx, |this, cx| this.choose_range(RANGES[index].0, cx));
+                page.update(cx, |this, cx| this.choose_range(RANGES[index].0, cx))
+                    .ok();
             },
             true,
             &palette,

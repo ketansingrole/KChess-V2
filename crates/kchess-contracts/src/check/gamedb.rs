@@ -6,8 +6,8 @@ use kchess_domain::misc::value::J;
 
 use super::*;
 use crate::types::{
-    ExplorerSpeed, GameDbQuery, GameDbResult, GameDbSide, GameDbSort, GameDbStructure, GameSite,
-    LichessGames, PlayerGames,
+    GameDbQuery, GameDbResult, GameDbSide, GameDbSort, GameDbStructure, GameSite, LichessGames,
+    PlayerGames, Speed,
 };
 
 const DATABASE: &str = "Invalid database.";
@@ -277,7 +277,7 @@ struct SentPlayer {
     site: GameSite,
     username: String,
     months: Option<u64>,
-    speeds: Option<Vec<ExplorerSpeed>>,
+    speeds: Option<Vec<Speed>>,
     rated: Option<bool>,
 }
 
@@ -410,7 +410,7 @@ struct SentQuery {
     position: Option<String>,
     min_moves: Option<u64>,
     max_moves: Option<u64>,
-    speed: Option<ExplorerSpeed>,
+    speed: Option<Speed>,
     material: Option<String>,
     structure: Option<GameDbStructure>,
     pieces: Option<String>,
@@ -615,10 +615,7 @@ mod tests {
         .unwrap();
         assert_eq!(player.username, "Some_Player");
         assert_eq!(player.months, Some(12));
-        assert_eq!(
-            player.speeds,
-            Some(vec![ExplorerSpeed::Blitz, ExplorerSpeed::Rapid])
-        );
+        assert_eq!(player.speeds, Some(vec![Speed::Blitz, Speed::Rapid]));
         assert!(player.rated);
         let plain = check::<PlayerGames>(sent(json!({ "site": "chesscom", "username": "hikaru" })))
             .unwrap();
@@ -689,7 +686,7 @@ mod tests {
             PIECES
         );
         assert_eq!((deep.min_moves, deep.max_moves), (Some(40), Some(80)));
-        assert_eq!(deep.speed, Some(ExplorerSpeed::Blitz));
+        assert_eq!(deep.speed, Some(Speed::Blitz));
         assert_eq!(deep.material.as_deref(), Some("R vs B"));
         assert_eq!(deep.structure, Some(GameDbStructure::Carlsbad));
         assert_eq!(

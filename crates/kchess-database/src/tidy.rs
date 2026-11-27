@@ -2,7 +2,7 @@
 //! spellings of one player's name ("Carlsen, M" and "Carlsen, Magnus") that different sources
 //! wrote, so a search for the player finds all their games.
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -49,20 +49,9 @@ fn ask_remove(info: DatabaseInfo, count: u64, window: &mut Window, cx: &mut App)
         "Games with the same players, date, result and moves. The first of each stays in {}.",
         info.name
     );
-    widgets::open_alert_dialog(window, cx, move |dialog, _, _| {
-        let id = info.id.clone();
-        dialog
-            .title(title.clone())
-            .description(description.clone())
-            .ok_text("Remove")
-            .ok_variant(ButtonVariant::Danger)
-            .cancel_text("Cancel")
-            .show_cancel(true)
-            .on_ok(move |_, _, cx| {
-                let db = cx.global::<GameDbHandle>().0.clone();
-                db.update(cx, |db, cx| db.remove_duplicates(id.clone(), cx));
-                true
-            })
+    widgets::confirm_danger(window, cx, title, description, "Remove", move |_, cx| {
+        let db = cx.global::<GameDbHandle>().0.clone();
+        db.update(cx, |db, cx| db.remove_duplicates(info.id.clone(), cx));
     });
 }
 

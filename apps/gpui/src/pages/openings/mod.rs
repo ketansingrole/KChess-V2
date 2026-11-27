@@ -162,10 +162,11 @@ impl OpeningsPage {
                     let text = state.read(cx).value().to_string();
                     this.search_task = Some(cx.spawn(async move |this, cx| {
                         cx.background_executor().timer(SEARCH_DELAY).await;
-                        let _ = this.update(cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             this.query = text;
                             cx.notify();
-                        });
+                        })
+                        .ok();
                     }));
                 }
             }),
@@ -310,10 +311,11 @@ impl OpeningsPage {
             });
             self.description_task = Some(cx.spawn(async move |this, cx| match description.await {
                 Ok(page) => {
-                    let _ = this.update(cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.description = page;
                         cx.notify();
-                    });
+                    })
+                    .ok();
                 }
                 Err(cause) => crate::log::write(
                     Level::Warn,
@@ -332,7 +334,8 @@ impl OpeningsPage {
                 .unwrap_or_default();
             self.popularity_task = Some(cx.spawn(async move |this, cx| match months.await {
                 Ok(months) => {
-                    let _ = this.update(cx, |this, cx| this.show_popularity(&months, &san, cx));
+                    this.update(cx, |this, cx| this.show_popularity(&months, &san, cx))
+                        .ok();
                 }
                 Err(cause) => crate::log::write(
                     Level::Warn,

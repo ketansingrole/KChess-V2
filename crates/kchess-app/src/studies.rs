@@ -91,7 +91,7 @@ pub fn init(library: &Library, cx: &mut App) {
     crate::core::on_profile_change(cx, &[ProfileArea::Studies], {
         let entity = entity.downgrade();
         move |cx| {
-            let _ = entity.update(cx, |library, cx| library.reload(cx));
+            entity.update(cx, |library, cx| library.reload(cx)).ok();
         }
     });
     cx.set_global(StudyHandle(entity));
@@ -273,20 +273,22 @@ fn show_answers(
     let entity = entity.downgrade();
     cx.spawn(async move |cx| {
         while let Some(answer) = answered.next().await {
-            let _ = entity.update(cx, |this, cx| {
-                match answer {
-                    Ok(result) => {
-                        this.apply(&result);
-                        this.reads.edited();
-                        this.error = None;
+            entity
+                .update(cx, |this, cx| {
+                    match answer {
+                        Ok(result) => {
+                            this.apply(&result);
+                            this.reads.edited();
+                            this.error = None;
+                        }
+                        Err(cause) => {
+                            this.error = Some(crate::loading::failure("studies", &cause));
+                            this.reload(cx);
+                        }
                     }
-                    Err(cause) => {
-                        this.error = Some(crate::loading::failure("studies", &cause));
-                        this.reload(cx);
-                    }
-                }
-                cx.notify();
-            });
+                    cx.notify();
+                })
+                .ok();
         }
     })
     .detach();
@@ -415,14 +417,15 @@ impl StudyLibrary {
             };
             if let Some(library) = library.await.warn_on_err() {
                 let items = library.studies;
-                let _ = this.update(cx, |this, cx| match this.reads.answer(read) {
+                this.update(cx, |this, cx| match this.reads.answer(read) {
                     Answer::Show => {
                         this.items = items;
                         cx.notify();
                     }
                     Answer::Again => this.reload(cx),
                     Answer::Superseded => {}
-                });
+                })
+                .ok();
             }
         })
         .detach();

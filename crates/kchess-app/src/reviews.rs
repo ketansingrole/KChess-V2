@@ -99,12 +99,13 @@ impl ReviewStore {
         let status = cx.global::<AppCore>().request(calls::ReviewStatus {});
         cx.spawn(async move |this, cx| match status.await {
             Ok(status) => {
-                let _ = this.update(cx, |store, cx| {
+                this.update(cx, |store, cx| {
                     if store.status_events == seen {
                         store.status = status;
                         cx.notify();
                     }
-                });
+                })
+                .ok();
             }
             Err(cause) => crate::log::write(
                 Level::Warn,
@@ -132,14 +133,15 @@ impl ReviewStore {
         });
         cx.spawn(async move |this, cx| match found.await {
             Ok(Some(found)) => {
-                let _ = this.update(cx, |store, cx| {
+                this.update(cx, |store, cx| {
                     // A review that streamed in meanwhile is at least as new.
                     let known = store.cache.get(&found.key);
                     if known.is_none_or(|known| known.updated_at == review.updated_at) {
                         store.cache.remember(found);
                         cx.notify();
                     }
-                });
+                })
+                .ok();
             }
             Ok(_) => {}
             Err(cause) => crate::log::write(

@@ -2,35 +2,15 @@
 
 use super::*;
 
-/// Filter games by result. A refusal names it `GameResult`, as the recorded checks did.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[serde(expecting = "enum GameResult")]
-pub enum GameResultFilter {
-    #[serde(rename = "win")]
-    Win,
-    #[serde(rename = "loss")]
-    Loss,
-    #[serde(rename = "draw")]
-    Draw,
-}
-
-impl GameResultFilter {
-    /// Every value, in declaration order.
-    pub const ALL: &[GameResultFilter] = &[
-        GameResultFilter::Win,
-        GameResultFilter::Loss,
-        GameResultFilter::Draw,
-    ];
-
-    /// Its wire value.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            GameResultFilter::Win => "win",
-            GameResultFilter::Loss => "loss",
-            GameResultFilter::Draw => "draw",
-        }
+union!(
+    /// Filter games by result. A refusal names it `GameResult`, as the recorded checks did.
+    #[serde(expecting = "enum GameResult")]
+    GameResultFilter {
+        Win = "win",
+        Loss = "loss",
+        Draw = "draw",
     }
-}
+);
 
 /// A synced game, seen from its account's side.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

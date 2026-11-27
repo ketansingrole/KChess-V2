@@ -5,8 +5,7 @@
 use kchess_contracts::calls;
 use std::collections::HashMap;
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -276,47 +275,43 @@ impl VoiceHistory {
                     }
                 }
             };
-            let _ = cx.update(|window, cx| match outcome {
+            cx.update(|window, cx| match outcome {
                 Some(Ok(())) => window.push_notification("Saved the voice history", cx),
                 Some(Err(cause)) => window
                     .push_notification(Notification::error(cause).title("The export failed"), cx),
                 None => {}
-            });
+            })
+            .ok();
         })
         .detach();
     }
 
     fn ask_clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
-        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let this = this.clone();
-            dialog
-                .title("Clear voice history?")
-                .description(
-                    "Every logged phrase is deleted. Export it first if you want to keep it.",
-                )
-                .ok_text("Clear")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    let _ = this.update(cx, |this, cx| this.clear(cx));
-                    true
-                })
-        });
+        crate::widgets::confirm_danger(
+            window,
+            cx,
+            "Clear voice history?",
+            "Every logged phrase is deleted. Export it first if you want to keep it.",
+            "Clear",
+            move |_, cx| {
+                this.update(cx, |this, cx| this.clear(cx)).ok();
+            },
+        );
     }
 
     fn clear(&mut self, cx: &mut Context<Self>) {
         let clearing = cx.global::<AppCore>().request(calls::ClearVoiceHistory {});
         cx.spawn(async move |this, cx| {
             let cleared = clearing.await;
-            let _ = this.update(cx, |this, cx| match cleared {
+            this.update(cx, |this, cx| match cleared {
                 Ok(_) => this.load(cx),
                 Err(cause) => {
                     this.loading.failed("voice-history", &cause);
                     cx.notify();
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }

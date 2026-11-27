@@ -571,7 +571,7 @@ fn job_for(request: &ReviewRequest, background: bool, requested: u64) -> Result<
         variant: if variant.is_standard() {
             String::new()
         } else {
-            variant.key().to_string()
+            variant.as_str().to_string()
         },
         fen,
         moves,

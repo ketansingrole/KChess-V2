@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use kchess_contracts::check::EXPLORER_RATINGS;
 use kchess_contracts::types::{
-    CloudEval, CloudLine, ExplorerGame, ExplorerSpeed, LookupMove, LookupOptions, PositionLookup,
-    PositionLookupKind as Kind, SavedLookup as Cached, UsageKind,
+    CloudEval, CloudLine, ExplorerGame, LookupMove, LookupOptions, PositionLookup,
+    PositionLookupKind as Kind, SavedLookup as Cached, Speed, UsageKind,
 };
 
 use futures_util::future::BoxFuture;
@@ -537,7 +537,7 @@ impl PositionLookups {
             }
             match kind {
                 Kind::Opening => {
-                    query.append_pair("variant", options.variant.unwrap_or_default().key());
+                    query.append_pair("variant", options.variant.unwrap_or_default().as_str());
                     query.append_pair(
                         "speeds",
                         &speeds(options.speeds.as_deref().unwrap_or_default()),
@@ -561,7 +561,7 @@ impl PositionLookups {
                     let side = options.color.unwrap_or(Color::White);
                     query.append_pair("color", color::name(side));
                     if let Some(variant) = options.variant {
-                        query.append_pair("variant", variant.key());
+                        query.append_pair("variant", variant.as_str());
                     }
                     if let Some(listed) = options.speeds.as_ref().filter(|s| !s.is_empty()) {
                         query.append_pair("speeds", &speeds(listed));
@@ -691,14 +691,14 @@ impl Pairs {
 }
 
 /// The speeds as a query lists them.
-fn speeds(speeds: &[ExplorerSpeed]) -> String {
+fn speeds(speeds: &[Speed]) -> String {
     let names: Vec<&str> = speeds.iter().map(|speed| speed.as_str()).collect();
     names.join(",")
 }
 
 /// `speeds` in the order the contract lists them, each once.
-fn in_order(speeds: &[ExplorerSpeed]) -> Vec<ExplorerSpeed> {
-    ExplorerSpeed::ALL
+fn in_order(speeds: &[Speed]) -> Vec<Speed> {
+    Speed::ALL
         .iter()
         .copied()
         .filter(|speed| speeds.contains(speed))
@@ -738,13 +738,7 @@ fn normalize_options(kind: Kind, options: &LookupOptions) -> CoreResult<LookupOp
                     .as_deref()
                     .filter(|speeds| !speeds.is_empty())
                     .map_or_else(
-                        || {
-                            vec![
-                                ExplorerSpeed::Blitz,
-                                ExplorerSpeed::Rapid,
-                                ExplorerSpeed::Classical,
-                            ]
-                        },
+                        || vec![Speed::Blitz, Speed::Rapid, Speed::Classical],
                         in_order,
                     ),
             ),
@@ -836,7 +830,6 @@ fn join_numbers(values: &[u32]) -> String {
     listed.join(",")
 }
 
-/// A legal position of `variant`.
 fn is_legal_position(variant: Variant, fen: &str) -> bool {
     if variant == Variant::Standard {
         position::fen_problem(fen).is_none()

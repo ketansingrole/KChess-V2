@@ -23,6 +23,7 @@ pub mod own;
 pub mod player;
 pub mod repertoire;
 pub mod report;
+mod runs;
 pub mod scan;
 pub mod schema;
 pub mod search;
@@ -402,7 +403,6 @@ impl Inner {
     }
 }
 
-/// The last report of a run that ended in `error`: cancelled when it was asked to stop.
 /// The databases `files` names, open to read; one being written for the first time is left out,
 /// having nothing to read yet.
 fn open_references(files: Vec<(String, PathBuf)>) -> Vec<(String, rusqlite::Connection)> {
@@ -412,6 +412,12 @@ fn open_references(files: Vec<(String, PathBuf)>) -> Vec<(String, rusqlite::Conn
         .collect()
 }
 
+/// What a download asked to stop answers, whatever stopped it.
+fn cancelled() -> CoreError {
+    CoreError::new("Download cancelled.")
+}
+
+/// The last report of a run that ended in `error`: cancelled when it was asked to stop.
 fn failed(running: &Running, database: &str, error: &CoreError) -> GameDbProgress {
     let phase = if running.cancel.is_cancelled() {
         Phase::Cancelled
@@ -507,6 +513,64 @@ impl GameDbService {
         })
     }
 
+    /// Runs `work` as the one run that may write, into the database `id`: its last report says
+    /// whether it was done, failed or cancelled, a failure is logged as `what`'s, and its answer
+    /// is the database as the run left it.
+    async fn write_run<Fut>(
+        &self,
+        what: &str,
+        id: &str,
+        work: impl FnOnce(Arc<Running>) -> Fut,
+    ) -> Result<GameDbImported>
+    where
+        Fut: Future<Output = Result<import::Count>>,
+    {
+        let result = async {
+            let mut guard = self.claim(id)?;
+            let running = Arc::clone(&guard.running);
+            let count = match work(Arc::clone(&running)).await {
+                Ok(count) => count,
+                Err(error) => {
+                    guard.end = Some(failed(&running, id, &error));
+                    return Err(error);
+                }
+            };
+            let database = self.inner.info(id).await?.ok_or_else(|| {
+                CoreError::new("The database could not be read after its games were added.")
+            })?;
+            guard.end = Some(progress(Phase::Done, id, count, None));
+            drop(guard);
+            Ok(GameDbImported {
+                database,
+                added: count.games,
+                skipped: count.skipped,
+            })
+        }
+        .await;
+        self.inner.logged(what, result)
+    }
+
+    /// `write_run` for a download: once Cancel came, it was cancelled, whatever failure the stop
+    /// caused on the way.
+    async fn download_run<Fut>(
+        &self,
+        what: &str,
+        id: &str,
+        work: impl FnOnce(Arc<Running>) -> Fut,
+    ) -> Result<GameDbImported>
+    where
+        Fut: Future<Output = Result<import::Count>>,
+    {
+        self.write_run(what, id, |running| async move {
+            let cancel = running.cancel.clone();
+            match work(running).await {
+                Err(_) if cancel.is_cancelled() => Err(cancelled()),
+                other => other,
+            }
+        })
+        .await
+    }
+
     /// Reads the PGN file at `path` into the database `into`, or a new one named `name`.
     pub async fn import(
         &self,
@@ -516,69 +580,44 @@ impl GameDbService {
         name: Option<String>,
         source: DatabaseSource,
     ) -> Result<GameDbImported> {
-        let result = self.import_inner(path, packing, into, name, source).await;
-        self.inner.logged("import", result)
-    }
-
-    async fn import_inner(
-        &self,
-        path: String,
-        packing: PgnPacking,
-        into: Option<String>,
-        name: Option<String>,
-        source: DatabaseSource,
-    ) -> Result<GameDbImported> {
         let path = PathBuf::from(path);
         let id = match &into {
-            Some(id) => {
-                own::refuse(id, "Your games holds only your own games.")?;
-                if !self.inner.file(id).is_file() {
-                    return Err(CoreError::new("That database is not on this computer."));
+            Some(id) => own::refuse(id, "Your games holds only your own games.").and_then(|()| {
+                if self.inner.file(id).is_file() {
+                    Ok(id.clone())
+                } else {
+                    Err(CoreError::new("That database is not on this computer."))
                 }
-                id.clone()
-            }
-            None => new_id(name.as_deref().unwrap_or(&file_stem(&path))),
+            }),
+            None => Ok(new_id(name.as_deref().unwrap_or(&file_stem(&path)))),
         };
-        let mut guard = self.claim(&id)?;
-        let running = Arc::clone(&guard.running);
-        std::fs::create_dir_all(&self.inner.dir)
-            .map_err(|e| CoreError::wrap("Could not create the databases folder", e))?;
-        let target = match into {
-            Some(_) => import::Target::Existing {
-                file: self.inner.file(&id),
-            },
-            None => {
-                self.inner
-                    .new_target(&id, name.unwrap_or_else(|| file_stem(&path)), source, None)
-            }
-        };
-        let mut reporter = Reporter::new(&self.inner.host, &id, &running.cancel);
-        reporter.send(Phase::Reading, import::Count::default(), true);
-        let profile = self.inner.profile.clone();
-        let outcome = self
-            .inner
-            .run_import(target, packing, reporter, move || {
-                import::Source::chosen(&path, &profile)
-            })
-            .await;
-        let count = match outcome {
-            Ok(count) => count,
-            Err(error) => {
-                guard.end = Some(failed(&running, &id, &error));
-                return Err(error);
-            }
-        };
-        let database =
-            self.inner.info(&id).await?.ok_or_else(|| {
-                CoreError::new("The database could not be read after the import.")
-            })?;
-        guard.end = Some(progress(Phase::Done, &id, count, None));
-        drop(guard);
-        Ok(GameDbImported {
-            database,
-            added: count.games,
-            skipped: count.skipped,
+        let id = self.inner.logged("import", id)?;
+        let target_id = id.clone();
+        self.write_run("import", &id, |running| async move {
+            let id = target_id;
+            std::fs::create_dir_all(&self.inner.dir)
+                .map_err(|e| CoreError::wrap("Could not create the databases folder", e))?;
+            let target = match into {
+                Some(_) => import::Target::Existing {
+                    file: self.inner.file(&id),
+                },
+                None => self.inner.new_target(
+                    &id,
+                    name.unwrap_or_else(|| file_stem(&path)),
+                    source,
+                    None,
+                ),
+            };
+            let mut reporter = Reporter::new(&self.inner.host, &id, &running.cancel);
+            reporter.send(Phase::Reading, import::Count::default(), true);
+            let profile = self.inner.profile.clone();
+            self.inner
+                .run_import(target, packing, reporter, move || {
+                    import::Source::chosen(&path, &profile)
+                })
+                .await
         })
+        .await
     }
 
     pub fn cancel(&self) {

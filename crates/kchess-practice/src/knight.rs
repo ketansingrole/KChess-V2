@@ -88,18 +88,7 @@ pub struct KnightPaths {
 
 impl KnightPaths {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> KnightPaths {
-        let board = cx.new(|_| {
-            ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start(
-                    kchess_domain::variant::Variant::Standard,
-                    crate::game::STANDARD_FEN,
-                )
-                .unwrap_or_default(),
-                Color::White,
-                None,
-                None,
-            ))
-        });
+        let board = cx.new(|_| ChessBoard::new(BoardState::start()));
         let level_select = cx.new(|cx| {
             SelectState::new(
                 LEVELS
@@ -232,7 +221,7 @@ impl KnightPaths {
             }
             self.advance = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(ADVANCE).await;
-                let _ = this.update(cx, |this, cx| this.next_round(cx));
+                this.update(cx, |this, cx| this.next_round(cx)).ok();
             }));
         }
         self.redraw(cx);

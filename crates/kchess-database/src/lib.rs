@@ -24,8 +24,7 @@ pub mod target;
 mod tidy;
 
 use gpui_kit::base::TestSupportExt as _;
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
@@ -38,8 +37,8 @@ use kchess_board::game::played::{DatabaseGame, GameOrigin};
 use kchess_contracts::calls;
 use kchess_contracts::check::{DatabaseId, GameDbGameId, PgnSavePath};
 use kchess_contracts::types::{
-    DatabaseInfo, DatabaseSource, ExplorerSpeed, GameDbQuery, GameDbResult, GameDbRow, GameDbSide,
-    GameDbSort, GameDbStructure,
+    DatabaseInfo, DatabaseSource, GameDbQuery, GameDbResult, GameDbRow, GameDbSide, GameDbSort,
+    GameDbStructure, Speed,
 };
 use kchess_domain::gamedb::patterns::{Material, Placement};
 use kchess_nav::page::{ActionInfo, Page, PageAction, PageView};
@@ -152,7 +151,7 @@ pub struct DatabasePage {
     material_input: Entity<InputState>,
     pieces_input: Entity<InputState>,
     structure_select: Entity<SelectState<Vec<Choice>>>,
-    speed: Option<ExplorerSpeed>,
+    speed: Option<Speed>,
     structure: Option<GameDbStructure>,
     sort_select: Entity<SelectState<Vec<Choice>>>,
     size_select: Entity<SelectState<Vec<Choice>>>,
@@ -196,14 +195,14 @@ fn sort_key(sort: GameDbSort) -> &'static str {
     }
 }
 
-fn speed_of(key: &str) -> Option<ExplorerSpeed> {
+fn speed_of(key: &str) -> Option<Speed> {
     Some(match key {
-        "ultraBullet" => ExplorerSpeed::UltraBullet,
-        "bullet" => ExplorerSpeed::Bullet,
-        "blitz" => ExplorerSpeed::Blitz,
-        "rapid" => ExplorerSpeed::Rapid,
-        "classical" => ExplorerSpeed::Classical,
-        "correspondence" => ExplorerSpeed::Correspondence,
+        "ultraBullet" => Speed::UltraBullet,
+        "bullet" => Speed::Bullet,
+        "blitz" => Speed::Blitz,
+        "rapid" => Speed::Rapid,
+        "classical" => Speed::Classical,
+        "correspondence" => Speed::Correspondence,
         _ => return None,
     })
 }
@@ -770,20 +769,11 @@ impl DatabasePage {
                 ),
             ),
         };
-        widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let (id, chosen) = (info.id.clone(), chosen.clone());
-            dialog
-                .title(title.clone())
-                .description(description.clone())
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    let db = cx.global::<GameDbHandle>().0.clone();
-                    db.update(cx, |db, cx| db.delete_games(id.clone(), chosen.clone(), cx));
-                    true
-                })
+        widgets::confirm_danger(window, cx, title, description, "Delete", move |_, cx| {
+            let db = cx.global::<GameDbHandle>().0.clone();
+            db.update(cx, |db, cx| {
+                db.delete_games(info.id.clone(), chosen.clone(), cx)
+            });
         });
     }
 

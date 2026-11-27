@@ -49,20 +49,8 @@ impl ComputerPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.voice.control.enabled = true;
-        let heard = crate::voice::Heard {
-            text: text.into(),
-            raw: text.into(),
-            confidence: 1.,
-            words: Vec::new(),
-            unclear: false,
-        };
-        let owner = self.voice.control.owner;
-        self.voice_heard(
-            &crate::voice::VoiceEvent::Heard { owner, heard },
-            window,
-            cx,
-        );
+        let heard = self.voice.control.hear_clearly(text);
+        self.voice_heard(&heard, window, cx);
     }
 
     pub(super) fn voice_heard(
@@ -71,9 +59,6 @@ impl ComputerPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.voice.owns(event) {
-            return;
-        }
         let setup = self
             .position_at(self.moves().len())
             .map(|position| Setup {
@@ -81,15 +66,10 @@ impl ComputerPage {
                 fen: kchess_domain::rules::make_fen(&position),
             })
             .unwrap_or_else(|| Setup::standard_at(""));
-        let fen = setup.fen.clone();
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice.missed(heard, &fen, self.voice_taking(), cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
-        };
         let taking = self.voice_taking();
+        let Some(heard) = self.voice.heard(event, &setup.fen, taking, cx) else {
+            return;
+        };
         let idle = self.voice_idle();
         let asked = self.asked;
         let mut run: Option<Deferred> = None;

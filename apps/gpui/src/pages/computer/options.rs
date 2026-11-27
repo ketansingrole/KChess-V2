@@ -42,7 +42,8 @@ enum Start {
 /// The variants Fairy-Stockfish plays, in the variant list's order.
 fn fairy_variants() -> impl Iterator<Item = Variant> {
     Variant::ALL
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|variant| !variant.standard_rules())
 }
 
@@ -522,15 +523,17 @@ impl Render for GameOptions {
                         ],
                         selected,
                         move |index, _, cx| {
-                            let _ = options.update(cx, |this, cx| {
-                                this.start = match index {
-                                    1 => Start::Chess960,
-                                    2 => Start::Variant,
-                                    3 => Start::Fen,
-                                    _ => Start::Standard,
-                                };
-                                cx.notify();
-                            });
+                            options
+                                .update(cx, |this, cx| {
+                                    this.start = match index {
+                                        1 => Start::Chess960,
+                                        2 => Start::Variant,
+                                        3 => Start::Fen,
+                                        _ => Start::Standard,
+                                    };
+                                    cx.notify();
+                                })
+                                .ok();
                         },
                         &palette,
                     )

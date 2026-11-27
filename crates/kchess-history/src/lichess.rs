@@ -348,7 +348,7 @@ impl HistoryPage {
                 Some(read) => read.await.warn_on_err().flatten(),
                 None => game.pgn.clone(),
             };
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if !this.lichess.opening.is_current(opening) {
                     return;
                 }
@@ -369,7 +369,8 @@ impl HistoryPage {
                 this.message = None;
                 this.redo = None;
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -643,7 +644,8 @@ impl HistoryPage {
             {
                 let page = cx.entity().downgrade();
                 move |index, _, cx| {
-                    let _ = page.update(cx, |this, cx| this.choose_result(RESULTS[index].0, cx));
+                    page.update(cx, |this, cx| this.choose_result(RESULTS[index].0, cx))
+                        .ok();
                 }
             },
             true,
@@ -752,9 +754,10 @@ impl HistoryPage {
                         self.side_of(game),
                         RowDetail::Full,
                         move |window, cx| {
-                            let _ = page.update(cx, |this, cx| {
+                            page.update(cx, |this, cx| {
                                 this.open_lichess(chosen.clone(), window, cx)
-                            });
+                            })
+                            .ok();
                         },
                         palette,
                     )

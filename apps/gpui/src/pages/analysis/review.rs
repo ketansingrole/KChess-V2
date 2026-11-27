@@ -171,12 +171,12 @@ impl AnalysisPage {
                     moves: Moves(moves),
                     variant: self
                         .fairy_variant()
-                        .map(|variant| variant.key().to_string()),
+                        .map(|variant| variant.as_str().to_string()),
                 });
                 let store = store.clone();
                 cx.spawn(async move |this, cx| match found.await {
                     Ok(Some(review)) => {
-                        let _ = this.update(cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             let shown = review.key.clone();
                             store.update(cx, |store, cx| {
                                 store.cache.remember(review);
@@ -186,7 +186,8 @@ impl AnalysisPage {
                                 this.review.shown = shown;
                                 this.reviewed(cx);
                             }
-                        });
+                        })
+                        .ok();
                     }
                     Ok(None) => {}
                     Err(cause) => crate::log::write(
@@ -333,7 +334,7 @@ impl AnalysisPage {
             // Fairy-Stockfish reviews the other variants.
             variant: self
                 .fairy_variant()
-                .map(|variant| variant.key().to_string()),
+                .map(|variant| variant.as_str().to_string()),
             account: origin.game_id.as_ref().and(origin.account.clone()),
             game_id: origin.game_id,
         };
@@ -344,7 +345,7 @@ impl AnalysisPage {
         let store = cx.global::<ReviewHandle>().0.clone();
         cx.spawn(async move |this, cx| {
             let asked = asked.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 match asked {
                     Ok(stored) => {
                         let key = stored.as_ref().map(|stored| stored.key.clone());
@@ -367,7 +368,8 @@ impl AnalysisPage {
                     }
                 }
                 this.reviewed(cx);
-            });
+            })
+            .ok();
         })
         .detach();
         cx.notify();
@@ -417,7 +419,7 @@ impl AnalysisPage {
         });
         cx.spawn(async move |this, cx| {
             let added = added.await;
-            let _ = this.update(cx, |this, cx| match added {
+            this.update(cx, |this, cx| match added {
                 Ok(result) => {
                     this.review.mistakes = result.items;
                     cx.notify();
@@ -430,7 +432,8 @@ impl AnalysisPage {
                     );
                     this.review.saved_mistakes.clear();
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -496,12 +499,13 @@ impl AnalysisPage {
                     .await
                 {
                     Ok(result) => {
-                        let _ = this.update(cx, |this, _| {
+                        this.update(cx, |this, _| {
                             this.review.mistakes = result.items;
                             if result.added == 0 {
                                 this.review.tried.insert(format!("{key}:{color}"));
                             }
-                        });
+                        })
+                        .ok();
                     }
                     Err(cause) => {
                         failure = Some(kchess_app::loading::failure("review", &cause));
@@ -509,7 +513,7 @@ impl AnalysisPage {
                     }
                 }
             }
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if let Some(cause) = failure {
                     crate::log::write(
                         Level::Warn,
@@ -525,7 +529,8 @@ impl AnalysisPage {
                     crate::prefs::set(cx, TOOL, "moves");
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -646,7 +651,7 @@ impl AnalysisPage {
                     return;
                 }
             };
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if this.apply_tried(&start, &path, &stored, cx) {
                     return;
                 }
@@ -663,7 +668,8 @@ impl AnalysisPage {
                     this.apply_tried(&start, &path, &review, cx);
                 });
                 this.tried_labels.push(watching);
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -1247,7 +1253,7 @@ pub(super) fn eval_chart(
             }
             let ratio = ((event.position().x - bounds.origin.x).as_f32() / width).clamp(0., 1.);
             let ply = (ratio * (count - 1) as f32).round() as usize;
-            let _ = page.update(cx, |page, cx| page.go_to_ply(ply, cx));
+            page.update(cx, |page, cx| page.go_to_ply(ply, cx)).ok();
         })
         .child(
             canvas(

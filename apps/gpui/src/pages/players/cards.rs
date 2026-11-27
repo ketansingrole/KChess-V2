@@ -46,7 +46,8 @@ impl PlayersPage {
             |name| {
                 let page = page.clone();
                 Box::new(move |_, window, cx| {
-                    let _ = page.update(cx, |page, cx| page.show_player(&name, window, cx));
+                    page.update(cx, |page, cx| page.show_player(&name, window, cx))
+                        .ok();
                 })
             },
         );
@@ -256,9 +257,10 @@ impl PlayersPage {
                                         menu.item(
                                             PopupMenuItem::new(label).icon(icon("ban")).on_click(
                                                 move |_, window, cx| {
-                                                    let _ = page.update(cx, |page, cx| {
+                                                    page.update(cx, |page, cx| {
                                                         page.toggle_block(window, cx)
-                                                    });
+                                                    })
+                                                    .ok();
                                                 },
                                             ),
                                         )

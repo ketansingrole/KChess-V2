@@ -972,13 +972,13 @@ pub fn pgn_review(game: &Game) -> Option<StoredReview> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use serde_json::{Value, json};
 
     /// A review from its JSON fields; a field left out is the default.
-    fn stored(mut fields: Value) -> StoredReview {
+    pub(crate) fn stored(mut fields: Value) -> StoredReview {
         let defaults =
             json!({ "key": "k", "source": "local", "depth": 18, "complete": true, "updatedAt": 0 });
         for (key, value) in defaults.as_object().unwrap() {

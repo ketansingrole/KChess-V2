@@ -1,8 +1,7 @@
 //! Settings → My accounts: the Lichess accounts on this
 //! computer, connecting another, which one plays online, syncing, and disconnecting.
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -32,20 +31,11 @@ fn ask_remove(username: String, connected: bool, window: &mut Window, cx: &mut A
         )
     };
     let handle = cx.global::<AccountsHandle>().0.downgrade();
-    crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-        let (handle, username) = (handle.clone(), username.clone());
-        dialog
-            .title(title)
-            .description(text.clone())
-            .ok_text(label)
-            .ok_variant(ButtonVariant::Danger)
-            .cancel_text("Cancel")
-            .show_cancel(true)
-            .on_ok(move |_, window, cx| {
-                let username = username.clone();
-                let _ = handle.update(cx, |accounts, cx| accounts.remove(username, window, cx));
-                true
-            })
+    crate::widgets::confirm_danger(window, cx, title, text, label, move |window, cx| {
+        let username = username.clone();
+        handle
+            .update(cx, |accounts, cx| accounts.remove(username, window, cx))
+            .ok();
     });
 }
 
@@ -237,7 +227,9 @@ impl SettingsPage {
                         .loading(accounts.busy)
                         .disabled(accounts.busy)
                         .on_click(move |_, window, cx| {
-                            let _ = target.update(cx, |accounts, cx| accounts.connect(window, cx));
+                            target
+                                .update(cx, |accounts, cx| accounts.connect(window, cx))
+                                .ok();
                         }),
                 ),
             )
@@ -376,7 +368,9 @@ impl SettingsPage {
         crate::accounts::handle(cx).update(cx, |accounts, cx| {
             accounts.add_chesscom(name, window, cx, move |added, window, cx| {
                 if added {
-                    let _ = input.update(cx, |input, cx| input.set_value("", window, cx));
+                    input
+                        .update(cx, |input, cx| input.set_value("", window, cx))
+                        .ok();
                 }
             })
         });
@@ -386,23 +380,21 @@ impl SettingsPage {
 /// Ask before removing a Chess.com player and their games.
 fn ask_remove_chesscom(username: String, window: &mut Window, cx: &mut App) {
     let handle = cx.global::<AccountsHandle>().0.downgrade();
-    crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-        let (handle, username) = (handle.clone(), username.clone());
-        dialog
-            .title("Remove this Chess.com player?")
-            .description(format!(
-                "@{username} and their synced games will be removed from this device"
-            ))
-            .ok_text("Remove")
-            .ok_variant(ButtonVariant::Danger)
-            .cancel_text("Cancel")
-            .show_cancel(true)
-            .on_ok(move |_, window, cx| {
-                let username = username.clone();
-                let _ = handle.update(cx, |accounts, cx| {
+    let description =
+        format!("@{username} and their synced games will be removed from this device");
+    crate::widgets::confirm_danger(
+        window,
+        cx,
+        "Remove this Chess.com player?",
+        description,
+        "Remove",
+        move |window, cx| {
+            let username = username.clone();
+            handle
+                .update(cx, |accounts, cx| {
                     accounts.remove_chesscom(username, window, cx)
-                });
-                true
-            })
-    });
+                })
+                .ok();
+        },
+    );
 }

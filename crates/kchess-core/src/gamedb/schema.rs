@@ -12,7 +12,7 @@ use std::path::Path;
 use rusqlite::{Connection, OpenFlags, OptionalExtension as _};
 
 use super::deep;
-use crate::store::sql::{Sql as _, transaction};
+use crate::store::sql::{self, Sql as _};
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{DatabaseInfo, DatabaseSource, PlayerGames};
 
@@ -149,24 +149,11 @@ pub const INDEXES: &str = "
 /// Apply every migration newer than the file's `user_version`, each in its own transaction. A
 /// file a newer release wrote is refused rather than changed.
 pub fn migrate(db: &Connection) -> Result<()> {
-    let current: i64 = db
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .sql()?;
-    let start = usize::try_from(current).unwrap_or(0);
-    if start > MIGRATIONS.len() {
-        return Err(CoreError::new(
-            "This database was written by a newer KChess. Update KChess to open it.",
-        ));
-    }
-    for (index, step) in MIGRATIONS.iter().enumerate().skip(start) {
-        transaction(db, || {
-            db.execute_batch(step).sql()?;
-            db.execute_batch(&format!("PRAGMA user_version = {}", index + 1))
-                .sql()
-        })?;
-    }
-    Ok(())
+    sql::migrate(db, MIGRATIONS, NEWER)
 }
+
+/// Why a file a newer release wrote is not opened.
+const NEWER: &str = "This database was written by a newer KChess. Update KChess to open it.";
 
 fn opened(path: &Path, flags: OpenFlags) -> Result<Connection> {
     let db = Connection::open_with_flags(path, flags)
@@ -181,13 +168,8 @@ pub fn open_read(path: &Path) -> Result<Connection> {
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    let version: i64 = db
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .sql()?;
-    if usize::try_from(version).unwrap_or(usize::MAX) > MIGRATIONS.len() {
-        return Err(CoreError::new(
-            "This database was written by a newer KChess. Update KChess to open it.",
-        ));
+    if sql::schema_version(&db)? > MIGRATIONS.len() {
+        return Err(CoreError::new(NEWER));
     }
     Ok(db)
 }
@@ -199,11 +181,7 @@ pub fn upgrade(path: &Path) -> Result<()> {
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    let version: i64 = db
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .sql()?;
-    let current = usize::try_from(version).is_ok_and(|version| version >= MIGRATIONS.len());
-    if !current || !deep::built(&db)? {
+    if sql::schema_version(&db)? < MIGRATIONS.len() || !deep::built(&db)? {
         drop(db);
         open_write(path)?;
     }

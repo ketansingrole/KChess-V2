@@ -2,8 +2,7 @@
 //! progress, with Download (Resume after a stop), Cancel and Delete. Once on disk they answer the
 //! analysis board's tablebase for up to five pieces without a connection.
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _};
 use gpui_kit::*;
 use kchess_contracts::calls;
@@ -109,20 +108,16 @@ impl SettingsPage {
 
     fn ask_delete_tablebases(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
-        widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let this = this.clone();
-            dialog
-                .title("Delete the endgame tablebases?")
-                .description("Endgames then need a connection to look up.")
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    this.update(cx, |this, cx| this.delete_tablebases(cx)).ok();
-                    true
-                })
-        });
+        widgets::confirm_danger(
+            window,
+            cx,
+            "Delete the endgame tablebases?",
+            "Endgames then need a connection to look up.",
+            "Delete",
+            move |_, cx| {
+                this.update(cx, |this, cx| this.delete_tablebases(cx)).ok();
+            },
+        );
     }
 
     fn delete_tablebases(&mut self, cx: &mut Context<Self>) {

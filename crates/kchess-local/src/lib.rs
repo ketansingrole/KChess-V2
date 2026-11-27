@@ -498,17 +498,9 @@ impl LocalPage {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.voice.owns(event) {
-            return;
-        }
         let setup = self.voice_setup();
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice
-                    .missed(heard, &setup.fen, self.voice_taking(), cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        let Some(heard) = self.voice.heard(event, &setup.fen, self.voice_taking(), cx) else {
+            return;
         };
         let turn = crate::voice::moves::Turn {
             taking: self.voice_taking(),
@@ -704,7 +696,7 @@ impl LocalPage {
                 .cancel_text("Cancel")
                 .show_cancel(true)
                 .on_ok(move |_, _, cx| {
-                    let _ = page.update(cx, |page, cx| page.resign(color, cx));
+                    page.update(cx, |page, cx| page.resign(color, cx)).ok();
                     true
                 })
         });
@@ -717,7 +709,8 @@ impl LocalPage {
             NewGame::new(
                 &current,
                 move |setup, clock, window, cx| {
-                    let _ = page.update(cx, |page, cx| page.replace_game(setup, clock, window, cx));
+                    page.update(cx, |page, cx| page.replace_game(setup, clock, window, cx))
+                        .ok();
                 },
                 window,
                 cx,
@@ -776,7 +769,8 @@ impl LocalPage {
                 .show_cancel(true)
                 .on_ok(move |_, _, cx| {
                     let (setup, clock) = (chosen.0.clone(), chosen.1);
-                    let _ = page.update(cx, |page, cx| page.start(setup, clock, cx));
+                    page.update(cx, |page, cx| page.start(setup, clock, cx))
+                        .ok();
                     true
                 })
         });

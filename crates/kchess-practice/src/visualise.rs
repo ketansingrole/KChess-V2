@@ -108,14 +108,7 @@ pub struct Visualise {
 
 impl Visualise {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Visualise {
-        let board = cx.new(|_| {
-            ChessBoard::new(BoardState::of(
-                &VariantPosition::Chess(Chess::default()),
-                Color::White,
-                None,
-                None,
-            ))
-        });
+        let board = cx.new(|_| ChessBoard::new(BoardState::start()));
         let level_select = cx.new(|cx| {
             SelectState::new(
                 LEVELS

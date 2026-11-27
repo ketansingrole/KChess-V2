@@ -336,7 +336,7 @@ pub struct AnalysisPage {
     cloud: Option<kchess_contracts::types::CloudEval>,
     cloud_busy: bool,
     cloud_error: Option<String>,
-    cloud_request: u64,
+    /// The cloud lookup under way: replacing it drops the one before, whose answer never lands.
     cloud_task: Option<Task<()>>,
     /// The main line's novelty in the game databases.
     novelty: novelty::Novelty,
@@ -505,7 +505,8 @@ impl AnalysisPage {
                     crate::setting_notice::offer(
                         "Engine lines changed",
                         move |window, cx| {
-                            let _ = page.update(cx, |page, cx| page.set_lines(before, window, cx));
+                            page.update(cx, |page, cx| page.set_lines(before, window, cx))
+                                .ok();
                         },
                         window,
                         cx,
@@ -606,7 +607,6 @@ impl AnalysisPage {
             cloud: None,
             cloud_busy: false,
             cloud_error: None,
-            cloud_request: 0,
             cloud_task: None,
             novelty: Default::default(),
             saver: SessionSaver::start(SessionKind::Analysis, &[], window, cx),
@@ -750,16 +750,8 @@ impl AnalysisPage {
     /// `text` said clearly, with voice on: as the recognizer's phrase reaches the board.
     #[cfg(test)]
     pub(crate) fn hear_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.voice.control.enabled = true;
-        let heard = crate::voice::Heard {
-            text: text.into(),
-            raw: text.into(),
-            confidence: 1.,
-            words: Vec::new(),
-            unclear: false,
-        };
-        let owner = self.voice.control.owner;
-        self.voice_heard(&crate::voice::VoiceEvent::Heard { owner, heard }, cx);
+        let heard = self.voice.control.hear_clearly(text);
+        self.voice_heard(&heard, cx);
     }
 
     #[cfg(test)]
@@ -1098,7 +1090,7 @@ impl AnalysisPage {
         if !self.study.is_empty() {
             self.study_save = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(SAVE_DELAY).await;
-                let _ = this.update(cx, |this, cx| this.persist_study(cx));
+                this.update(cx, |this, cx| this.persist_study(cx)).ok();
             }));
         }
         SessionSaver::changed(self, cx);
@@ -1155,7 +1147,7 @@ impl AnalysisPage {
         let read = cx.global::<AppCore>().request(calls::Mistakes {});
         cx.spawn(async move |this, cx| {
             let read = read.await;
-            let _ = this.update(cx, |this, cx| match read {
+            this.update(cx, |this, cx| match read {
                 // A review that saved mistakes meanwhile holds the newer list.
                 Ok(mistakes) if this.review.mistakes.is_empty() => {
                     this.review.mistakes = mistakes;
@@ -1167,7 +1159,8 @@ impl AnalysisPage {
                     "library",
                     &format!("Reading the mistakes to practise failed: {}", cause.message),
                 ),
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -1313,16 +1306,9 @@ impl AnalysisPage {
     }
 
     fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) {
-            return;
-        }
         let fen = self.node().fen.clone();
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice.missed(heard, &fen, true, cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        let Some(heard) = self.voice.heard(event, &fen, true, cx) else {
+            return;
         };
         let setup = Setup {
             variant: self.root.variant(),
@@ -1472,7 +1458,7 @@ impl AnalysisPage {
                 "undo-delete-moves",
                 "Undo",
                 move |window, cx| {
-                    let _ = page.update(cx, |page, cx| page.undo(window, cx));
+                    page.update(cx, |page, cx| page.undo(window, cx)).ok();
                 },
             ),
             cx,

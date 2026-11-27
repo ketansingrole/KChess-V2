@@ -478,7 +478,7 @@ impl Model {
 
     /// A correspondence game: days per move, or a speed Lichess names so.
     pub fn correspondence(&self) -> bool {
-        self.online_speed == crate::perf::Speed::Correspondence.key()
+        self.online_speed == crate::perf::Speed::Correspondence.as_str()
             || self.online_days_per_turn.is_some()
     }
 

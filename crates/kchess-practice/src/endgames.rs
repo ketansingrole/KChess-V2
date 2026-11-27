@@ -226,11 +226,12 @@ impl Endgames {
         );
         cx.spawn(async move |this, cx| match (lessons.await, drills.await) {
             (Ok(lessons), Ok(drills)) => {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.lessons = Some(lessons);
                     this.drill_summary = Some(drills);
                     cx.notify();
-                });
+                })
+                .ok();
             }
             (Err(cause), _) | (_, Err(cause)) => crate::log::write(
                 Level::Warn,

@@ -225,14 +225,7 @@ impl Focusable for BooksPage {
 
 impl BooksPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> BooksPage {
-        let board = cx.new(|_| {
-            ChessBoard::new(BoardState::of(
-                &VariantPosition::Chess(shakmaty::Chess::default()),
-                Color::White,
-                None,
-                None,
-            ))
-        });
+        let board = cx.new(|_| ChessBoard::new(BoardState::start()));
         let split = cx.new(|_| ResizableState::default());
         let stack = cx.new(|_| ResizableState::default());
         let list = ListState::new(0, ListAlignment::Top, px(400.));

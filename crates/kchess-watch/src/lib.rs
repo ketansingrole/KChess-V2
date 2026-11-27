@@ -469,7 +469,7 @@ impl WatchPage {
         });
         cx.spawn_in(window, async move |this, cx| {
             let answer = found.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if !this.epoch.is_current(epoch) {
                     return;
                 }
@@ -482,7 +482,8 @@ impl WatchPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -508,7 +509,7 @@ impl WatchPage {
         let channels = cx.global::<AppCore>().request(calls::TvChannels {});
         cx.spawn(async move |this, cx| {
             let answer = channels.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 match answer {
                     Ok(channels) => {
                         this.channels_error = None;
@@ -520,7 +521,8 @@ impl WatchPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -532,6 +534,36 @@ impl WatchPage {
 
     /// `watch`: stream a channel or a game; its updates carry the session the core answers.
     fn watch(&mut self, target: Target, cx: &mut Context<Self>) {
+        self.target = Some(target.clone());
+        self.start_feed(
+            Pending::Watch,
+            move |core| {
+                core.request(calls::Watch {
+                    target: target.contract(),
+                })
+            },
+            |this, session, cx| {
+                this.session = Some(session);
+                this.replay_early(cx);
+            },
+            |this| this.target = None,
+            cx,
+        );
+    }
+
+    /// Follow the feed `call` asks the core for, as `pending`, once the one asked for before has
+    /// started (`next_feed`): `started` keeps its session. A failure is shown, once `failed` takes
+    /// back what asking for the feed showed.
+    fn start_feed<F>(
+        &mut self,
+        pending: Pending,
+        call: impl FnOnce(&AppCore) -> F + 'static,
+        started: impl FnOnce(&mut Self, u64, &mut Context<Self>) + 'static,
+        failed: impl FnOnce(&mut Self) + 'static,
+        cx: &mut Context<Self>,
+    ) where
+        F: std::future::Future<Output = Result<u64, kchess_contracts::CoreError>> + 'static,
+    {
         let epoch = self.epoch.start();
         self.early.clear();
         self.session = None;
@@ -539,26 +571,21 @@ impl WatchPage {
         self.phase = None;
         self.error = None;
         self.live.clear();
-        self.target = Some(target.clone());
-        self.pending = Some(Pending::Watch);
+        self.pending = Some(pending);
         cx.notify();
-        let (before, started) = self.next_feed();
+        let (before, answered) = self.next_feed();
         cx.spawn(async move |this, cx| {
             if let Some(before) = before {
                 before.await;
             }
-            let Ok(call) = this.update(cx, |_, cx| {
-                cx.global::<AppCore>().request(calls::Watch {
-                    target: target.contract(),
-                })
-            }) else {
+            let Ok(asked) = this.update(cx, |_, cx| call(cx.global::<AppCore>())) else {
                 return;
             };
-            let answer = call.await;
-            drop(started);
-            let _ = this.update(cx, |this, cx| {
+            let answer = asked.await;
+            drop(answered);
+            this.update(cx, |this, cx| {
                 if !this.epoch.is_current(epoch) {
-                    // The page moved on while the core started it: that watch ends now.
+                    // The page moved on while the core started it: that feed ends now.
                     // gpui-lints: allow(dropped_failure) a superseded start's failure is nobody's
                     if let Ok(session) = answer {
                         stop_watching(Some(session), cx);
@@ -566,19 +593,17 @@ impl WatchPage {
                     return;
                 }
                 match answer {
-                    Ok(session) => {
-                        this.session = Some(session);
-                        this.replay_early(cx);
-                    }
+                    Ok(session) => started(this, session, cx),
                     Err(cause) => {
                         this.pending = None;
                         this.early.clear();
                         this.error = Some(kchess_app::loading::failure("watch", &cause).into());
-                        this.target = None;
+                        failed(this);
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -679,7 +704,7 @@ impl WatchPage {
             });
             cx.spawn(async move |this, cx| {
                 let answer = presence.await;
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     match answer {
                         Ok(report) => {
                             for (name, entry) in report.users {
@@ -692,7 +717,8 @@ impl WatchPage {
                         }
                     }
                     cx.notify();
-                });
+                })
+                .ok();
             })
             .detach();
         }
@@ -794,7 +820,8 @@ impl Render for WatchPage {
         let page = cx.entity().downgrade();
         let choose = move |index: usize, window: &mut Window, cx: &mut App| {
             let tab = Tab::ALL[index];
-            let _ = page.update(cx, |page, cx| page.choose_tab(tab, window, cx));
+            page.update(cx, |page, cx| page.choose_tab(tab, window, cx))
+                .ok();
         };
         let header = h_flex()
             .gap(px(12.))

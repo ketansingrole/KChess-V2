@@ -17,7 +17,7 @@ impl OnlineState {
         let call = cx.global::<AppCore>().request(calls::OngoingGames {});
         cx.spawn(async move |this, cx| {
             let answer = call.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.ongoing_loading.settle(turn, "online-game", &answer) {
                     return;
                 }
@@ -35,7 +35,8 @@ impl OnlineState {
                 }
                 this.ongoing_loaded = true;
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -75,10 +76,11 @@ impl OnlineState {
                 log(&format!("staying connected failed: {}", cause.message));
             }
             if account.is_empty() {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.lobby = None;
                     cx.notify();
-                });
+                })
+                .ok();
             }
         })
         .detach();
@@ -88,10 +90,11 @@ impl OnlineState {
         let call = cx.global::<AppCore>().request(calls::Challenges {});
         cx.spawn(async move |this, cx| {
             if let Some(list) = call.await.warn_on_err() {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.challenges = list;
                     cx.notify();
-                });
+                })
+                .ok();
             }
         })
         .detach();
@@ -160,13 +163,14 @@ impl OnlineState {
                 .ok();
             }
             if done && !live {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     notice(
                         cx,
                         format!("Accepted. Your game against {opponent} is under Correspondence."),
                     );
                     this.refresh_ongoing(cx);
-                });
+                })
+                .ok();
             }
             done && live
         })

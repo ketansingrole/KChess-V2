@@ -265,7 +265,7 @@ impl StudiesPage {
         window
             .spawn(cx, async move |cx| {
                 let result = answer.await;
-                let _ = cx.update(|window, cx| match result {
+                cx.update(|window, cx| match result {
                     Ok(result) => {
                         library.update(cx, |library, cx| {
                             library.apply(&result);
@@ -274,41 +274,23 @@ impl StudiesPage {
                         then(result, window, cx);
                     }
                     Err(cause) => window.push_notification(Notification::error(cause), cx),
-                });
+                })
+                .ok();
             })
             .detach();
     }
 
     fn rename(study: &Study, window: &mut Window, cx: &mut App) {
         let id = study.id.clone();
-        let library = Self::library(cx);
-        NameDialog::open(
+        ask_name(
             "Rename study",
             &study.name,
             "Rename",
             window,
             cx,
-            move |name, dialog, window, cx| {
-                let answer = library.read(cx).command(StudyCommand::Rename {
-                    id: id.clone(),
-                    name,
-                });
-                let library = library.clone();
-                window
-                    .spawn(cx, async move |cx| {
-                        let result = answer.await;
-                        let _ = cx.update(|window, cx| match result {
-                            Ok(result) => {
-                                library.update(cx, |library, cx| {
-                                    library.apply(&result);
-                                    cx.notify();
-                                });
-                                window.close_dialog(cx);
-                            }
-                            Err(cause) => dialog.update(cx, |dialog, cx| dialog.fail(cause, cx)),
-                        });
-                    })
-                    .detach();
+            move |name| StudyCommand::Rename {
+                id: id.clone(),
+                name,
             },
         );
     }
@@ -374,7 +356,8 @@ impl StudiesPage {
                     }
                     None => return,
                 };
-                let _ = cx.update(|window, cx| window.push_notification(note, cx));
+                cx.update(|window, cx| window.push_notification(note, cx))
+                    .ok();
             })
             .detach();
     }
@@ -502,16 +485,17 @@ impl StudiesPage {
                     })
                     .map_err(|_| "The page closed".to_string())?;
                 let result = marked.await?;
-                let _ = this.update(cx, |_, cx| {
+                this.update(cx, |_, cx| {
                     library.update(cx, |library, cx| {
                         library.apply(&result);
                         cx.notify();
                     })
-                });
+                })
+                .ok();
                 Ok(())
             }
             .await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.uploading = None;
                 match outcome {
                     Ok(()) => window.push_notification(Notification::success("Study uploaded"), cx),
@@ -525,7 +509,8 @@ impl StudiesPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -874,9 +859,10 @@ impl Render for StudiesPage {
                                         if index == 1 { "lichess" } else { "device" },
                                     );
                                     if index == 1 {
-                                        let _ = page.update(cx, |page, cx| {
+                                        page.update(cx, |page, cx| {
                                             page.load_lichess(false, window, cx)
-                                        });
+                                        })
+                                        .ok();
                                     }
                                     window.refresh();
                                 }
@@ -964,6 +950,46 @@ pub fn open_lichess(window: &mut Window, cx: &mut App) {
     kchess_nav::shell::show::<StudiesPage>(window, cx, |studies, window, cx| {
         studies.show_lichess(window, cx)
     });
+}
+
+/// Ask for a name, and send the study command `command` makes of it: the dialog closes once the
+/// library shows the answer, and shows a refusal itself.
+pub fn ask_name(
+    title: &'static str,
+    current: &str,
+    confirm: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+    command: impl Fn(String) -> StudyCommand + 'static,
+) {
+    let library = cx.global::<StudyHandle>().0.clone();
+    NameDialog::open(
+        title,
+        current,
+        confirm,
+        window,
+        cx,
+        move |name, dialog, window, cx| {
+            let answer = library.read(cx).command(command(name));
+            let library = library.clone();
+            window
+                .spawn(cx, async move |cx| {
+                    let result = answer.await;
+                    cx.update(|window, cx| match result {
+                        Ok(result) => {
+                            library.update(cx, |library, cx| {
+                                library.apply(&result);
+                                cx.notify();
+                            });
+                            window.close_dialog(cx);
+                        }
+                        Err(cause) => dialog.update(cx, |dialog, cx| dialog.fail(cause, cx)),
+                    })
+                    .ok();
+                })
+                .detach();
+        },
+    );
 }
 
 #[cfg(test)]

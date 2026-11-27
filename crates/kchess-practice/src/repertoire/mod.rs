@@ -158,18 +158,7 @@ pub struct Repertoire {
 
 impl Repertoire {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Repertoire {
-        let board = cx.new(|_| {
-            ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start(
-                    kchess_domain::variant::Variant::Standard,
-                    STANDARD_FEN,
-                )
-                .unwrap_or_default(),
-                Color::White,
-                None,
-                None,
-            ))
-        });
+        let board = cx.new(|_| ChessBoard::new(BoardState::start()));
         let (move_box, typed) = crate::game::surface::MoveBox::new(Self::typed_move, window, cx);
         let study_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let chapter_select = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
@@ -186,7 +175,9 @@ impl Repertoire {
                 cx,
                 &[kchess_contracts::types::ProfileArea::Repertoire],
                 move |cx| {
-                    let _ = trainer.update(cx, |trainer, cx| trainer.load_misses(cx));
+                    trainer
+                        .update(cx, |trainer, cx| trainer.load_misses(cx))
+                        .ok();
                 },
             ),
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
@@ -294,7 +285,7 @@ impl Repertoire {
         let library = cx.global::<AppCore>().request(calls::Library {});
         cx.spawn(async move |this, cx| match library.await {
             Ok(library) => {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.misses = library.repertoire_misses;
                     this.schedule = library.repertoire_schedule;
                     // A due line comes first, also when the schedule arrived after the first line.
@@ -305,7 +296,8 @@ impl Repertoire {
                         this.start_line(cx);
                     }
                     cx.notify();
-                });
+                })
+                .ok();
             }
             Err(cause) => crate::log::write(
                 Level::Warn,
@@ -581,13 +573,14 @@ impl Repertoire {
                     }
                 }
             }
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.drill = Some(root);
                 this.note = note;
                 this.preparing = false;
                 this.roots = this.drill.clone().into_iter().collect();
                 this.start_line(cx);
-            });
+            })
+            .ok();
         }));
     }
 
@@ -611,7 +604,7 @@ impl Repertoire {
     ) {
         self.reply = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
-            let _ = this.update(cx, step);
+            this.update(cx, step).ok();
         }));
     }
 
@@ -852,17 +845,10 @@ impl Repertoire {
     }
 
     fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) {
-            return;
-        }
         let fen = self.node().map(|node| node.fen.clone()).unwrap_or_default();
         let setup = kchess_domain::variant::Setup::standard_at(&fen);
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice.missed(heard, &fen, self.your_turn(cx), cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        let Some(heard) = self.voice.heard(event, &fen, self.your_turn(cx), cx) else {
+            return;
         };
         let turn = Turn {
             taking: self.your_turn(cx),
@@ -891,10 +877,8 @@ impl Repertoire {
     /// `text` said clearly, with voice on: as the recognizer's phrase reaches the trainer.
     #[cfg(any(test, feature = "test-support"))]
     pub fn hear(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.voice.control.enabled = true;
-        let owner = self.voice.control.owner;
-        let heard = crate::voice::Heard::clear(text);
-        self.voice_heard(&crate::voice::VoiceEvent::Heard { owner, heard }, cx);
+        let heard = self.voice.control.hear_clearly(text);
+        self.voice_heard(&heard, cx);
     }
 
     fn arrows(
@@ -1000,10 +984,11 @@ impl Repertoire {
         });
         cx.spawn(async move |this, cx| match saved.await {
             Ok(schedule) => {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.schedule = schedule;
                     cx.notify();
-                });
+                })
+                .ok();
             }
             Err(cause) => crate::log::write(
                 Level::Warn,
@@ -1069,15 +1054,18 @@ impl Repertoire {
                     .map(|(fen, count)| (fen, count.as_f64().unwrap_or(0.)))
                     .collect(),
             );
-            let _ = window_handle.update(cx, |_, window, cx| {
-                let _ = this.update(cx, |this, cx| {
-                    this.misses = cleared.misses;
-                    if !forgotten.is_empty() {
-                        this.offer_undo(key, forgotten, window, cx);
-                    }
-                    cx.notify();
-                });
-            });
+            window_handle
+                .update(cx, |_, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.misses = cleared.misses;
+                        if !forgotten.is_empty() {
+                            this.offer_undo(key, forgotten, window, cx);
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                })
+                .ok();
         })
         .detach();
     }
@@ -1098,7 +1086,7 @@ impl Repertoire {
                 "Undo",
                 move |_, cx| {
                     let (key, forgotten) = (key.clone(), forgotten.clone());
-                    let _ = page.update(cx, |page, cx| {
+                    page.update(cx, |page, cx| {
                         let saved =
                             cx.global::<AppCore>()
                                 .request(calls::RestoreRepertoireMisses {
@@ -1106,7 +1094,8 @@ impl Repertoire {
                                     misses: MissCounts(forgotten),
                                 });
                         page.keep_misses(saved, "restoring repertoire misses", cx);
-                    });
+                    })
+                    .ok();
                 },
             ),
             cx,
@@ -1122,10 +1111,11 @@ impl Repertoire {
     ) {
         cx.spawn(async move |this, cx| match saved.await {
             Ok(misses) => {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.misses = misses;
                     cx.notify();
-                });
+                })
+                .ok();
             }
             Err(cause) => crate::log::write(
                 Level::Warn,
@@ -1263,7 +1253,7 @@ impl Repertoire {
         });
         cx.spawn_in(window, async move |this, cx| {
             let saved = saved.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.saving = false;
                 match saved {
                     Ok(result) => {
@@ -1283,7 +1273,8 @@ impl Repertoire {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -1628,7 +1619,7 @@ impl Render for Repertoire {
                                 COLOR,
                                 if index == 1 { "black" } else { "white" },
                             );
-                            let _ = page.update(cx, |page, cx| page.rebuild(cx));
+                            page.update(cx, |page, cx| page.rebuild(cx)).ok();
                         }
                     },
                     false,

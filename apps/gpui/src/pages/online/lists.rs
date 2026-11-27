@@ -235,9 +235,10 @@ impl OnlinePage {
                                     window
                                         .spawn(cx, async move |cx| {
                                             if opened.await {
-                                                let _ = cx.update(|window, cx| {
+                                                cx.update(|window, cx| {
                                                     crate::shell::open(Page::Online, window, cx)
-                                                });
+                                                })
+                                                .ok();
                                             }
                                         })
                                         .detach();

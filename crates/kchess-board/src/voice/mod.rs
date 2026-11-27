@@ -380,7 +380,7 @@ impl Voice {
                 async move {
                     while let Some(update) = progress_updates.next().await {
                         let mut cx = cx.clone();
-                        let _ = this.update(&mut cx, |this, cx| {
+                        this.update(&mut cx, |this, cx| {
                             this.preparing = match update.phase {
                                 model::Phase::Downloading => match update.total {
                                     Some(total) if total > 0 => format!(
@@ -393,12 +393,13 @@ impl Voice {
                                 model::Phase::Checking => "Loading voice model…".into(),
                             };
                             cx.notify();
-                        });
+                        })
+                        .ok();
                     }
                 }
             };
             let (ensured, ()) = futures::join!(ensure, watch);
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if this.epoch != epoch || this.owner.is_none() {
                     return;
                 }
@@ -419,7 +420,8 @@ impl Voice {
                         cx,
                     ),
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -672,7 +674,7 @@ pub fn init(cx: &mut App) {
         let voice = voice.downgrade();
         move |_, event: &crate::core::ClientEvent, cx| {
             if *event == crate::core::ClientEvent::Reconnected {
-                let _ = voice.update(cx, |voice, cx| voice.reset(cx));
+                voice.update(cx, |voice, cx| voice.reset(cx)).ok();
             }
         }
     })

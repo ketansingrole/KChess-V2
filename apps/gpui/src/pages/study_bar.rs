@@ -273,7 +273,7 @@ impl StudyBar {
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = answer.await;
-            let _ = this.update_in(cx, |this, window, cx| match result {
+            this.update_in(cx, |this, window, cx| match result {
                 Ok(result) => library.update(cx, |library, cx| {
                     library.apply(&result);
                     cx.notify();
@@ -286,7 +286,8 @@ impl StudyBar {
                         cx,
                     );
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -305,7 +306,7 @@ impl StudyBar {
         let flushed = analysis.update(cx, |analysis, cx| analysis.flush_study(cx));
         cx.spawn(async move |this, cx| {
             let saved = flushed.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 // The board moved on meanwhile, or its save was refused: it stays as it is.
                 let still = {
                     let board = analysis.read(cx);
@@ -320,7 +321,8 @@ impl StudyBar {
                     })
                     .err();
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -349,7 +351,7 @@ impl StudyBar {
                 answer.await
             }
             .await;
-            let _ = this.update_in(cx, |this, window, cx| match outcome {
+            this.update_in(cx, |this, window, cx| match outcome {
                 Ok(result) => {
                     library.update(cx, |library, cx| {
                         library.apply(&result);
@@ -375,7 +377,8 @@ impl StudyBar {
                         cx.notify();
                     }
                 },
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -396,9 +399,10 @@ impl StudyBar {
                     id: study.id.clone(),
                     name,
                 };
-                let _ = bar.update(cx, |bar, cx| {
+                bar.update(cx, |bar, cx| {
                     bar.chapter_command(command, Some(dialog), window, cx)
-                });
+                })
+                .ok();
             },
         );
     }
@@ -411,35 +415,16 @@ impl StudyBar {
             .chapter(&chapter)
             .map(|entry| entry.name.clone())
             .unwrap_or_default();
-        let library = Self::library(cx);
-        NameDialog::open(
+        kchess_studies::ask_name(
             "Rename chapter",
             &current,
             "Save",
             window,
             cx,
-            move |name, dialog, window, cx| {
-                let answer = library.read(cx).command(StudyCommand::RenameChapter {
-                    id: study.id.clone(),
-                    chapter_id: chapter.clone(),
-                    name,
-                });
-                let library = library.clone();
-                window
-                    .spawn(cx, async move |cx| {
-                        let result = answer.await;
-                        let _ = cx.update(|window, cx| match result {
-                            Ok(result) => {
-                                library.update(cx, |library, cx| {
-                                    library.apply(&result);
-                                    cx.notify();
-                                });
-                                window.close_dialog(cx);
-                            }
-                            Err(cause) => dialog.update(cx, |dialog, cx| dialog.fail(cause, cx)),
-                        });
-                    })
-                    .detach();
+            move |name| StudyCommand::RenameChapter {
+                id: study.id.clone(),
+                chapter_id: chapter.clone(),
+                name,
             },
         );
     }
@@ -493,10 +478,11 @@ impl StudyBar {
         let library = Self::library(cx);
         cx.spawn_in(window, async move |this, cx| {
             if !closed.await {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.chapter_error = analysis.read(cx).study_error().map(str::to_string);
                     cx.notify();
-                });
+                })
+                .ok();
                 return;
             }
             // The chapter as the board left it, and its place, for Undo.
@@ -518,7 +504,7 @@ impl StudyBar {
                 return;
             };
             let result = answer.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 let next = match &result {
                     Ok(result) => {
                         library.update(cx, |library, cx| {
@@ -548,7 +534,8 @@ impl StudyBar {
                     this.chapter_error = Some(cause);
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -588,7 +575,7 @@ impl StudyBar {
                     window
                         .spawn(cx, async move |cx| {
                             let result = answer.await;
-                            let _ = cx.update(|window, cx| match result {
+                            cx.update(|window, cx| match result {
                                 Ok(result) => {
                                     library.update(cx, |library, cx| {
                                         library.apply(&result);
@@ -606,7 +593,8 @@ impl StudyBar {
                                 Err(cause) => {
                                     window.push_notification(Notification::error(cause), cx)
                                 }
-                            });
+                            })
+                            .ok();
                         })
                         .detach();
                 },
@@ -688,7 +676,7 @@ impl StudyBar {
                 window
                     .spawn(cx, async move |cx| {
                         let saved = saved.await;
-                        let _ = cx.update(|window, cx| match saved {
+                        cx.update(|window, cx| match saved {
                             Ok(_) => {
                                 window.close_dialog(cx);
                                 window.push_notification(
@@ -700,7 +688,8 @@ impl StudyBar {
                                 );
                             }
                             Err(cause) => dialog.update(cx, |dialog, cx| dialog.fail(cause, cx)),
-                        });
+                        })
+                        .ok();
                     })
                     .detach();
             },
@@ -717,7 +706,7 @@ impl StudyBar {
         window
             .spawn(cx, async move |cx| {
                 let saved = saved.await;
-                let _ = cx.update(|window, cx| {
+                cx.update(|window, cx| {
                     // The board now edits the copy; say so, since the original stops changing.
                     let note = match saved {
                         Ok(_) => Notification::success(format!(
@@ -727,7 +716,8 @@ impl StudyBar {
                         Err(cause) => Notification::error(cause),
                     };
                     window.push_notification(note, cx);
-                });
+                })
+                .ok();
             })
             .detach();
     }
@@ -755,7 +745,7 @@ impl StudyBar {
         window
             .spawn(cx, async move |cx| {
                 let result = answer.await;
-                let _ = cx.update(|window, cx| {
+                cx.update(|window, cx| {
                     let removed = match result {
                         Ok(result) => {
                             library.update(cx, |library, cx| {
@@ -795,7 +785,8 @@ impl StudyBar {
                         ),
                         cx,
                     );
-                });
+                })
+                .ok();
             })
             .detach();
     }
@@ -830,7 +821,7 @@ fn restore(
     window
         .spawn(cx, async move |cx| {
             let result = answer.await;
-            let _ = cx.update(|window, cx| match result {
+            cx.update(|window, cx| match result {
                 Ok(result) => {
                     library.update(cx, |library, cx| {
                         library.apply(&result);
@@ -841,7 +832,8 @@ fn restore(
                     });
                 }
                 Err(cause) => window.push_notification(Notification::error(cause), cx),
-            });
+            })
+            .ok();
         })
         .detach();
 }
@@ -907,7 +899,7 @@ impl Render for StudyBar {
                 let action = |run: fn(&mut StudyBar, &mut Window, &mut Context<StudyBar>)| {
                     let bar = menu_bar.clone();
                     move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                        let _ = bar.update(cx, |bar, cx| run(bar, window, cx));
+                        bar.update(cx, |bar, cx| run(bar, window, cx)).ok();
                     }
                 };
                 let menu = menu
@@ -971,7 +963,7 @@ impl Render for StudyBar {
                                 |run: fn(&mut StudyBar, &mut Window, &mut Context<StudyBar>)| {
                                     let bar = chapter_bar.clone();
                                     move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                        let _ = bar.update(cx, |bar, cx| run(bar, window, cx));
+                                        bar.update(cx, |bar, cx| run(bar, window, cx)).ok();
                                     }
                                 };
                             menu.item(

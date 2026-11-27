@@ -206,7 +206,7 @@ impl PuzzleRush {
         });
         cx.spawn(async move |this, cx| {
             let ladder = ladder.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.generation.is_current(generation) {
                     return;
                 }
@@ -240,7 +240,8 @@ impl PuzzleRush {
                     this.run_clock(cx);
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -325,12 +326,13 @@ impl PuzzleRush {
                 let generation = self.generation.current();
                 self.timers.push(cx.spawn(async move |this, cx| {
                     cx.background_executor().timer(BONUS_SHOWN).await;
-                    let _ = this.update(cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         if this.generation.is_current(generation) {
                             this.bonus = None;
                             cx.notify();
                         }
-                    });
+                    })
+                    .ok();
                 }));
             }
         } else {
@@ -362,13 +364,14 @@ impl PuzzleRush {
         let pause = if solved { AFTER_SOLVE } else { AFTER_MISS };
         self.timers.push(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(pause).await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.generation.is_current(generation) || this.stage != Stage::Running {
                     return;
                 }
                 this.locked = false;
                 this.advance(cx);
-            });
+            })
+            .ok();
         }));
         cx.notify();
     }
@@ -441,7 +444,8 @@ impl PuzzleRush {
         let save = cx.global::<AppCore>().request(calls::SaveRun { run });
         cx.spawn(async move |this, cx| {
             let saved = save.await.map_err(|cause| cause.message);
-            let _ = this.update(cx, |this, cx| this.run_saved(generation, mode, saved, cx));
+            this.update(cx, |this, cx| this.run_saved(generation, mode, saved, cx))
+                .ok();
         })
         .detach();
         cx.notify();

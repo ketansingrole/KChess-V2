@@ -44,7 +44,7 @@ impl AnalysisPage {
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
             let status = status.await.warn_on_err();
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.engine_ready = Some(status.as_ref().is_some_and(|status| status.ready));
                 let identity = status.and_then(|status| status.identity);
                 if identity != this.engine_identity {
@@ -53,7 +53,8 @@ impl AnalysisPage {
                     this.clear_evaluations();
                 }
                 this.engine_changed(cx);
-            });
+            })
+            .ok();
         })
         .detach();
         self.ask_cloud(cx);
@@ -67,7 +68,6 @@ impl AnalysisPage {
         }
         self.attached = false;
         self.cloud_task = None;
-        self.cloud_request += 1;
         self.search.stop(true, cx);
     }
 
@@ -132,7 +132,7 @@ impl AnalysisPage {
             // Fairy-Stockfish analyses the other variants.
             variant: self
                 .fairy_variant()
-                .map(|variant| variant.key().to_string()),
+                .map(|variant| variant.as_str().to_string()),
         };
         // Every look searches again: the board asks only when what it shows changed, or to retry.
         self.search
@@ -210,8 +210,6 @@ impl AnalysisPage {
 
     pub(super) fn ask_cloud(&mut self, cx: &mut Context<Self>) {
         self.cloud_task = None;
-        self.cloud_request += 1;
-        let request = self.cloud_request;
         let fen = self.node().fen.clone();
         if self.cloud.as_ref().map(|cloud| cloud.fen.as_str()) != Some(fen.as_str()) {
             self.cloud = None;
@@ -238,20 +236,18 @@ impl AnalysisPage {
         let core = cx.global::<AppCore>().clone();
         self.cloud_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(CLOUD_DELAY).await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.cloud_busy = true;
                 cx.notify();
-            });
+            })
+            .ok();
             let answer = core
                 .lookup(calls::CloudEval {
                     fen: Position(fen),
                     lines: Bounded(lines as u64),
                 })
                 .await;
-            let _ = this.update(cx, |this, cx| {
-                if request != this.cloud_request {
-                    return;
-                }
+            this.update(cx, |this, cx| {
                 this.cloud_busy = false;
                 match answer {
                     Ok(cloud) => this.cloud = cloud,
@@ -265,7 +261,8 @@ impl AnalysisPage {
                     }
                 }
                 this.redraw(cx);
-            });
+            })
+            .ok();
         }));
     }
 
@@ -519,7 +516,7 @@ impl AnalysisPage {
                                             let page = on_arrows.clone();
                                             move |on: bool, cx: &mut App| {
                                                 crate::prefs::set(cx, ARROWS, on);
-                                                let _ = page.update(cx, |page, cx| page.redraw(cx));
+                                                page.update(cx, |page, cx| page.redraw(cx)).ok();
                                             }
                                         };
                                         set(on, cx);
@@ -756,7 +753,7 @@ impl AnalysisPage {
                         }, // A threat's line starts from a position that is not on the board.
                         std::rc::Rc::new(move |pv: &[String], at, _: &mut Window, cx: &mut App| {
                             if !threat {
-                                let _ = page.update(cx, |page, cx| page.play_line(pv, at, cx));
+                                page.update(cx, |page, cx| page.play_line(pv, at, cx)).ok();
                             }
                         }),
                         palette,

@@ -241,7 +241,7 @@ impl Exporter {
                 Ok(url) => Ok(url),
                 Err(upload) => upload.await.map(|game| game.url),
             };
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.uploading = false;
                 cx.notify();
                 match url {
@@ -260,7 +260,8 @@ impl Exporter {
                         cx,
                     ),
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -318,12 +319,13 @@ impl Exporter {
         });
         cx.spawn_in(window, async move |this, cx| {
             while let Some((done, total)) = heard.next().await {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if this.runs(&own) {
                         this.progress = format!("{done}/{total}");
                         cx.notify();
                     }
-                });
+                })
+                .ok();
             }
             let data = work.await;
             let stopped = own.load(Ordering::Relaxed) || this.upgrade().is_none();
@@ -335,7 +337,7 @@ impl Exporter {
                     Err(_) => None,
                 },
             };
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if this.runs(&own) {
                     this.finish(cx);
                 }
@@ -350,7 +352,8 @@ impl Exporter {
                     ),
                     None => {}
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -395,10 +398,12 @@ pub fn export_menu(
                     .small()
                     .label("Cancel export")
                     .on_click(move |_, _, cx| {
-                        let _ = cancel.update(cx, |exporter, cx| {
-                            exporter.stop();
-                            exporter.finish(cx);
-                        });
+                        cancel
+                            .update(cx, |exporter, cx| {
+                                exporter.stop();
+                                exporter.finish(cx);
+                            })
+                            .ok();
                     }),
             )
         })
@@ -416,9 +421,11 @@ pub fn export_menu(
                         PopupMenuItem::new(label)
                             .icon(glyph)
                             .on_click(move |_, window, cx| {
-                                let _ = target.update(cx, |exporter, cx| {
-                                    exporter.save(kind, game.clone(), window, cx)
-                                });
+                                target
+                                    .update(cx, |exporter, cx| {
+                                        exporter.save(kind, game.clone(), window, cx)
+                                    })
+                                    .ok();
                             })
                     };
                     let (upload_target, upload_game) = (target.clone(), game.clone());
@@ -445,9 +452,11 @@ pub fn export_menu(
                                 .icon(icon("link"))
                                 .disabled(!can_upload)
                                 .on_click(move |_, window, cx| {
-                                    let _ = upload_target.update(cx, |exporter, cx| {
-                                        exporter.upload(upload_game.clone(), window, cx)
-                                    });
+                                    upload_target
+                                        .update(cx, |exporter, cx| {
+                                            exporter.upload(upload_game.clone(), window, cx)
+                                        })
+                                        .ok();
                                 }),
                         )
                 }),
@@ -482,7 +491,8 @@ pub fn choose_game_file<V: 'static>(
         let text = cx
             .background_spawn(async move { read_game_file(&path) })
             .await;
-        let _ = this.update_in(cx, |this, window, cx| read(this, text, window, cx));
+        this.update_in(cx, |this, window, cx| read(this, text, window, cx))
+            .ok();
     })
     .detach();
 }

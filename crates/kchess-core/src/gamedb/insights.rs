@@ -205,7 +205,7 @@ fn read(
         let speed = header("TimeControl")
             .as_deref()
             .and_then(patterns::speed)
-            .map(patterns::Speed::key);
+            .map(kchess_domain::perf::Speed::as_str);
         if query
             .speed
             .is_some_and(|wanted| speed != Some(wanted.as_str()))
@@ -385,9 +385,7 @@ mod tests {
     use crate::gamedb::{GameDbService, schema, write_database};
     use crate::host::Config;
     use crate::test_host::TestHost;
-    use kchess_contracts::types::{
-        ExplorerSpeed, GameRecord, GameSite, InsightsFilters, PlayerGames,
-    };
+    use kchess_contracts::types::{GameRecord, GameSite, InsightsFilters, PlayerGames, Speed};
 
     /// A player's games as Lichess and Chess.com export them: Scout loses a rated blitz game
     /// Lichess analysed, letting a mate in one in short of time; wins a casual rapid game on
@@ -544,7 +542,7 @@ mod tests {
         let id = write_database(profile.path(), "Scout", SCOUT).unwrap();
         let total = |filters: InsightsFilters| report_of(profile.path(), &id, filters).total;
         let blitz = InsightsFilters {
-            speed: Some(ExplorerSpeed::Blitz),
+            speed: Some(Speed::Blitz),
             ..InsightsFilters::default()
         };
         assert_eq!(total(blitz), 2);

@@ -144,7 +144,7 @@ impl ImportStudy {
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = answer.await;
-            let _ = this.update_in(cx, |this, window, cx| match result {
+            this.update_in(cx, |this, window, cx| match result {
                 Ok(result) => {
                     library.update(cx, |library, cx| {
                         library.apply(&result);
@@ -167,7 +167,8 @@ impl ImportStudy {
                     this.error = Some(cause.into());
                     cx.notify();
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }

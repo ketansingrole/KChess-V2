@@ -15,7 +15,7 @@ use kchess_domain::training::lessons::{self, Goal, Reason, Status};
 use serde_json::json;
 use shakmaty::Color;
 
-use super::endgame_drills::move_squares;
+use super::endgame_board::{Shown, taken_back};
 use super::endgames::{Chapter, Course, Step, TrainerEvent, finished};
 use super::engine_move::{EngineMove, HasEngine};
 use super::run::{self, TrainingItem};
@@ -170,18 +170,7 @@ impl EndgameLesson {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> EndgameLesson {
-        let board = cx.new(|_| {
-            ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start(
-                    kchess_domain::variant::Variant::Standard,
-                    crate::game::STANDARD_FEN,
-                )
-                .unwrap_or_default(),
-                Color::White,
-                None,
-                None,
-            ))
-        });
+        let board = cx.new(|_| ChessBoard::new(BoardState::start()));
         let (move_box, typed) = crate::game::surface::MoveBox::new(Self::typed_move, window, cx);
         let settings = cx.global::<SettingsHandle>().0.clone();
         let voice = crate::voice::handle(cx);
@@ -470,16 +459,9 @@ impl EndgameLesson {
     }
 
     fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) {
-            return;
-        }
         let setup = kchess_domain::variant::Setup::standard_at(&self.status().fen);
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice.missed(heard, &setup.fen, self.your_turn(), cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        let Some(heard) = self.voice.heard(event, &setup.fen, self.your_turn(), cx) else {
+            return;
         };
         let idle = if !self.playable() {
             Some("Say “next” for the next step")
@@ -509,10 +491,8 @@ impl EndgameLesson {
     /// `text` said clearly, with voice on: as the recognizer's phrase reaches the lesson.
     #[cfg(any(test, feature = "test-support"))]
     pub fn hear(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.voice.control.enabled = true;
-        let owner = self.voice.control.owner;
-        let heard = crate::voice::Heard::clear(text);
-        self.voice_heard(&crate::voice::VoiceEvent::Heard { owner, heard }, cx);
+        let heard = self.voice.control.hear_clearly(text);
+        self.voice_heard(&heard, cx);
     }
 
     /// The opponent answers: a scripted or solved reply after a beat, else the engine.
@@ -530,12 +510,13 @@ impl EndgameLesson {
             let at = self.moves.len();
             self.reply = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(REPLY).await;
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.reply = None;
                     if this.moves.len() == at {
                         this.play(reply, cx);
                     }
-                });
+                })
+                .ok();
             }));
             return;
         }
@@ -594,12 +575,7 @@ impl EndgameLesson {
         self.hint = None;
         self.wrong = false;
         let player = self.status().player;
-        let mut kept = self.moves.clone();
-        kept.pop();
-        while !kept.is_empty() && self.status_after(&kept).turn != player {
-            kept.pop();
-        }
-        self.moves = kept;
+        self.moves = taken_back(&self.moves, |kept| self.status_after(kept).turn == player);
         self.moved(cx);
     }
 
@@ -624,7 +600,7 @@ impl EndgameLesson {
         });
         cx.spawn(async move |this, cx| {
             let saved = saved.await;
-            let _ = this.update(cx, |this, cx| match saved {
+            this.update(cx, |this, cx| match saved {
                 Ok(saved) => {
                     cx.emit(TrainerEvent::Saved(saved.summary.clone()));
                     this.summary = Some(saved.summary);
@@ -638,7 +614,8 @@ impl EndgameLesson {
                     );
                     this.saved = None;
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -646,39 +623,36 @@ impl EndgameLesson {
     fn redraw(&mut self, cx: &mut Context<Self>) {
         self.sync_voice(cx);
         let status = self.status();
-        let fen = status.fen.clone();
-        let Some(position) =
-            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
-        else {
+        let before = self
+            .moves
+            .split_last()
+            .map(|(last, earlier)| (self.status_after(earlier).fen, last));
+        let shown = Shown {
+            fen: &status.fen,
+            last: before
+                .as_ref()
+                .map(|(fen, last)| (fen.as_str(), last.as_str())),
+            player: self.player(),
+            flipped: self.flipped,
+            your_turn: self.your_turn(),
+            hint: self.hint.as_deref(),
+            // The pieces show while there is nothing to play, and once the step is over.
+            reveal: status.over || !self.playable(),
+        };
+        let marks = |state: &mut BoardState| {
+            for shape in &self.step().shapes {
+                let Ok(orig) = shape.orig.parse() else {
+                    continue;
+                };
+                match shape.dest.as_deref().map(str::parse) {
+                    Some(Ok(dest)) => state.arrows.push(Arrow::brush(&shape.brush, orig, dest)),
+                    _ => state.circles.push(Circle::brush(&shape.brush, orig)),
+                }
+            }
+        };
+        let Some(state) = shown.state(marks, cx) else {
             return;
         };
-        let last = self.moves.last().and_then(|last| {
-            let before = self.status_after(&self.moves[..self.moves.len() - 1]);
-            move_squares(&before.fen, last)
-        });
-        let player = self.player();
-        let orientation = if self.flipped { !player } else { player };
-        let movable = self.your_turn().then_some(player);
-        let mut state = BoardState::of(&position, orientation, movable, last);
-        for shape in &self.step().shapes {
-            let Ok(orig) = shape.orig.parse() else {
-                continue;
-            };
-            match shape.dest.as_deref().map(str::parse) {
-                Some(Ok(dest)) => state.arrows.push(Arrow::brush(&shape.brush, orig, dest)),
-                _ => state.circles.push(Circle::brush(&shape.brush, orig)),
-            }
-        }
-        if let Some((from, to)) = self
-            .hint
-            .as_deref()
-            .and_then(|hint| move_squares(&fen, hint))
-        {
-            state.arrows.push(Arrow::hint(from, to));
-        }
-        // The pieces show while there is nothing to play, and once the step is over.
-        let reveal = status.over || !self.playable();
-        state.blindfold = crate::settings::frontend(cx).blindfold && !reveal;
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
         cx.notify();
@@ -722,7 +696,7 @@ impl EndgameLesson {
                 vec![(None, items)],
                 &self.chapter().id,
                 move |id, _, cx| {
-                    let _ = page.update(cx, |page, cx| {
+                    page.update(cx, |page, cx| {
                         if let Some(index) = page
                             .course
                             .chapters
@@ -731,7 +705,8 @@ impl EndgameLesson {
                         {
                             page.open_step(0, index, cx);
                         }
-                    });
+                    })
+                    .ok();
                 },
                 palette,
             ))

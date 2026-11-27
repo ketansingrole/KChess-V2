@@ -312,7 +312,7 @@ impl Render for LineChart {
                         if resized {
                             let entity = entity.clone();
                             window.on_next_frame(move |window, cx| {
-                                let _ = entity.update(cx, |_, cx| cx.notify());
+                                entity.update(cx, |_, cx| cx.notify()).ok();
                                 window.refresh();
                             });
                         }

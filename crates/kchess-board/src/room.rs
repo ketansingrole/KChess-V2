@@ -2,8 +2,6 @@
 //! asked for, and one that would leave the disk almost full asks first. The game databases, the
 //! puzzles, the speech model and Stockfish all go through it.
 
-use gpui_kit::component::button::ButtonVariant;
-use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::*;
 use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
@@ -63,37 +61,19 @@ pub fn with_room(
                     .map_or(free, |pinned| Some(pinned.0));
                 match short_of_room(free, takes) {
                     None => start(window, cx),
-                    Some(free) => ask_for_room(room_left(free, takes), go, window, cx, start),
+                    Some(free) => widgets::confirm_danger(
+                        window,
+                        cx,
+                        "Your disk is almost full",
+                        room_left(free, takes),
+                        go,
+                        start,
+                    ),
                 }
             })
             .ok();
         })
         .detach();
-}
-
-/// Ask before a download or import the disk may have no room for, saying `description`.
-fn ask_for_room(
-    description: String,
-    go: &'static str,
-    window: &mut Window,
-    cx: &mut App,
-    start: impl Fn(&mut Window, &mut App) + 'static,
-) {
-    let start = std::rc::Rc::new(start);
-    widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-        let start = start.clone();
-        dialog
-            .title("Your disk is almost full")
-            .description(description.clone())
-            .ok_text(go)
-            .ok_variant(ButtonVariant::Danger)
-            .cancel_text("Cancel")
-            .show_cancel(true)
-            .on_ok(move |_, window, cx| {
-                start(window, cx);
-                true
-            })
-    });
 }
 
 #[cfg(test)]

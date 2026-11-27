@@ -219,7 +219,6 @@ impl de::Error for Error {
     }
 }
 
-/// Decodes `value` as `T`.
 pub fn decode<T: DeserializeOwned>(value: J) -> Result<T, Error> {
     T::deserialize(value)
 }

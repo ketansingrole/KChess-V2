@@ -63,14 +63,15 @@ fn a_joined_tournament_keeps_its_bytes() {
     }
 }
 
+/// A result filter that is not a string is refused by the name the recorded checks used.
 #[test]
-fn a_result_filter_s_name_is_its_wire_value() {
-    for filter in GameResultFilter::ALL {
-        assert_eq!(
-            serde_json::to_value(filter).unwrap(),
-            serde_json::json!(filter.as_str())
-        );
-    }
+fn a_refusal_names_a_result_filter_game_result() {
+    use kchess_domain::misc::value::{J, decode};
+    let refused = decode::<GameResultFilter>(J::Num(1.0)).unwrap_err();
+    assert_eq!(
+        refused.to_string(),
+        "invalid type: floating point `1.0`, expected enum GameResult"
+    );
 }
 
 #[test]

@@ -2,8 +2,7 @@
 //! last update, with its Update and Delete, and their total, so what the downloads take is never
 //! a surprise.
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
 use kchess_board::game_db::GameDbHandle;
@@ -51,23 +50,17 @@ fn detail(info: &DatabaseInfo) -> String {
 pub fn ask_delete(info: DatabaseInfo, window: &mut Window, cx: &mut App) {
     let games = widgets::format_counted(info.games as f64, "game", "games");
     let size = widgets::format_bytes(info.bytes as f64);
-    widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-        let id = info.id.clone();
-        dialog
-            .title(format!("Delete {}?", info.name))
-            .description(format!(
-                "Its {games} are removed from this computer, freeing {size}."
-            ))
-            .ok_text("Delete")
-            .ok_variant(ButtonVariant::Danger)
-            .cancel_text("Cancel")
-            .show_cancel(true)
-            .on_ok(move |_, _, cx| {
-                let db = cx.global::<GameDbHandle>().0.clone();
-                db.update(cx, |db, cx| db.delete(id.clone(), cx));
-                true
-            })
-    });
+    widgets::confirm_danger(
+        window,
+        cx,
+        format!("Delete {}?", info.name),
+        format!("Its {games} are removed from this computer, freeing {size}."),
+        "Delete",
+        move |_, cx| {
+            let db = cx.global::<GameDbHandle>().0.clone();
+            db.update(cx, |db, cx| db.delete(info.id.clone(), cx));
+        },
+    );
 }
 
 /// What a database's Update button runs.

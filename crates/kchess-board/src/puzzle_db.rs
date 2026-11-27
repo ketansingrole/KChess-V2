@@ -2,8 +2,7 @@
 //! (`puzzleDbStatus`, `puzzledb:progress`), downloading, cancelling and deleting it, and the card
 //! that shows it on Puzzles, and its row in Settings → Storage.
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -20,9 +19,9 @@ pub struct PuzzleDb {
     pub status: PuzzleDbStatus,
     progress: Option<PuzzleDbProgress>,
     error: Option<String>,
-    /// Counts installs, deletes and failures shown: a status read that started before one of
-    /// them is out of date when it lands, and neither its status nor its clearing counts.
-    changes: u64,
+    /// Status reads: an install, a delete or a failure shown since a read started makes it
+    /// out of date when it lands, and neither its status nor its clearing counts.
+    reads: crate::loading::Epoch,
     _events: Subscription,
 }
 
@@ -38,7 +37,7 @@ pub fn init(cx: &mut App) {
         status: PuzzleDbStatus::default(),
         progress: None,
         error: None,
-        changes: 0,
+        reads: crate::loading::Epoch::default(),
         _events: cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
             if let ClientEvent::Event(CoreEvent::PuzzleDbProgress(progress)) = event {
                 // A download that ended is no longer running, whatever an earlier status read
@@ -47,7 +46,7 @@ pub fn init(cx: &mut App) {
                 // window that started it closed or it failed.
                 if progress.phase.is_terminal() {
                     this.status.busy = false;
-                    this.changes += 1;
+                    this.reads.invalidate();
                 }
                 this.progress = Some(progress.clone());
                 cx.notify();
@@ -72,11 +71,11 @@ impl PuzzleDb {
     /// changes nothing.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let status = cx.global::<AppCore>().request(calls::PuzzleDbStatus {});
-        let asked = self.changes;
+        let asked = self.reads.current();
         cx.spawn(async move |this, cx| {
             let status = status.await;
             this.update(cx, |this, cx| {
-                if this.changes != asked {
+                if !this.reads.is_current(asked) {
                     return;
                 }
                 match status {
@@ -95,12 +94,12 @@ impl PuzzleDb {
 
     /// Shows a failure, which a status read already under way leaves on screen.
     fn failed(&mut self, cause: &kchess_contracts::CoreError) {
-        self.changes += 1;
+        self.reads.invalidate();
         self.error = Some(crate::loading::failure("puzzle-db", cause));
     }
 
     fn install(&mut self, cx: &mut Context<Self>) {
-        self.changes += 1;
+        self.reads.invalidate();
         self.error = None;
         self.progress = Some(PuzzleDbProgress {
             phase: PuzzleDbPhase::Downloading,
@@ -113,7 +112,7 @@ impl PuzzleDb {
         let install = cx.global::<AppCore>().request(calls::PuzzleDbInstall {});
         cx.spawn(async move |this, cx| {
             let result = install.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 match result {
                     Ok(status) => this.status = status,
                     Err(cause) => this.failed(&cause),
@@ -128,7 +127,8 @@ impl PuzzleDb {
                     this.progress = None;
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -144,31 +144,25 @@ impl PuzzleDb {
 
     fn ask_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let db = cx.entity().downgrade();
-        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let db = db.clone();
-            dialog
-                .title("Delete the puzzle database?")
-                .description(
-                    "This removes the puzzles stored on this computer. Storm, Streak, Rush and offline puzzles stop working until you download it again. Your scores are kept.",
-                )
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    let _ = db.update(cx, |db, cx| db.delete(cx));
-                    true
-                })
-        });
+        crate::widgets::confirm_danger(
+            window,
+            cx,
+            "Delete the puzzle database?",
+            "This removes the puzzles stored on this computer. Storm, Streak, Rush and offline puzzles stop working until you download it again. Your scores are kept.",
+            "Delete",
+            move |_, cx| {
+                db.update(cx, |db, cx| db.delete(cx)).ok();
+            },
+        );
     }
 
     fn delete(&mut self, cx: &mut Context<Self>) {
-        self.changes += 1;
+        self.reads.invalidate();
         self.error = None;
         let delete = cx.global::<AppCore>().request(calls::PuzzleDbDelete {});
         cx.spawn(async move |this, cx| {
             let result = delete.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 match result {
                     Ok(status) => {
                         this.status = status;
@@ -177,7 +171,8 @@ impl PuzzleDb {
                     Err(cause) => this.failed(&cause),
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -332,7 +327,7 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
     let act = |run: fn(&mut PuzzleDb, &mut Window, &mut Context<PuzzleDb>)| {
         let handle = handle.downgrade();
         move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-            let _ = handle.update(cx, |db, cx| run(db, window, cx));
+            handle.update(cx, |db, cx| run(db, window, cx)).ok();
         }
     };
     let hint = |text: String| {
@@ -494,8 +489,8 @@ mod tests {
         assert!(app.with_window(|_, cx| db.read(cx).error.is_none()));
     }
 
-    /// An install, a delete and a failure shown each move the count a status read compares on
-    /// landing, so a read asked before any of them is known for out of date.
+    /// An install, a delete and a failure shown each make a status read asked before them out of
+    /// date.
     #[gpui_kit::test]
     fn installs_deletes_and_failures_each_overtake_a_read(cx: &mut gpui_kit::TestAppContext) {
         let server = kchess_testkit::Server::start(|_, out| {
@@ -510,9 +505,9 @@ mod tests {
         let moved = |app: &mut Started, change: fn(&mut super::PuzzleDb, &mut gpui_kit::Context<super::PuzzleDb>)| {
             app.with_window(|_, cx| {
                 db.update(cx, |db, cx| {
-                    let before = db.changes;
+                    let before = db.reads.current();
                     change(db, cx);
-                    db.changes > before
+                    !db.reads.is_current(before)
                 })
             })
         };

@@ -3,8 +3,7 @@
 //! and deleting it, and the background game review.
 
 use crate::log::ResultExt as _;
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -102,10 +101,11 @@ impl SettingsPage {
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
             let status = status.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.engine = status.warn_on_err();
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -131,7 +131,7 @@ impl SettingsPage {
                 .ok();
             let Some(status) = status else { return };
             let status: Option<EngineStatus> = status.await.warn_on_err();
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 let ready = status.as_ref().is_some_and(|status| status.ready);
                 this.engine = status;
                 if chosen && !ready {
@@ -142,7 +142,8 @@ impl SettingsPage {
                     );
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -171,9 +172,10 @@ impl SettingsPage {
             if let Some(trusted) = trusted {
                 trusted.await.log_err();
             }
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.set_engine_path(path, true, window, cx)
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -211,7 +213,7 @@ impl SettingsPage {
         let install = cx.global::<AppCore>().request(calls::InstallEngine {});
         cx.spawn_in(window, async move |this, cx| {
             let result = install.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.engine_busy = false;
                 let result = match result {
                     Ok(result) => result,
@@ -248,31 +250,26 @@ impl SettingsPage {
                     this.set_engine_path(result.path, false, window, cx);
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
 
     pub(super) fn ask_delete_engine(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let page = cx.entity().downgrade();
-        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let page = page.clone();
-            dialog
-                .title("Delete downloaded Stockfish?")
-                .description(
-                    "This removes the copy KChess downloaded. The bundled engine and any \
-                     executable you chose yourself are not touched, and you can download it again \
-                     later.",
-                )
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, window, cx| {
-                    let _ = page.update(cx, |page, cx| page.delete_engine(window, cx));
-                    true
-                })
-        });
+        crate::widgets::confirm_danger(
+            window,
+            cx,
+            "Delete downloaded Stockfish?",
+            "This removes the copy KChess downloaded. The bundled engine and any executable you \
+             chose yourself are not touched, and you can download it again later.",
+            "Delete",
+            move |window, cx| {
+                page.update(cx, |page, cx| page.delete_engine(window, cx))
+                    .ok();
+            },
+        );
     }
 
     /// Delete the downloaded engine; when it was in use, the bundled one takes over.
@@ -287,7 +284,7 @@ impl SettingsPage {
         let delete = cx.global::<AppCore>().request(calls::DeleteEngine {});
         cx.spawn_in(window, async move |this, cx| {
             let result = delete.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.engine_busy = false;
                 if let Err(cause) = result {
                     window.push_notification(
@@ -312,7 +309,8 @@ impl SettingsPage {
                     this.refresh_engine(cx);
                 }
                 window.push_notification("Downloaded Stockfish deleted", cx);
-            });
+            })
+            .ok();
         })
         .detach();
     }

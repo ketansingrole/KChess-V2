@@ -145,10 +145,11 @@ impl SquareColors {
         self.flash = Some(correct);
         self.flash_timer = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FLASH).await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.flash = None;
                 cx.notify();
-            });
+            })
+            .ok();
         }));
         self.tally.record(correct);
         if !correct {

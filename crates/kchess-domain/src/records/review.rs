@@ -107,7 +107,7 @@ pub struct ReviewSummary {
 }
 
 /// Lichess speeds of standard chess; variants are not reviewed.
-const STANDARD_PERFS: &[&str] = &crate::perf::SPEED_KEYS;
+const STANDARD_PERFS: &[&str] = crate::perf::SPEEDS;
 
 /// The key a review of `moves` (UCI) from `fen` is stored under. A game of a variant not played
 /// by standard rules has a key that names it: the same moves are another game in Atomic.
@@ -115,7 +115,7 @@ pub fn review_key<S: AsRef<str>>(fen: &str, moves: &[S], variant: Option<Variant
     let moves: Vec<&str> = moves.iter().map(AsRef::as_ref).collect();
     match variant {
         Some(variant) if !variant.standard_rules() => {
-            cyrb53(&format!("{}|{fen}", variant.key()), &moves.join(" "))
+            cyrb53(&format!("{}|{fen}", variant.as_str()), &moves.join(" "))
         }
         _ => cyrb53(fen, &moves.join(" ")),
     }

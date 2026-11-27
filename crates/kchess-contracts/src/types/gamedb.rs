@@ -30,7 +30,7 @@ pub struct PlayerGames {
     pub months: Option<u32>,
     /// Only games of these speeds; every speed when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub speeds: Option<Vec<ExplorerSpeed>>,
+    pub speeds: Option<Vec<Speed>>,
     /// Only rated games.
     #[serde(default)]
     pub rated: bool,
@@ -543,7 +543,7 @@ pub struct GameDbQuery {
     pub max_moves: Option<u32>,
     /// The games played at this speed, as their time control says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub speed: Option<ExplorerSpeed>,
+    pub speed: Option<Speed>,
     /// The games that reach this material balance and keep it ("R vs B", "KRP vs KR"), either
     /// colour on either side.
     #[serde(default, skip_serializing_if = "Option::is_none")]

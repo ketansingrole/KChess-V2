@@ -2,8 +2,7 @@
 //! size, or its download's progress, with Download and Delete.
 
 use futures::StreamExt as _;
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _};
 use gpui_kit::*;
 use kchess_contracts::voice::{Phase, Progress, Status};
@@ -24,7 +23,7 @@ impl SettingsPage {
         cx.spawn(async move |this, cx| {
             let status = status.await;
             let busy = status.as_ref().is_some_and(|status| status.busy);
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.voice_downloading {
                     match status {
                         Some(status) => this.voice_model = Some(status),
@@ -34,14 +33,16 @@ impl SettingsPage {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
             if busy {
                 cx.background_executor().timer(BUSY_POLL).await;
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if this.section == Section::Storage {
                         this.refresh_voice_model(cx);
                     }
-                });
+                })
+                .ok();
             }
         })
         .detach();
@@ -80,7 +81,7 @@ impl SettingsPage {
                 let mut cx = cx.clone();
                 async move {
                     while let Some(progress) = updates.next().await {
-                        let _ = this.update(&mut cx, |this, cx| {
+                        this.update(&mut cx, |this, cx| {
                             this.voice_model = Some(Status {
                                 installed: false,
                                 bytes: 0,
@@ -88,12 +89,13 @@ impl SettingsPage {
                                 progress: Some(progress),
                             });
                             cx.notify();
-                        });
+                        })
+                        .ok();
                     }
                 }
             };
             let (outcome, ()) = futures::join!(download, watch);
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.voice_downloading = false;
                 let failed = match outcome {
                     Some(Ok(())) => None,
@@ -110,7 +112,8 @@ impl SettingsPage {
                 }
                 this.refresh_voice_model(cx);
                 this.refresh_free_space(cx);
-            });
+            })
+            .ok();
         })
         .detach();
         cx.notify();
@@ -118,20 +121,16 @@ impl SettingsPage {
 
     fn ask_delete_voice_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
-        widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-            let this = this.clone();
-            dialog
-                .title("Delete the speech model?")
-                .description("Voice input stops working until you download it again (about 50 MB).")
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    this.update(cx, |this, cx| this.delete_voice_model(cx)).ok();
-                    true
-                })
-        });
+        widgets::confirm_danger(
+            window,
+            cx,
+            "Delete the speech model?",
+            "Voice input stops working until you download it again (about 50 MB).",
+            "Delete",
+            move |_, cx| {
+                this.update(cx, |this, cx| this.delete_voice_model(cx)).ok();
+            },
+        );
     }
 
     fn delete_voice_model(&mut self, cx: &mut Context<Self>) {

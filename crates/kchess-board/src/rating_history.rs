@@ -101,7 +101,6 @@ pub fn series_points(series: &RatingSeries) -> Vec<(f64, f64)> {
     series.points.iter().filter_map(point_of).collect()
 }
 
-/// The points of one mode in a rating history.
 fn points_of(history: &[RatingSeries], mode: &str) -> Vec<(f64, f64)> {
     history
         .iter()

@@ -20,7 +20,6 @@ pub(crate) struct StreamRequest {
 }
 
 impl StreamRequest {
-    /// A GET stream of `path` as `auth`.
     pub(crate) fn get(path: impl Into<String>, auth: &Auth) -> StreamRequest {
         StreamRequest {
             method: reqwest::Method::GET,
@@ -57,7 +56,7 @@ pub(crate) fn game_body(options: &OnlineOptions) -> Vec<(&'static str, String)> 
     let variant = if has_fen && options.variant != Some(Variant::Chess960) {
         Some("fromPosition")
     } else {
-        options.variant.map(Variant::key)
+        options.variant.map(Variant::as_str)
     };
     let variant = variant.filter(|variant| !variant.is_empty() && *variant != "standard");
     let mut body = vec![

@@ -75,7 +75,7 @@ fn a_page_opens_after_a_dialog_in_its_way_closes(cx: &mut gpui_kit::TestAppConte
                     .background_executor()
                     .timer(std::time::Duration::from_millis(100));
                 late.await;
-                let _ = cx.update(|window, cx| window.close_dialog(cx));
+                cx.update(|window, cx| window.close_dialog(cx)).ok();
             })
             .detach();
     });

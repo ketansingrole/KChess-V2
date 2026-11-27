@@ -26,7 +26,8 @@ pub(super) fn source_tabs(
         labels,
         sources.iter().position(|item| *item == source).unwrap_or(0),
         move |index, _, cx| {
-            let _ = page.update(cx, |page, cx| page.choose_source(sources[index], cx));
+            page.update(cx, |page, cx| page.choose_source(sources[index], cx))
+                .ok();
         },
         palette,
     )
@@ -193,7 +194,8 @@ impl HistoryPage {
                 .position(|filter| *filter == self.filter)
                 .unwrap_or(0),
             move |index, _, cx| {
-                let _ = page.update(cx, |page, cx| page.choose_filter(choices[index], cx));
+                page.update(cx, |page, cx| page.choose_filter(choices[index], cx))
+                    .ok();
             },
             true,
             palette,
@@ -350,9 +352,11 @@ impl HistoryPage {
                                 PopupMenuItem::new("Delete").icon(icon("trash-2")).on_click(
                                     move |_, window, cx| {
                                         if let Some(game) = played_game(&deleted, cx) {
-                                            let _ = delete_page.update(cx, |page, cx| {
-                                                page.delete(game, window, cx)
-                                            });
+                                            delete_page
+                                                .update(cx, |page, cx| {
+                                                    page.delete(game, window, cx)
+                                                })
+                                                .ok();
                                         }
                                     },
                                 ),

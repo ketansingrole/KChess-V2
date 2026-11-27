@@ -15,6 +15,26 @@ mod redact;
 
 pub use redact::redact;
 
+/// `thread 'name' panicked at file:line: message`, as Rust's default hook words a panic.
+pub fn panic_message(info: &std::panic::PanicHookInfo<'_>) -> String {
+    let payload = info.payload();
+    let message = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("Box<dyn Any>");
+    let thread = std::thread::current();
+    let name = thread.name().unwrap_or("<unnamed>");
+    match info.location() {
+        Some(at) => format!(
+            "thread '{name}' panicked at {}:{}: {message}",
+            at.file(),
+            at.line()
+        ),
+        None => format!("thread '{name}' panicked: {message}"),
+    }
+}
+
 /// Whether this is the Mac App Store's KChess. Only that build runs in the App Sandbox, which
 /// sets `APP_SANDBOX_CONTAINER_ID` for the app and every program it starts. The App Store updates
 /// it and forbids downloading programs, so its updater and the Stockfish download stay off.

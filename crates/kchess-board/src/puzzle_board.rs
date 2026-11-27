@@ -14,7 +14,6 @@ use kchess_domain::variant::Setup;
 use shakmaty::Color;
 
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
-use crate::game::STANDARD_FEN;
 use crate::game::puzzle::{OnBoard, PuzzleStatus};
 use crate::theme::{Palette, radii, tint};
 use crate::voice::moves::{
@@ -119,18 +118,7 @@ impl PuzzleBoard {
     }
 
     pub fn new(material: bool, window: &mut Window, cx: &mut Context<Self>) -> PuzzleBoard {
-        let board = cx.new(|_| {
-            ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start(
-                    kchess_domain::variant::Variant::Standard,
-                    STANDARD_FEN,
-                )
-                .unwrap_or_default(),
-                Color::White,
-                None,
-                None,
-            ))
-        });
+        let board = cx.new(|_| ChessBoard::new(BoardState::start()));
         let (move_box, typed) = crate::game::surface::MoveBox::new(Self::typed_move, window, cx);
         let voice = crate::voice::handle(cx);
         let subscriptions = vec![
@@ -425,12 +413,13 @@ impl PuzzleBoard {
             let generation = self.generation.current();
             self.timers.push(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(FLASH).await;
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if this.generation.is_current(generation) {
                         this.flash = false;
                         cx.notify();
                     }
-                });
+                })
+                .ok();
             }));
             cx.emit(PuzzleBoardEvent::Move {
                 index,
@@ -473,7 +462,7 @@ impl PuzzleBoard {
         let generation = self.generation.current();
         self.timers.push(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.generation.is_current(generation) {
                     return;
                 }
@@ -483,7 +472,8 @@ impl PuzzleBoard {
                 }
                 this.waiting = false;
                 this.redraw(cx);
-            });
+            })
+            .ok();
         }));
     }
 
@@ -538,7 +528,7 @@ impl PuzzleBoard {
                 let Ok(reply) = reply else { break };
                 if let Some(reply) = reply {
                     cx.background_executor().timer(SOLUTION_REPLY).await;
-                    let _ = this.update(cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         if !this.generation.is_current(generation) {
                             return;
                         }
@@ -547,25 +537,25 @@ impl PuzzleBoard {
                             crate::sound::move_sound(&board.last_san(), cx);
                         }
                         this.redraw(cx);
-                    });
+                    })
+                    .ok();
                 }
             }
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if this.generation.is_current(generation) {
                     cx.emit(PuzzleBoardEvent::Done);
                     this.redraw(cx);
                 }
-            });
+            })
+            .ok();
         }));
     }
 
     /// `text` said clearly, with voice on: as the recognizer's phrase reaches the board.
     #[cfg(any(test, feature = "test-support"))]
     pub fn hear(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.voice.control.enabled = true;
-        let heard = crate::voice::Heard::clear(text);
-        let owner = self.voice.control.owner;
-        self.voice_heard(&crate::voice::VoiceEvent::Heard { owner, heard }, cx);
+        let heard = self.voice.control.hear_clearly(text);
+        self.voice_heard(&heard, cx);
     }
 
     /// What voice answered to the last phrase.
@@ -623,9 +613,6 @@ impl PuzzleBoard {
     }
 
     fn voice_heard(&mut self, event: &crate::voice::VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) {
-            return;
-        }
         let setup = self
             .on_board
             .as_ref()
@@ -634,13 +621,8 @@ impl PuzzleBoard {
                 fen: board.fen().to_string(),
             })
             .unwrap_or_else(|| Setup::standard_at(""));
-        let fen = setup.fen.clone();
-        let heard = match event {
-            crate::voice::VoiceEvent::Missed { heard, .. } => {
-                self.voice.missed(heard, &fen, self.playing(), cx);
-                return;
-            }
-            crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
+        let Some(heard) = self.voice.heard(event, &setup.fen, self.playing(), cx) else {
+            return;
         };
         let (over, playing) = (self.over(), self.playing());
         let turn = Turn {

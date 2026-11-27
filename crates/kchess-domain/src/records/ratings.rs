@@ -12,11 +12,11 @@ use crate::js;
 const DAY_MS: i64 = 86_400_000;
 
 const fn named(variant: Variant) -> (&'static str, &'static str) {
-    (variant.key(), variant.label())
+    (variant.as_str(), variant.label())
 }
 
 const fn speed(speed: Speed) -> (&'static str, &'static str) {
-    (speed.key(), speed.label())
+    (speed.as_str(), speed.label())
 }
 
 /// The label for each rating-history key.

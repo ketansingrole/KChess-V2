@@ -79,13 +79,15 @@ pub fn init(library: &Library, cx: &mut App) {
         let entity = entity.downgrade();
         async move |cx| {
             while let Some(outcome) = failed.next().await {
-                let _ = entity.update(cx, |this, cx| {
-                    if outcome.is_some() {
-                        this.reload(cx);
-                    }
-                    this.error = outcome;
-                    cx.notify();
-                });
+                entity
+                    .update(cx, |this, cx| {
+                        if outcome.is_some() {
+                            this.reload(cx);
+                        }
+                        this.error = outcome;
+                        cx.notify();
+                    })
+                    .ok();
             }
         }
     })
@@ -98,7 +100,7 @@ pub fn init(library: &Library, cx: &mut App) {
     crate::core::on_profile_change(cx, &[ProfileArea::PlayedGames], {
         let entity = entity.downgrade();
         move |cx| {
-            let _ = entity.update(cx, |games, cx| games.reload(cx));
+            entity.update(cx, |games, cx| games.reload(cx)).ok();
         }
     });
     cx.set_global(PlayedHandle(entity));
@@ -293,7 +295,7 @@ impl PlayedGames {
             };
             if let Some(library) = library.await.warn_on_err() {
                 let games = library.games;
-                let _ = this.update(cx, |this, cx| match this.reads.answer(read) {
+                this.update(cx, |this, cx| match this.reads.answer(read) {
                     Answer::Show => {
                         this.games = games;
                         this.changed();
@@ -301,7 +303,8 @@ impl PlayedGames {
                     }
                     Answer::Again => this.reload(cx),
                     Answer::Superseded => {}
-                });
+                })
+                .ok();
             }
         })
         .detach();

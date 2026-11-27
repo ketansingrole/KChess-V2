@@ -153,7 +153,7 @@ impl TournamentsPage {
                 cx,
                 &[kchess_contracts::types::ProfileArea::Tournaments],
                 move |cx| {
-                    let _ = page.update(cx, |page, cx| page.reload_joined(cx));
+                    page.update(cx, |page, cx| page.reload_joined(cx)).ok();
                 },
             ),
             // Return in the entry code joins, as the Join button beside it does.
@@ -243,7 +243,7 @@ impl TournamentsPage {
         });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 // A later refresh (another account's) owns the list and its spinner now.
                 if !this.loading.answered(turn) {
                     return;
@@ -253,7 +253,8 @@ impl TournamentsPage {
                     Err(cause) => this.loading.failed("tournaments", &cause),
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -358,7 +359,7 @@ impl TournamentsPage {
         });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 // Every tournament opened counts from 1: a reply is this one's only if it also
                 // names the tournament still open.
                 let Some(open) = this.open.as_mut().filter(|open| {
@@ -380,7 +381,8 @@ impl TournamentsPage {
                 // The core forgets an arena that is over or that you left.
                 this.reload_joined(cx);
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -475,7 +477,7 @@ impl TournamentsPage {
         let call = cx.global::<AppCore>().request(call);
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match answer {
                     Ok(Reply::NeedsReconnect) => this.needs_reconnect = true,
@@ -492,7 +494,8 @@ impl TournamentsPage {
                         .push_notification(kchess_app::loading::failure("tournaments", &cause), cx),
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -631,10 +634,11 @@ impl Render for TournamentsPage {
         let failed = self.list.is_none() && self.loading.error().is_some();
         let page = cx.entity().downgrade();
         let choose = move |index: usize, _: &mut Window, cx: &mut App| {
-            let _ = page.update(cx, |page, cx| {
+            page.update(cx, |page, cx| {
                 page.playable_only = index == 0;
                 cx.notify();
-            });
+            })
+            .ok();
         };
         let header = h_flex()
             .gap(px(8.))

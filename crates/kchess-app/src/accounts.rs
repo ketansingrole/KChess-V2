@@ -57,7 +57,9 @@ pub fn init(cx: &mut App) {
     crate::core::on_profile_change(cx, &[ProfileArea::Accounts, ProfileArea::Usage], {
         let accounts = accounts.downgrade();
         move |cx| {
-            let _ = accounts.update(cx, |accounts, cx| accounts.refresh(cx));
+            accounts
+                .update(cx, |accounts, cx| accounts.refresh(cx))
+                .ok();
         }
     });
 }
@@ -160,7 +162,7 @@ impl Accounts {
         );
         cx.spawn(async move |this, cx| {
             let (data, usage, chesscom) = (data.await, usage.await, chesscom.await);
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 // Only the newest read shows: an older answer may predate a sign-in or sync, so one
                 // that started before this window's own change reads again.
                 match this.reads.answer(read) {
@@ -178,7 +180,8 @@ impl Accounts {
                     this.chesscom = chesscom;
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -233,7 +236,8 @@ impl Accounts {
             });
             // Once the accounts hold the new one: the online state reads them.
             if matches!(connected, Ok(true)) {
-                let _ = cx.update(|_, cx| hooks(cx).connected.map(|connected| connected(cx)));
+                cx.update(|_, cx| hooks(cx).connected.map(|connected| connected(cx)))
+.ok();
             }
         })
         .detach();
@@ -260,7 +264,7 @@ impl Accounts {
         cx.spawn_in(window, async move |this, cx| {
             let result = synced.await;
             let usage = core.request(calls::Usage {}).await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.syncs -= 1;
                 if let Some(usage) = usage.warn_on_err() {
                     this.usage = usage;
@@ -282,7 +286,8 @@ impl Accounts {
                     Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -306,7 +311,7 @@ impl Accounts {
             let result = added.await;
             let players = core.request(calls::ChesscomAccounts {}).await;
             let usage = core.request(calls::Usage {}).await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.syncs -= 1;
                 if let Some(usage) = usage.warn_on_err() {
                     this.usage = usage;
@@ -323,7 +328,8 @@ impl Accounts {
                 this.refresh(cx);
                 window.defer(cx, move |window, cx| done(added, window, cx));
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -344,7 +350,7 @@ impl Accounts {
         cx.spawn_in(window, async move |this, cx| {
             let result = synced.await;
             let usage = core.request(calls::Usage {}).await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.syncs -= 1;
                 if let Some(usage) = usage.warn_on_err() {
                     this.usage = usage;
@@ -358,7 +364,8 @@ impl Accounts {
                 }
                 this.refresh(cx);
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -377,7 +384,7 @@ impl Accounts {
             });
         cx.spawn_in(window, async move |this, cx| {
             let result = removed.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(players) => {
                         this.chesscom = players;
@@ -387,7 +394,8 @@ impl Accounts {
                     Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 cx.notify();
-            });
+            })
+.ok();
         })
         .detach();
     }
@@ -408,7 +416,7 @@ impl Accounts {
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = added.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match result {
                     Ok(data) => {
@@ -440,7 +448,8 @@ impl Accounts {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -473,7 +482,7 @@ impl Accounts {
         let action = action.as_str();
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;
-            let _ = this.update_in(cx, |_, window, cx| {
+            this.update_in(cx, |_, window, cx| {
                 let took = match answer {
                     Ok(Reply::Done(took)) => took,
                     Ok(Reply::NeedsReconnect) => {
@@ -503,7 +512,8 @@ impl Accounts {
                     }
                 };
                 window.defer(cx, move |window, cx| done(took, window, cx));
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -515,7 +525,7 @@ impl Accounts {
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = cleared.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(data) => {
                         this.adopt(data);
@@ -529,7 +539,8 @@ impl Accounts {
                     Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 cx.notify();
-            });
+            })
+.ok();
         })
         .detach();
     }
@@ -544,7 +555,7 @@ impl Accounts {
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = added.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match result {
                     Ok(data) => {
@@ -562,7 +573,8 @@ impl Accounts {
                     Err(cause) => say(window, cx, crate::loading::failure("accounts", &cause)),
                 }
                 cx.notify();
-            });
+            })
+.ok();
         })
         .detach();
     }
@@ -632,7 +644,7 @@ impl Accounts {
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let result = call.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 let data = match result {
                     Ok(data) => data,
@@ -663,7 +675,8 @@ impl Accounts {
                 if let Some(restart) = hooks(cx).restart_pages {
                     window.defer(cx, restart);
                 }
-            });
+            })
+            .ok();
         })
         .detach();
     }

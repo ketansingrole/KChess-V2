@@ -27,9 +27,9 @@ pub struct GameDb {
     pub status: GameDbStatus,
     progress: Option<GameDbProgress>,
     error: Option<String>,
-    /// Counts imports and failures shown: a status read that started before one of them is out
-    /// of date when it lands, and neither its status nor its clearing counts.
-    changes: u64,
+    /// Status reads: an import or a failure shown since a read started makes it out of date when
+    /// it lands, and neither its status nor its clearing counts.
+    reads: crate::loading::Epoch,
     /// Cancel was asked of the import under way: its refusal is no failure to show.
     cancelling: bool,
     _events: Subscription,
@@ -116,14 +116,14 @@ pub fn init(cx: &mut App) {
         status: GameDbStatus::default(),
         progress: None,
         error: None,
-        changes: 0,
+        reads: crate::loading::Epoch::default(),
         cancelling: false,
         _events: cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
             if let ClientEvent::Event(CoreEvent::GameDbProgress(progress)) = event {
                 // An import that ended is no longer running, whatever an earlier read said.
                 if progress.phase.is_terminal() {
                     this.status.busy = false;
-                    this.changes += 1;
+                    this.reads.invalidate();
                 }
                 this.progress = Some(progress.clone());
                 // The event and the import's answer come apart, in either order: a read the
@@ -162,11 +162,11 @@ impl GameDb {
     /// Read the list again; `clear`: a read that works clears the failure shown.
     fn read_status(&mut self, clear: bool, cx: &mut Context<Self>) {
         let status = cx.global::<AppCore>().request(calls::GameDbStatus {});
-        let asked = self.changes;
+        let asked = self.reads.current();
         cx.spawn(async move |this, cx| {
             let status = status.await;
             this.update(cx, |this, cx| {
-                if this.changes != asked {
+                if !this.reads.is_current(asked) {
                     return;
                 }
                 match status {
@@ -187,7 +187,7 @@ impl GameDb {
 
     /// Shows a failure, which a status read already under way leaves on screen.
     fn failed(&mut self, cause: &kchess_contracts::CoreError) {
-        self.changes += 1;
+        self.reads.invalidate();
         self.error = Some(crate::loading::failure("game-db", cause));
     }
 
@@ -331,7 +331,7 @@ impl GameDb {
         then: impl FnOnce(T, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) {
-        self.changes += 1;
+        self.reads.invalidate();
         self.error = None;
         self.cancelling = false;
         self.progress = Some(GameDbProgress {
@@ -371,7 +371,7 @@ impl GameDb {
 
     /// Deletes database `id`; the list follows the core's answer.
     pub fn delete(&mut self, id: String, cx: &mut Context<Self>) {
-        self.changes += 1;
+        self.reads.invalidate();
         self.error = None;
         let delete = cx.global::<AppCore>().request(calls::GameDbDelete {
             database: DatabaseId(id),

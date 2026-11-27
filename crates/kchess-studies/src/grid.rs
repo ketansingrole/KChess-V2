@@ -208,9 +208,10 @@ impl StudiesPage {
                             .loading(uploading)
                             .disabled(self.uploading.is_some())
                             .on_click(move |_, window, cx| {
-                                let _ = page.update(cx, |page, cx| {
+                                page.update(cx, |page, cx| {
                                     page.upload(upload_id.clone(), false, window, cx)
-                                });
+                                })
+                                .ok();
                             })
                             .into_any_element(),
                         width: card_width,
@@ -230,7 +231,7 @@ impl StudiesPage {
                     if heights.borrow_mut().record(row, area.size.height) {
                         let entity = entity.clone();
                         window.on_next_frame(move |_, cx| {
-                            let _ = entity.update(cx, |_, cx| cx.notify());
+                            entity.update(cx, |_, cx| cx.notify()).ok();
                         });
                     }
                 },

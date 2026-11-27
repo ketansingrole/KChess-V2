@@ -390,7 +390,10 @@ async fn a_cancelled_download_removes_its_month_and_keeps_the_months_in() {
         .await
         .expect("the install ends")
         .expect("the install task");
-    assert!(answer.is_err(), "{answer:?}");
+    assert_eq!(
+        answer.expect_err("cancelled").message,
+        "Download cancelled."
+    );
     let last: Value = host.named("gamedb:progress").pop().expect("reported");
     assert_eq!(last["phase"], "cancelled");
     assert!(leftovers(profile.path()).is_empty());

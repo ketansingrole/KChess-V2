@@ -156,7 +156,7 @@ pub async fn run(
     let request = ReviewRequest {
         fen: line.fen.clone(),
         moves: line.moves.clone(),
-        variant: line.variant.map(|variant| variant.key().to_string()),
+        variant: line.variant.map(|variant| variant.as_str().to_string()),
         game_id: None,
         account: None,
     };

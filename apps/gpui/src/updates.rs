@@ -404,7 +404,7 @@ impl Updates {
             let answer = answer
                 .await
                 .unwrap_or_else(|_| Err("The check stopped".into()));
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.checked_at = Some(crate::dates::now_millis());
                 match answer {
                     Ok(release) => {
@@ -419,7 +419,8 @@ impl Updates {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         }));
     }
 
@@ -553,15 +554,16 @@ impl Updates {
         ));
         self.work = Some(cx.spawn(async move |this, cx| {
             while let Some(progress) = heard.next().await {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.progress = Some(progress);
                     cx.notify();
-                });
+                })
+                .ok();
             }
             let done = done
                 .await
                 .unwrap_or_else(|_| Err("The download stopped".into()));
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 match done {
                     Ok(staged) => {
                         log(&format!("staged {}", staged.path.display()));
@@ -576,7 +578,8 @@ impl Updates {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         }));
     }
 
@@ -612,13 +615,15 @@ impl Updates {
             cx,
             "Restart without saving",
             move |cx| {
-                let _ = saved.update(cx, |this, cx| this.install_saved(cx));
+                saved.update(cx, |this, cx| this.install_saved(cx)).ok();
             },
             move |cx| {
-                let _ = cancelled.update(cx, |this, cx| {
-                    this.phase = Phase::Downloaded;
-                    cx.notify();
-                });
+                cancelled
+                    .update(cx, |this, cx| {
+                        this.phase = Phase::Downloaded;
+                        cx.notify();
+                    })
+                    .ok();
             },
         );
     }
@@ -653,7 +658,7 @@ impl Updates {
             let done = done.await.unwrap_or_else(|_| {
                 Err(("The update could not be installed".into(), PathBuf::new()))
             });
-            let _ = this.update(cx, |this, cx| match done {
+            this.update(cx, |this, cx| match done {
                 Ok(()) => cx.quit(),
                 Err((cause, staged)) => {
                     log(&format!("install failed: {cause}"));
@@ -667,7 +672,8 @@ impl Updates {
                     this.error = Some(cause);
                     cx.notify();
                 }
-            });
+            })
+            .ok();
         }));
     }
 

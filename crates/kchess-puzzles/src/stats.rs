@@ -251,7 +251,7 @@ impl PuzzleStats {
         cx.spawn(async move |this, cx| {
             let (profile, history, dashboard, storm) =
                 (calls.0.await, calls.1.await, calls.2.await, calls.3.await);
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.loading.answered(turn) {
                     return;
                 }
@@ -270,7 +270,8 @@ impl PuzzleStats {
                     }
                 }
                 this.draw(cx);
-            });
+            })
+            .ok();
         })
         .detach();
     }

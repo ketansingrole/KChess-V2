@@ -88,7 +88,9 @@ pub fn pocket(board: &Entity<ChessBoard>, color: Color, cx: &App) -> Option<AnyE
                     .cursor_pointer()
                     .when(!selected, |slot| slot.pressable(&palette))
                     .on_click(move |_, _, cx| {
-                        let _ = entity.update(cx, |board, cx| board.select_drop(role, cx));
+                        entity
+                            .update(cx, |board, cx| board.select_drop(role, cx))
+                            .ok();
                     })
                     .on_drag(PocketPiece(role), move |_, _, _, cx| {
                         cx.new(|_| PieceGhost {

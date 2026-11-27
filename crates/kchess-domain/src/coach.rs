@@ -502,21 +502,8 @@ pub fn puzzle_clue<S: AsRef<str>>(fen: &str, solution: &[S]) -> Option<&'static 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::review::tests::stored;
     use crate::tactics::Mates;
-
-    /// A review from its fen, moves and evals.
-    fn stored(mut fields: Value) -> StoredReview {
-        let defaults =
-            json!({ "key": "k", "source": "local", "depth": 18, "complete": true, "updatedAt": 0 });
-        for (key, value) in defaults.as_object().unwrap() {
-            fields
-                .as_object_mut()
-                .unwrap()
-                .entry(key)
-                .or_insert(value.clone());
-        }
-        serde_json::from_value(fields).unwrap()
-    }
 
     const FORK: &str = "r3k3/pp3ppp/8/1N6/8/8/PPP2PPP/4K3 w - - 0 1";
 

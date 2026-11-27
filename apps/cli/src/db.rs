@@ -5,8 +5,8 @@
 use kchess_contracts::calls;
 use kchess_contracts::check::{DatabaseId, DatabaseName, GameDbGameId, MasterMonths, PgnFilePath};
 use kchess_contracts::types::{
-    ExplorerSpeed, GameDbImported, GameDbPhase, GameDbProgress, GameDbQuery, GameDbResult,
-    GameDbSide, GameDbSort, GameSite, LichessGames, PlayerGames,
+    GameDbImported, GameDbPhase, GameDbProgress, GameDbQuery, GameDbResult, GameDbSide, GameDbSort,
+    GameSite, LichessGames, PlayerGames, Speed,
 };
 use serde_json::json;
 
@@ -141,7 +141,7 @@ pub fn parse(words: &[String]) -> Result<Db, String> {
                     "--speed" => {
                         let mut speeds = Vec::new();
                         for name in value(&mut words, flag)?.split(',') {
-                            speeds.push(ExplorerSpeed::from_key(name.trim()).ok_or_else(|| {
+                            speeds.push(Speed::from_key(name.trim()).ok_or_else(|| {
                                 format!(
                                     "--speed takes ultraBullet, bullet, blitz, rapid, classical \
                                      or correspondence, not {name}."
@@ -471,7 +471,7 @@ mod tests {
                 site: GameSite::Chesscom,
                 username: "hikaru".into(),
                 months: Some(6),
-                speeds: Some(vec![ExplorerSpeed::Blitz, ExplorerSpeed::Rapid]),
+                speeds: Some(vec![Speed::Blitz, Speed::Rapid]),
                 rated: true,
             })
         );

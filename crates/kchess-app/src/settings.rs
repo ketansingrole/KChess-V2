@@ -219,43 +219,45 @@ impl AppSettings {
             });
             let settings = settings.await;
             let themes = themes.await;
-            let _ = entity.update(cx, |this, cx| {
-                match this.reads.answer(read) {
-                    Answer::Show => {}
-                    Answer::Again => return this.reload(cx),
-                    Answer::Superseded => return,
-                }
-                match settings {
-                    // Edits not yet stored stay; every other setting shows what is stored.
-                    Ok(settings) => {
-                        this.settings = if this.dirty {
-                            adopt(&this.settings, &this.stored, &settings)
-                        } else {
-                            settings.clone()
-                        };
-                        this.stored = settings;
+            entity
+                .update(cx, |this, cx| {
+                    match this.reads.answer(read) {
+                        Answer::Show => {}
+                        Answer::Again => return this.reload(cx),
+                        Answer::Superseded => return,
                     }
-                    Err(cause) => crate::log::write(
-                        Level::Warn,
-                        "settings",
-                        &format!("Loading settings failed: {}", cause.message),
-                    ),
-                }
-                match themes {
-                    Ok(report) => {
-                        this.custom_themes = report.themes;
-                        this.themes_dir = report.dir;
-                        this.theme_problems = report.problems;
+                    match settings {
+                        // Edits not yet stored stay; every other setting shows what is stored.
+                        Ok(settings) => {
+                            this.settings = if this.dirty {
+                                adopt(&this.settings, &this.stored, &settings)
+                            } else {
+                                settings.clone()
+                            };
+                            this.stored = settings;
+                        }
+                        Err(cause) => crate::log::write(
+                            Level::Warn,
+                            "settings",
+                            &format!("Loading settings failed: {}", cause.message),
+                        ),
                     }
-                    Err(cause) => crate::log::write(
-                        Level::Warn,
-                        "themes",
-                        &format!("Loading custom themes failed: {}", cause.message),
-                    ),
-                }
-                cx.emit(SettingsChanged);
-                cx.notify();
-            });
+                    match themes {
+                        Ok(report) => {
+                            this.custom_themes = report.themes;
+                            this.themes_dir = report.dir;
+                            this.theme_problems = report.problems;
+                        }
+                        Err(cause) => crate::log::write(
+                            Level::Warn,
+                            "themes",
+                            &format!("Loading custom themes failed: {}", cause.message),
+                        ),
+                    }
+                    cx.emit(SettingsChanged);
+                    cx.notify();
+                })
+                .ok();
         })
         .detach();
     }
@@ -308,37 +310,39 @@ fn show_saves(
 ) {
     cx.spawn(async move |cx| {
         while let Some((sent, saved)) = results.next().await {
-            let _ = entity.update(cx, |this, cx| {
-                this.pending = this.pending.saturating_sub(1);
-                let unchanged = this.settings == sent;
-                this.failed = saved.is_err();
-                match saved {
-                    Ok(stored) => {
-                        if unchanged {
-                            this.dirty = this.save_soon.is_some() || this.pending > 0;
-                            this.settings = stored.clone();
-                        } else {
-                            // Edited meanwhile: only those edits stay; every other setting takes
-                            // the stored copy, so the next save does not write back what another
-                            // window changed.
-                            this.settings = adopt(&this.settings, &sent, &stored);
+            entity
+                .update(cx, |this, cx| {
+                    this.pending = this.pending.saturating_sub(1);
+                    let unchanged = this.settings == sent;
+                    this.failed = saved.is_err();
+                    match saved {
+                        Ok(stored) => {
+                            if unchanged {
+                                this.dirty = this.save_soon.is_some() || this.pending > 0;
+                                this.settings = stored.clone();
+                            } else {
+                                // Edited meanwhile: only those edits stay; every other setting takes
+                                // the stored copy, so the next save does not write back what another
+                                // window changed.
+                                this.settings = adopt(&this.settings, &sent, &stored);
+                            }
+                            this.stored = stored;
                         }
-                        this.stored = stored;
+                        Err(cause) => {
+                            crate::log::write(
+                                Level::Warn,
+                                "settings",
+                                &format!("Saving settings failed: {}", cause.message),
+                            );
+                            // The edits stay, unsaved: what another window stored shows beside them.
+                            this.dirty = true;
+                            this.reload(cx);
+                        }
                     }
-                    Err(cause) => {
-                        crate::log::write(
-                            Level::Warn,
-                            "settings",
-                            &format!("Saving settings failed: {}", cause.message),
-                        );
-                        // The edits stay, unsaved: what another window stored shows beside them.
-                        this.dirty = true;
-                        this.reload(cx);
-                    }
-                }
-                cx.emit(SettingsChanged);
-                cx.notify();
-            });
+                    cx.emit(SettingsChanged);
+                    cx.notify();
+                })
+                .ok();
         }
     })
     .detach();
@@ -418,7 +422,7 @@ impl AppSettings {
         cx.notify();
         self.save_soon = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_DELAY).await;
-            let _ = this.update(cx, |this, _| this.save_now());
+            this.update(cx, |this, _| this.save_now()).ok();
         }));
     }
 

@@ -173,18 +173,7 @@ impl Focusable for EditorPage {
 
 impl EditorPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> EditorPage {
-        let board = cx.new(|_| {
-            ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start(
-                    kchess_domain::variant::Variant::Standard,
-                    STANDARD_FEN,
-                )
-                .unwrap_or_default(),
-                Color::White,
-                None,
-                None,
-            ))
-        });
+        let board = cx.new(|_| ChessBoard::new(BoardState::start()));
         let fen_input = cx.new(|cx| InputState::new(window, cx));
         let ep_select = cx.new(|cx| SelectState::new(Vec::<SharedString>::new(), None, window, cx));
         let variant_select = cx.new(|cx| {
@@ -1037,7 +1026,7 @@ impl Render for EditorPage {
                                 } else {
                                     Color::White
                                 };
-                                let _ = page.update(cx, |page, cx| page.set_turn(turn, cx));
+                                page.update(cx, |page, cx| page.set_turn(turn, cx)).ok();
                             }
                         },
                         false,

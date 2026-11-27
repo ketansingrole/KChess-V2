@@ -95,7 +95,7 @@ impl<V: Resumes> SessionSaver<V> {
                 .find(|(read, _)| *read == kind)
                 .and_then(|(_, read)| read.as_ref().ok().cloned());
             let read = resumed(reads);
-            let _ = this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 cx.global::<PlayedHandle>()
                     .0
                     .read(cx)
@@ -121,7 +121,8 @@ impl<V: Resumes> SessionSaver<V> {
                     this.saver().saved = Some(shown);
                 }
                 Self::run_waiting(this, window, cx);
-            });
+            })
+            .ok();
         })
         .detach();
         let page = cx.entity().downgrade();
@@ -218,7 +219,7 @@ impl<V: Resumes> SessionSaver<V> {
         }
         this.saver().save = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_DELAY).await;
-            let _ = this.update(cx, |this, cx| Self::write_now(this, cx));
+            this.update(cx, |this, cx| Self::write_now(this, cx)).ok();
         }));
     }
 

@@ -36,6 +36,16 @@ impl Control {
         }
     }
 
+    /// `text` said clearly to this page with voice on, as the recognizer's phrase arrives.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hear_clearly(&mut self, text: &str) -> VoiceEvent {
+        self.enabled = true;
+        VoiceEvent::Heard {
+            owner: self.owner,
+            heard: super::Heard::clear(text),
+        }
+    }
+
     /// Whether `event` is this page's.
     pub fn owns(&self, event: &VoiceEvent) -> bool {
         match event {
@@ -165,10 +175,11 @@ impl Control {
             bar,
             move |on, _, cx| {
                 let grammar = grammar.clone();
-                let _ = page.update(cx, |this, cx| {
+                page.update(cx, |this, cx| {
                     control(this).toggle(on, grammar, active, cx);
                     cx.notify();
-                });
+                })
+                .ok();
             },
             cx,
         )

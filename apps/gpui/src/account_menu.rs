@@ -96,7 +96,9 @@ pub fn menu_button(expanded: bool, cx: &App) -> AnyElement {
                 )| {
                     let target = target.clone();
                     move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                        let _ = target.update(cx, |accounts, cx| run(accounts, window, cx));
+                        target
+                            .update(cx, |accounts, cx| run(accounts, window, cx))
+                            .ok();
                     }
                 };
                 let mut menu = menu;
@@ -112,9 +114,11 @@ pub fn menu_button(expanded: bool, cx: &App) -> AnyElement {
                                 PopupMenuItem::new(format!("@{name}"))
                                     .checked(&name == active)
                                     .on_click(move |_, _, cx| {
-                                        let _ = target.update(cx, |accounts, cx| {
-                                            accounts.set_active(&name, cx)
-                                        });
+                                        target
+                                            .update(cx, |accounts, cx| {
+                                                accounts.set_active(&name, cx)
+                                            })
+                                            .ok();
                                     }),
                             );
                         }

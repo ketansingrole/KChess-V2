@@ -28,7 +28,7 @@ pub(super) fn mode_tabs(mode: Mode, palette: &Palette, cx: &mut Context<LocalPag
         move |index, _, cx| {
             let mode = if index == 1 { Mode::Clock } else { Mode::Board };
             crate::prefs::set(cx, MODE_KEY, mode);
-            let _ = page.update(cx, |page, cx| page.after_change(cx));
+            page.update(cx, |page, cx| page.after_change(cx)).ok();
         },
         false,
         palette,
@@ -264,11 +264,11 @@ impl LocalPage {
             });
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
-            let _ = page.update(cx, |page, cx| page.show_ply(ply, cx));
+            page.update(cx, |page, cx| page.show_ply(ply, cx)).ok();
         };
         let flip_page = cx.entity().downgrade();
         let flip: widgets::ClickHandler = Box::new(move |_, _, cx| {
-            let _ = flip_page.update(cx, |page, cx| page.flip(cx));
+            flip_page.update(cx, |page, cx| page.flip(cx)).ok();
         });
         let auto_flip = self.auto_flip(cx);
         let in_progress = !over && !moves.is_empty();
@@ -298,7 +298,7 @@ impl LocalPage {
                             auto_flip,
                             false,
                             move |on, _, cx| {
-                                let _ = page.update(cx, |this, cx| this.set_auto_flip(*on, cx));
+                                page.update(cx, |this, cx| this.set_auto_flip(*on, cx)).ok();
                             },
                         )
                         .text_size(px(12.))

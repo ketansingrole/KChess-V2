@@ -694,13 +694,13 @@ fn variant_analysis_request(
         text => rules::setup_start(variant, text).map(|position| rules::make_fen(&position)),
     };
     let request = |fen: String| AnalysisRequest {
-        variant: Some(variant.key().to_string()),
+        variant: Some(variant.as_str().to_string()),
         ..three_lines(fen)
     };
     if let Some(fen) = fen {
         return Ok(request(fen));
     }
-    let variant = variant.key();
+    let variant = variant.as_str();
     let pgn = if text.starts_with('[') {
         text.to_string()
     } else {

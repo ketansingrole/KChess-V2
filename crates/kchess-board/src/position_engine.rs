@@ -128,7 +128,7 @@ impl PositionEngine {
             let Err(cause) = start.await else {
                 return;
             };
-            let _ = this.update(cx, |owner, cx| {
+            this.update(cx, |owner, cx| {
                 let engine = engine(owner);
                 if engine.client_id != id {
                     return;
@@ -144,7 +144,8 @@ impl PositionEngine {
                     &format!("starting analysis failed: {error}"),
                 );
                 engine.error = Some(error);
-            });
+            })
+            .ok();
         }));
     }
 
@@ -263,7 +264,7 @@ impl EngineLook {
     ) -> Task<()> {
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(after).await;
-            let _ = this.update(cx, done);
+            this.update(cx, done).ok();
         })
     }
 }

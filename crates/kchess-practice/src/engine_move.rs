@@ -38,10 +38,11 @@ impl EngineMove {
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
             let ready = matches!(status.await, Ok(status) if status.ready);
-            let _ = this.update(cx, |view, cx| {
+            this.update(cx, |view, cx| {
                 view.engine().ready = Some(ready);
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -74,7 +75,7 @@ impl EngineMove {
         });
         let task = cx.spawn(async move |this, cx| {
             let reply = search.await;
-            let _ = this.update(cx, |view, cx| {
+            this.update(cx, |view, cx| {
                 let engine = view.engine();
                 if !engine.generation.is_current(mine) {
                     return;
@@ -97,7 +98,8 @@ impl EngineMove {
                     Err(_) => {}
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         });
         view.engine().search = Some(task);
     }

@@ -2,8 +2,6 @@
 
 use crate::log::ResultExt as _;
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::component::button::ButtonVariant;
-use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 
@@ -87,20 +85,14 @@ pub fn replace_read(
         run(&*load, window, cx);
         return;
     }
-    crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
-        let (load, run) = (load.clone(), run.clone());
-        dialog
-            .title("Replace the unsaved analysis?")
-            .description("The analysis board has moves that are not saved as a study")
-            .ok_text("Replace")
-            .ok_variant(ButtonVariant::Danger)
-            .cancel_text("Cancel")
-            .show_cancel(true)
-            .on_ok(move |_, window, cx| {
-                run(&*load, window, cx);
-                true
-            })
-    });
+    crate::widgets::confirm_danger(
+        window,
+        cx,
+        "Replace the unsaved analysis?",
+        "The analysis board has moves that are not saved as a study",
+        "Replace",
+        move |window, cx| run(&*load, window, cx),
+    );
 }
 
 /// An empty analysis board.
@@ -227,11 +219,12 @@ pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App)
                         "Could not open the study: {}",
                         kchess_app::loading::failure("analysis", &cause)
                     );
-                    let _ = cx.update(|window, cx| window.push_notification(message, cx));
+                    cx.update(|window, cx| window.push_notification(message, cx))
+                        .ok();
                     return;
                 }
             };
-            let _ = cx.update(|window, cx| {
+            cx.update(|window, cx| {
                 let orientation = pgn.as_deref().and_then(crate::game::pgn_orientation);
                 let pgn =
                     async move { pgn.ok_or_else(|| "That study could not be read".to_string()) };
@@ -240,7 +233,8 @@ pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App)
                     ..Opening::default()
                 };
                 open_fetched(pgn, opening, window, cx);
-            });
+            })
+            .ok();
         })
         .detach();
 }
@@ -256,7 +250,7 @@ fn open_fetched(
     window
         .spawn(cx, async move |cx| {
             let pgn = pgn.await;
-            let _ = cx.update(|window, cx| match pgn {
+            cx.update(|window, cx| match pgn {
                 // A variant the analysis board cannot play (Crazyhouse, Atomic…): say so before
                 // asking to replace anything.
                 Ok(pgn)
@@ -271,7 +265,8 @@ fn open_fetched(
                     });
                 }
                 Err(message) => window.push_notification(message, cx),
-            });
+            })
+            .ok();
         })
         .detach();
 }
@@ -348,9 +343,10 @@ fn new_study(name: String, window: &mut Window, cx: &mut App) {
                         "studies",
                         &format!("Could not save study: {cause}"),
                     );
-                    let _ = cx.update(|window, cx| {
+                    cx.update(|window, cx| {
                         window.push_notification(Notification::error(cause), cx)
-                    });
+                    })
+                    .ok();
                 }
             })
             .detach();

@@ -101,7 +101,7 @@ impl GameFinder {
         });
         cx.spawn(async move |this, cx| {
             let answer = games.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.epoch.is_current(epoch) {
                     return;
                 }
@@ -122,7 +122,8 @@ impl GameFinder {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -150,7 +151,7 @@ impl GameFinder {
             .request(calls::ExportGame { id: GameId(id) });
         cx.spawn(async move |this, cx| {
             let answer = export.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.epoch.is_current(epoch) || this.opening != Some(index) {
                     return;
                 }
@@ -162,7 +163,8 @@ impl GameFinder {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .ok();
         })
         .detach();
     }
@@ -185,7 +187,9 @@ impl GameFinder {
             |name| {
                 let finder = finder.clone();
                 Box::new(move |_, window, cx| {
-                    let _ = finder.update(cx, |finder, cx| finder.pick(name.clone(), window, cx));
+                    finder
+                        .update(cx, |finder, cx| finder.pick(name.clone(), window, cx))
+                        .ok();
                 })
             },
         );
@@ -205,7 +209,7 @@ impl GameFinder {
                         None,
                         RowDetail::Brief,
                         move |_, cx| {
-                            let _ = finder.update(cx, |this, cx| this.open_game(index, cx));
+                            finder.update(cx, |this, cx| this.open_game(index, cx)).ok();
                         },
                         palette,
                     );

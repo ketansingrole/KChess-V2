@@ -550,7 +550,8 @@ impl Workspace {
         #[cfg(not(test))]
         cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(PREWARM_AFTER).await;
-            let _ = this.update_in(cx, |workspace, window, cx| workspace.prewarm(window, cx));
+            this.update_in(cx, |workspace, window, cx| workspace.prewarm(window, cx))
+                .ok();
         })
         .detach();
         workspace
