@@ -18,6 +18,8 @@ kchess-hack = { version = "0.1", path = "../kchess-hack" }
 [dev-dependencies]
 # Seeded random positions for the tests.
 kchess-testkit.workspace = true
+# The pages a trial reads are named in the environment.
+kchess-host.workspace = true
 
 [lints]
 workspace = true

@@ -142,6 +142,9 @@ kchess-watch = { workspace = true, features = ["test-support"] }
 gpui-kit = { version = "=0.11.0", features = ["test-support"] }
 # A fresh profile per end-to-end test (`src/e2e`).
 tempfile = "3"
+# The diagrams of the books the Books tests write, decoded to put in a PDF (already in Cargo.lock
+# through GPUI).
+image = { version = "0.25", default-features = false, features = ["png"] }
 # The stand-in Lichess and Chess.com the end-to-end tests talk to (`src/e2e/fake_*.rs`).
 kchess-testkit.workspace = true
 # The broadcast games archive the stand-in Lichess serves, packed as Lichess packs it; the core's

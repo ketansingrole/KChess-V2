@@ -18,6 +18,8 @@ kchess-domain.workspace = true
 kchess-games.workspace = true
 # A picture of a board to its position (`src/picture.rs`).
 kchess-recognise.workspace = true
+# A chess book's pages, and the diagrams on them (`src/book.rs`).
+kchess-books.workspace = true
 kchess-ui.workspace = true
 # Pinned with the app's (apps/gpui/Cargo.toml).
 gpui-kit = "=0.11.0"
