@@ -20,6 +20,8 @@ use crate::widgets::Pressable as _;
 pub const EVAL_BAR: Pixels = px(14.);
 /// One engine line's row.
 const PV_ROW: Pixels = px(34.);
+/// A score chip's and a move's height: the smallest a target may be (WCAG 2.5.8).
+const TARGET: Pixels = px(24.);
 /// How much of a waiting row its moves' placeholder fills, row by row, so the rows still to come
 /// read as lines of moves rather than one block.
 const PENDING_WIDTHS: [f32; 3] = [0.62, 0.48, 0.55];
@@ -268,8 +270,11 @@ impl RenderOnce for LinesView {
                                 .aria_label(format!("Play line {}", format_eval(Some(line))))
                                 .w(px(55.))
                                 .flex_none()
+                                .h(TARGET)
+                                .flex()
+                                .items_center()
+                                .justify_center()
                                 .px(px(6.))
-                                .py(px(1.))
                                 .rounded(radii::BOX)
                                 .bg(palette.accented)
                                 .font_weight(FontWeight::MEDIUM)
@@ -304,8 +309,13 @@ impl RenderOnce for LinesView {
                                     .keyboard_focus(palette.primary)
                                     .aria_label(played.label.clone())
                                     .flex_none()
+                                    // A 24 px target, as every button is.
+                                    .h(TARGET)
+                                    .min_w(TARGET)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
                                     .px(px(2.))
-                                    .py(px(1.))
                                     .rounded(radii::SMALL)
                                     .text_color(palette.toned)
                                     .cursor_pointer()
