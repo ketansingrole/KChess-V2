@@ -11,6 +11,7 @@ use kchess_contracts::types::{GameSite, LichessGame};
 use shakmaty::Color;
 
 use super::classics::{CLASSICS, eras, winner};
+use super::guess_db::DatabaseFinder;
 use crate::core::AppCore;
 use crate::player_search::{self, NameGroup, NameMatches};
 use crate::theme::{Palette, radii};
@@ -35,6 +36,8 @@ pub struct GameFinder {
     /// The row of the game being fetched.
     opening: Option<usize>,
     error: Option<SharedString>,
+    /// A game from your databases, shown when there is one.
+    databases: Entity<DatabaseFinder>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -43,7 +46,8 @@ impl EventEmitter<Found> for GameFinder {}
 impl GameFinder {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> GameFinder {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Lichess username"));
-        let subscriptions = vec![cx.subscribe_in(
+        let databases = cx.new(|cx| DatabaseFinder::new(window, cx));
+        let mut subscriptions = vec![cx.subscribe_in(
             &input,
             window,
             |this, input, event: &InputEvent, window, cx| {
@@ -64,6 +68,13 @@ impl GameFinder {
                 cx.notify();
             },
         )];
+        subscriptions.push(cx.subscribe(&databases, |_, _, found: &Found, cx| {
+            let Found::Game { pgn, side } = found;
+            cx.emit(Found::Game {
+                pgn: pgn.clone(),
+                side: *side,
+            });
+        }));
         GameFinder {
             input,
             names: NameMatches::default(),
@@ -72,6 +83,7 @@ impl GameFinder {
             epoch: Epoch::default(),
             opening: None,
             error: None,
+            databases,
             _subscriptions: subscriptions,
         }
     }
@@ -352,7 +364,10 @@ pub fn famous_games(
 impl Render for GameFinder {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        v_flex().gap(px(16.)).child(self.player_card(cx, &palette))
+        v_flex()
+            .gap(px(16.))
+            .child(self.player_card(cx, &palette))
+            .child(self.databases.clone())
     }
 }
 

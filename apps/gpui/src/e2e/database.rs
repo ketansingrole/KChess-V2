@@ -48,7 +48,7 @@ fn listed(app: &mut Harness) -> Vec<String> {
     })
 }
 
-fn wait_for_listed(app: &mut Harness, what: &str, expected: &[&str]) {
+pub(super) fn wait_for_listed(app: &mut Harness, what: &str, expected: &[&str]) {
     let expected: Vec<String> = expected.iter().map(|game| game.to_string()).collect();
     app.wait_for(what, |window, _| {
         use gpui_kit::test::TestQueryExt as _;
@@ -68,7 +68,7 @@ const GUKESH_CARLSEN: &str = "Gukesh D against Carlsen, Magnus, 1/2-1/2";
 const SMITH_JONES: &str = "Smith against Jones, 0-1";
 
 /// `GAMES` imported on the Database page, listed newest first.
-fn import_games(app: &mut Harness) {
+pub(super) fn import_games(app: &mut Harness) {
     app.open("Game database");
     app.find("gamedb-import");
     assert!(!app.shows("database-delete"), "nothing to delete yet");

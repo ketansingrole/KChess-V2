@@ -9,7 +9,12 @@ with nothing there.
 
 ## Unreleased
 
-KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving. Player search, Books, the engine lines, the Watch page, move lists and the panels beside the board are cleaner and easier to read.
+KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving. Player search, Books, the engine lines, the Watch page, move lists and the panels beside the board are cleaner and easier to read. Guess the move has many more famous games and takes games from your databases.
+
+### Added
+
+- Guess the move lists 22 famous games by era, from McDonnell against La Bourdonnais in 1834 to Kasparov's Immortal in 1999.
+- Guess the move can take a game from your databases. Search for a player and you guess the moves as them.
 
 ### Changed
 

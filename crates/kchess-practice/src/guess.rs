@@ -942,7 +942,7 @@ impl GuessMoves {
                                     .ok();
                             }
                         },
-                        &palette,
+                        palette,
                     )),
             )
             .into_any_element()
