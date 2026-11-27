@@ -2,6 +2,7 @@
 //! (`kchess_nav::page`), and the registry below lists them in the sidebar's order.
 
 pub mod analysis;
+pub mod books;
 pub mod computer;
 pub use kchess_database as database;
 pub mod editor;
@@ -23,15 +24,16 @@ pub use kchess_watch as watch;
 
 pub use kchess_nav::page::*;
 
-static REGISTRY: [Registered; 18] = PAGES;
+static REGISTRY: [Registered; 19] = PAGES;
 
-const PAGES: [Registered; 18] = [
+const PAGES: [Registered; 19] = [
     register::<home::HomePage>(),
     register::<computer::ComputerPage>(),
     register::<local::LocalPage>(),
     register::<puzzles::PuzzlesPage>(),
     register::<practice::PracticePage>(),
     register::<openings::OpeningsPage>(),
+    register::<books::BooksPage>(),
     register::<analysis::AnalysisPage>(),
     register::<history::HistoryPage>(),
     register::<studies::StudiesPage>(),

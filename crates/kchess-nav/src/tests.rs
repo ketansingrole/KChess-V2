@@ -17,13 +17,14 @@ use crate::sections::Section;
 use crate::shell::{self, Navigator, Shell};
 use crate::swipe::Direction;
 
-const ORDER: [Page; 18] = [
+const ORDER: [Page; 19] = [
     Page::Dashboard,
     Page::Computer,
     Page::Local,
     Page::Puzzles,
     Page::Practice,
     Page::Openings,
+    Page::Books,
     Page::Analysis,
     Page::History,
     Page::Studies,
@@ -114,11 +115,11 @@ impl<const N: usize> PageView for Stand<N> {
     }
 
     fn opened_by() -> Option<Box<dyn gpui_kit::Action>> {
-        (N == 17).then(|| Box::new(OpenLast) as Box<dyn gpui_kit::Action>)
+        (N == 18).then(|| Box::new(OpenLast) as Box<dyn gpui_kit::Action>)
     }
 }
 
-static REGISTRY: [Registered; 18] = [
+static REGISTRY: [Registered; 19] = [
     register::<Stand<0>>(),
     register::<Stand<1>>(),
     register::<Stand<2>>(),
@@ -131,12 +132,13 @@ static REGISTRY: [Registered; 18] = [
     register::<Stand<9>>(),
     register::<Stand<10>>(),
     register::<Stand<11>>(),
-    register::<Stand<13>>(),
+    register::<Stand<12>>(),
     register::<Stand<13>>(),
     register::<Stand<14>>(),
     register::<Stand<15>>(),
     register::<Stand<16>>(),
     register::<Stand<17>>(),
+    register::<Stand<18>>(),
 ];
 
 /// A page is described by the registry the app set, at its own place.
@@ -144,8 +146,8 @@ static REGISTRY: [Registered; 18] = [
 fn a_page_is_what_the_registry_says(cx: &mut TestAppContext) {
     set_registry(&REGISTRY);
     assert_eq!(Page::Analysis.info().page, Page::Analysis);
-    assert_eq!(REGISTRY[6].page(), Page::Analysis);
-    assert_eq!(Page::all().count(), 18);
+    assert_eq!(REGISTRY[7].page(), Page::Analysis);
+    assert_eq!(Page::all().count(), 19);
     assert_eq!(Page::named("Watch"), Some(Page::Watch));
     assert!(crate::page::opened_by(Page::Players).is_none());
     assert!(
@@ -237,18 +239,18 @@ fn a_page_reaches_others_through_the_shell(cx: &mut TestAppContext) {
     cx.update_window(window.into(), |_, window, cx| {
         // Before the app sets its shell, nothing is found or opened.
         assert!(shell::current_page(cx).is_none());
-        assert!(shell::view::<Stand<6>>(cx).is_none());
+        assert!(shell::view::<Stand<7>>(cx).is_none());
         shell::open(Page::Watch, window, cx);
         *kept.pages.borrow_mut() = Some(crate::page::Pages::new(window, cx));
         cx.set_global(Navigator(kept.clone()));
         assert_eq!(shell::current_page(cx), Some(Page::Dashboard));
-        assert!(shell::view::<Stand<6>>(cx).is_none(), "not made yet");
-        let made = shell::made::<Stand<6>>(window, cx).expect("made now");
+        assert!(shell::view::<Stand<7>>(cx).is_none(), "not made yet");
+        let made = shell::made::<Stand<7>>(window, cx).expect("made now");
         assert_eq!(
-            shell::view::<Stand<6>>(cx).map(|view| view.entity_id()),
+            shell::view::<Stand<7>>(cx).map(|view| view.entity_id()),
             Some(made.entity_id())
         );
-        shell::show::<Stand<13>>(window, cx, |page, _, _| page.acted += 1);
+        shell::show::<Stand<14>>(window, cx, |page, _, _| page.acted += 1);
         assert_eq!(shell::current_page(cx), Some(Page::Watch));
         shell::go(-1, window, cx);
         shell::open_settings(Section::Accounts, window, cx);
@@ -261,7 +263,7 @@ fn a_page_reaches_others_through_the_shell(cx: &mut TestAppContext) {
         assert!(!pages.page_focused(window, cx));
     })
     .unwrap();
-    let shown = cx.read(|cx| shell::view::<Stand<13>>(cx).map(|page| page.read(cx).acted));
+    let shown = cx.read(|cx| shell::view::<Stand<14>>(cx).map(|page| page.read(cx).acted));
     assert_eq!(shown, Some(1));
     assert_eq!(
         *kept.asked.borrow(),
@@ -311,19 +313,19 @@ fn the_test_shell_holds_only_its_page(cx: &mut TestAppContext) {
     let window = cx.add_window(|_, _| Blank);
     let only = cx
         .update_window(window.into(), |_, window, cx| {
-            let page = cx.new(|cx| Stand::<13>::create(window, cx));
+            let page = cx.new(|cx| Stand::<14>::create(window, cx));
             let only = Rc::new(crate::testing::OnlyPage::of(page.clone()));
             cx.set_global(Navigator(only.clone()));
             assert_eq!(shell::current_page(cx), Some(Page::Watch));
             assert_eq!(
-                shell::view::<Stand<13>>(cx).map(|view| view.entity_id()),
+                shell::view::<Stand<14>>(cx).map(|view| view.entity_id()),
                 Some(page.entity_id())
             );
             assert_eq!(
-                shell::made::<Stand<13>>(window, cx).map(|view| view.entity_id()),
+                shell::made::<Stand<14>>(window, cx).map(|view| view.entity_id()),
                 Some(page.entity_id())
             );
-            assert!(shell::view::<Stand<6>>(cx).is_none());
+            assert!(shell::view::<Stand<7>>(cx).is_none());
             shell::open(Page::Puzzles, window, cx);
             shell::open_settings(Section::Accounts, window, cx);
             only

@@ -14,6 +14,7 @@ mod analysis;
 mod assistance;
 mod audit;
 mod background;
+mod books;
 mod chesscom;
 mod computer;
 mod database;

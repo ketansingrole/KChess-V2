@@ -25,6 +25,7 @@ pub enum Page {
     Puzzles,
     Practice,
     Openings,
+    Books,
     Analysis,
     History,
     Studies,

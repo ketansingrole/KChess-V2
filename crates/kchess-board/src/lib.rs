@@ -19,6 +19,7 @@ pub mod ai;
 pub mod analysis;
 pub mod assets;
 pub mod board;
+pub mod book;
 pub mod engine_view;
 pub mod export;
 pub mod game;

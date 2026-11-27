@@ -3,8 +3,8 @@
 
 use std::sync::LazyLock;
 
+pub use kchess_recognise::{Area, Recognised, Refusal, find_boards};
 use kchess_recognise::{PieceSet, Recogniser};
-pub use kchess_recognise::{Recognised, Refusal};
 use shakmaty::{Color, Piece, Role};
 
 use crate::board::looks;
@@ -31,6 +31,11 @@ static RECOGNISER: LazyLock<Recogniser> = LazyLock::new(|| {
 /// The position in a picture (PNG, JPEG, GIF, WebP, BMP or TIFF) of a 2D board.
 pub fn read_board_picture(bytes: &[u8]) -> Result<Recognised, Refusal> {
     RECOGNISER.read(bytes)
+}
+
+/// The position in `image`, a picture already decoded: a diagram cut out of a book's page.
+pub fn read_board_image(image: &image::DynamicImage) -> Result<Recognised, Refusal> {
+    RECOGNISER.read_image(image)
 }
 
 /// Whether a file's name is a picture's, by its extension.

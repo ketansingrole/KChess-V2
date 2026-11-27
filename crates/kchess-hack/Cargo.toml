@@ -42,6 +42,8 @@ crossbeam-utils = { version = "0.8" }
 crypto-common = { version = "0.2", default-features = false, features = ["getrandom"] }
 digest = { version = "0.11", features = ["alloc", "oid"] }
 either = { version = "1", default-features = false, features = ["use_std"] }
+euclid = { version = "0.22", features = ["libm"] }
+fastrand = { version = "2" }
 flate2 = { version = "1", features = ["zlib-rs"] }
 foldhash = { version = "0.2" }
 form_urlencoded = { version = "1" }
@@ -58,6 +60,7 @@ litemap = { version = "0.8", default-features = false, features = ["alloc"] }
 log = { version = "0.4", default-features = false, features = ["serde", "std"] }
 lzma-rust2 = { version = "0.25", default-features = false, features = ["encoder", "optimization", "std", "xz"] }
 memchr = { version = "2" }
+moxcms = { version = "0.8", features = ["in_place"] }
 num-traits = { version = "0.2", features = ["i128", "libm"] }
 once_cell = { version = "1" }
 potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
@@ -71,10 +74,12 @@ serde_core = { version = "1", features = ["alloc", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order", "raw_value", "unbounded_depth"] }
 sha2 = { version = "0.11" }
 simd-adler32 = { version = "0.3" }
+skrifa = { version = "0.49" }
 slotmap = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
 stable_deref_trait = { version = "1", default-features = false, features = ["alloc"] }
 syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+thiserror = { version = "2" }
 tinystr = { version = "0.8", default-features = false, features = ["alloc", "zerovec"] }
 tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 uuid = { version = "1", features = ["serde", "v4"] }
@@ -85,6 +90,7 @@ zeroize = { version = "1", features = ["derive"] }
 zerotrie = { version = "0.2", default-features = false, features = ["alloc", "yoke", "zerofrom"] }
 zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
 zlib-rs = { version = "0.6", default-features = false, features = ["std"] }
+zune-jpeg = { version = "0.5" }
 
 [build-dependencies]
 aho-corasick = { version = "1" }
@@ -92,6 +98,7 @@ crossbeam-utils = { version = "0.8" }
 crypto-common = { version = "0.2", default-features = false, features = ["getrandom"] }
 digest = { version = "0.11", features = ["alloc", "oid"] }
 either = { version = "1", default-features = false, features = ["use_std"] }
+fastrand = { version = "2" }
 foldhash = { version = "0.2" }
 getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
@@ -143,7 +150,6 @@ rustix = { version = "1", features = ["event", "fs", "net", "pipe", "process", "
 [target.x86_64-unknown-linux-gnu.dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
 digest = { version = "0.11", default-features = false, features = ["mac"] }
-fastrand = { version = "2" }
 futures-channel = { version = "0.3", features = ["sink"] }
 futures-task = { version = "0.3", default-features = false, features = ["std"] }
 half = { version = "2", features = ["num-traits"] }
@@ -156,6 +162,7 @@ linux-raw-sys = { version = "0.12", default-features = false, features = ["auxve
 mio = { version = "1", features = ["net", "os-ext"] }
 num-rational = { version = "0.4", features = ["num-bigint-std"] }
 percent-encoding = { version = "2" }
+phf = { version = "0.13", features = ["macros"] }
 rustix = { version = "1", features = ["event", "net", "pipe", "process", "shm", "system", "time"] }
 rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
@@ -173,7 +180,6 @@ zvariant_utils = { version = "4", features = ["gvariant"] }
 
 [target.x86_64-unknown-linux-gnu.build-dependencies]
 digest = { version = "0.11", default-features = false, features = ["mac"] }
-fastrand = { version = "2" }
 hashbrown = { version = "0.17", default-features = false, features = ["inline-more"] }
 libc = { version = "0.2" }
 smallvec = { version = "1", default-features = false, features = ["write"] }

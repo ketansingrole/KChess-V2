@@ -13,6 +13,7 @@ KChess is now a chess database too. Keep millions of games on your computer, fro
 
 ### Added
 
+- The Books page opens a chess book's PDF beside a board. Click a diagram to set it up, work out the moves yourself, and turn Stockfish on when you want it; Next diagram goes on through the book.
 - The Database page lists the games in your databases. Search them by player, event, year, rating or result, open any one on the analysis board, or play through it in Guess the move, guessing the winner's moves.
 - You can import a PGN file, or a .zip, .7z or .bz2 of them, however large: drop it on the Database page.
 - The Database page downloads the games of top events Lichess has broadcast since 2020, every game of the Top Chess Engine Championship, or a month of games between strong Lichess players, and brings in the new ones when you update.
