@@ -50,6 +50,33 @@ pub fn transaction<T>(db: &Connection, work: impl FnOnce() -> Result<T>) -> Resu
     }
 }
 
+/// How many of its migrations a file has had: its `user_version`.
+pub fn schema_version(db: &Connection) -> Result<usize> {
+    let version: i64 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .sql()?;
+    Ok(usize::try_from(version).unwrap_or(0))
+}
+
+/// Applies the `migrations` the file has not had, each with its new `user_version` in one
+/// transaction. A file a newer release migrated, past the list, is refused with `newer` rather
+/// than changed.
+pub fn migrate(db: &Connection, migrations: &[&str], newer: &str) -> Result<()> {
+    let start = schema_version(db)?;
+    if start > migrations.len() {
+        return Err(CoreError::new(newer));
+    }
+    for (index, sql) in migrations.iter().enumerate().skip(start) {
+        transaction(db, || {
+            db.execute_batch(sql).sql()?;
+            // `index` is a loop counter, not user input: PRAGMA takes no bound parameters.
+            db.execute_batch(&format!("PRAGMA user_version = {}", index + 1))
+                .sql()
+        })?;
+    }
+    Ok(())
+}
+
 /// A call slower than this is logged: one connection serializes all of a file's work, so a slow
 /// call holds up every read behind it.
 const SLOW_CALL: Duration = Duration::from_millis(500);
