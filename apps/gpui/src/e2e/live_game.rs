@@ -697,6 +697,12 @@ fn a_correspondence_move_waits_for_confirm(cx: &mut gpui_kit::TestAppContext) {
     let mut app = app.restart();
     app.open("Play on Lichess");
     app.find("online-abort");
+    // The game is announced as rapid, so it comes to the board, and only its record from the
+    // board stream says correspondence: a move made before that record is sent at once (Windows
+    // Stress, 2026-11-27).
+    app.wait_for("the game's record", |_, cx| {
+        crate::online::handle(cx).read(cx).correspondence()
+    });
 
     app.click_square("e2", true);
     app.click_square("e4", true);
