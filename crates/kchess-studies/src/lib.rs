@@ -282,35 +282,15 @@ impl StudiesPage {
 
     fn rename(study: &Study, window: &mut Window, cx: &mut App) {
         let id = study.id.clone();
-        let library = Self::library(cx);
-        NameDialog::open(
+        ask_name(
             "Rename study",
             &study.name,
             "Rename",
             window,
             cx,
-            move |name, dialog, window, cx| {
-                let answer = library.read(cx).command(StudyCommand::Rename {
-                    id: id.clone(),
-                    name,
-                });
-                let library = library.clone();
-                window
-                    .spawn(cx, async move |cx| {
-                        let result = answer.await;
-                        cx.update(|window, cx| match result {
-                            Ok(result) => {
-                                library.update(cx, |library, cx| {
-                                    library.apply(&result);
-                                    cx.notify();
-                                });
-                                window.close_dialog(cx);
-                            }
-                            Err(cause) => dialog.update(cx, |dialog, cx| dialog.fail(cause, cx)),
-                        })
-                        .ok();
-                    })
-                    .detach();
+            move |name| StudyCommand::Rename {
+                id: id.clone(),
+                name,
             },
         );
     }
@@ -970,6 +950,46 @@ pub fn open_lichess(window: &mut Window, cx: &mut App) {
     kchess_nav::shell::show::<StudiesPage>(window, cx, |studies, window, cx| {
         studies.show_lichess(window, cx)
     });
+}
+
+/// Ask for a name, and send the study command `command` makes of it: the dialog closes once the
+/// library shows the answer, and shows a refusal itself.
+pub fn ask_name(
+    title: &'static str,
+    current: &str,
+    confirm: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+    command: impl Fn(String) -> StudyCommand + 'static,
+) {
+    let library = cx.global::<StudyHandle>().0.clone();
+    NameDialog::open(
+        title,
+        current,
+        confirm,
+        window,
+        cx,
+        move |name, dialog, window, cx| {
+            let answer = library.read(cx).command(command(name));
+            let library = library.clone();
+            window
+                .spawn(cx, async move |cx| {
+                    let result = answer.await;
+                    cx.update(|window, cx| match result {
+                        Ok(result) => {
+                            library.update(cx, |library, cx| {
+                                library.apply(&result);
+                                cx.notify();
+                            });
+                            window.close_dialog(cx);
+                        }
+                        Err(cause) => dialog.update(cx, |dialog, cx| dialog.fail(cause, cx)),
+                    })
+                    .ok();
+                })
+                .detach();
+        },
+    );
 }
 
 #[cfg(test)]

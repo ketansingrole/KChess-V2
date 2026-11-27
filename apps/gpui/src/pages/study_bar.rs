@@ -415,36 +415,16 @@ impl StudyBar {
             .chapter(&chapter)
             .map(|entry| entry.name.clone())
             .unwrap_or_default();
-        let library = Self::library(cx);
-        NameDialog::open(
+        kchess_studies::ask_name(
             "Rename chapter",
             &current,
             "Save",
             window,
             cx,
-            move |name, dialog, window, cx| {
-                let answer = library.read(cx).command(StudyCommand::RenameChapter {
-                    id: study.id.clone(),
-                    chapter_id: chapter.clone(),
-                    name,
-                });
-                let library = library.clone();
-                window
-                    .spawn(cx, async move |cx| {
-                        let result = answer.await;
-                        cx.update(|window, cx| match result {
-                            Ok(result) => {
-                                library.update(cx, |library, cx| {
-                                    library.apply(&result);
-                                    cx.notify();
-                                });
-                                window.close_dialog(cx);
-                            }
-                            Err(cause) => dialog.update(cx, |dialog, cx| dialog.fail(cause, cx)),
-                        })
-                        .ok();
-                    })
-                    .detach();
+            move |name| StudyCommand::RenameChapter {
+                id: study.id.clone(),
+                chapter_id: chapter.clone(),
+                name,
             },
         );
     }
