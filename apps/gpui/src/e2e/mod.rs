@@ -718,6 +718,21 @@ impl Harness {
         }
     }
 
+    /// The side to move, as the board tells a screen reader: "White" or "Black".
+    pub fn side_to_move(&mut self) -> &'static str {
+        let description = self
+            .find("chess-board")
+            .description()
+            .unwrap_or_default()
+            .to_string();
+        if description.ends_with("Black to move") {
+            "Black"
+        } else {
+            assert!(description.ends_with("White to move"), "{description:?}");
+            "White"
+        }
+    }
+
     /// The status banner's title, once one is shown.
     pub fn status(&mut self) -> String {
         let banner = self.find("status-banner");

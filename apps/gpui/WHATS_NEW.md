@@ -22,6 +22,7 @@ KChess stays connected to Lichess when it is left open for a long time, so chall
 - On the Books page, your books end with a card to open another, an open book has a way back to them, and its page buttons float at the foot of its pages. The diagram buttons sit under the board.
 - Filters, search fields and buttons that share a row are the same height.
 - The board editor speaks up only when the position is not legal yet.
+- Over the board leaves whose turn it is to the board, and speaks up for a check or a paused clock.
 - A game or run with no clock shows ∞ where it said Untimed or No clock.
 
 ### Fixed
