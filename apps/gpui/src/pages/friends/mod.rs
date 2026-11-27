@@ -574,7 +574,13 @@ impl FriendsPage {
                     .text_color(palette.text_muted)
                     .child(rating("classical")),
             )
-            .child(cell(100.).child(versus.unwrap_or_else(|| "—".into())))
+            // A record, not a number: centred under its heading, as is the dash for none.
+            .child(
+                div()
+                    .w(px(100.))
+                    .text_center()
+                    .child(versus.unwrap_or_else(|| "—".into())),
+            )
             .child(
                 v_flex()
                     .w(px(130.))
@@ -874,7 +880,7 @@ impl Render for FriendsPage {
                                 .child(head_cell("Blitz", 60.))
                                 .child(head_cell("Rapid", 60.))
                                 .child(head_cell("Classical", 70.))
-                                .child(head_cell("You vs them", 100.))
+                                .child(div().w(px(100.)).text_center().child("You vs them"))
                                 .child(div().w(px(130.)).child("Synced"))
                                 .child(div().w(px(190.))),
                         )
