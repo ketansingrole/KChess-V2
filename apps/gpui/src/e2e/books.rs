@@ -139,6 +139,12 @@ fn a_book_s_diagrams_are_set_up_on_the_board(cx: &mut gpui_kit::TestAppContext) 
         &mut app,
         "r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 1",
     );
+    // The side to move now, switched only at the diagram: switching starts its moves again.
+    let side = app.with_window(|window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.find_by_label("Black to move").disabled()
+    });
+    assert_eq!(side, Some(true));
     app.click("books-take-back");
     wait_for_fen(&mut app, ITALIAN);
 

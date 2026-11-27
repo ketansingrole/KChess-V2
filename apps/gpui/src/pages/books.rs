@@ -850,7 +850,8 @@ impl BooksPage {
                 .border_color(if chosen {
                     palette.primary
                 } else {
-                    tint(palette.primary, 25.)
+                    // Seen against the page's paper, which is white whatever the theme.
+                    tint(palette.primary, 60.)
                 })
                 .when(reading == Some(index), |outline| {
                     outline.bg(tint(palette.primary, 15.))
@@ -975,11 +976,21 @@ impl BooksPage {
             )
         });
         let has_position = self.study.is_some();
+        // The side to move now; switched only at the diagram, which starts its moves again.
         let turn = self
             .study
             .as_ref()
-            .map(|study| study.start.turn())
+            .map(|study| {
+                study
+                    .moves
+                    .last()
+                    .map_or(study.start.turn(), |(_, _, position)| position.turn())
+            })
             .unwrap_or(Color::White);
+        let at_diagram = self
+            .study
+            .as_ref()
+            .is_some_and(|study| study.moves.is_empty());
         let moves = self
             .study
             .as_ref()
@@ -999,7 +1010,7 @@ impl BooksPage {
                         "Black to move"
                     })
                     .tooltip("Switch the side to move")
-                    .disabled(!has_position)
+                    .disabled(!at_diagram)
                     .on_click(cx.listener(|this, _, _, cx| this.switch_side(cx))),
             )
             .child(
