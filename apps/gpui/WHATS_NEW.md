@@ -9,7 +9,11 @@ with nothing there.
 
 ## Unreleased
 
-KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving.
+KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving. The Practice and Puzzles panels are tidier.
+
+### Changed
+
+- The choices beside the board in Practice and Puzzles each fit on one row, and their switches sit at the end of the row, as in Settings.
 
 ### Fixed
 

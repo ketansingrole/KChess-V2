@@ -11,29 +11,60 @@ pub fn labelled_switch(
     disabled: bool,
     on_change: impl Fn(&bool, &mut Window, &mut App) + 'static,
 ) -> Div {
-    let on_change = std::rc::Rc::new(on_change);
-    let on_label = std::rc::Rc::clone(&on_change);
+    let (switch, label) = switch_parts(id, label, checked, disabled, on_change);
     h_flex()
         .gap(px(8.))
         .items_center()
-        .child(
-            gpui_kit::component::switch::Switch::new(id)
-                .large()
-                .checked(checked)
-                .disabled(disabled)
-                .accessibility_label(label)
-                .on_click(move |on, window, cx| on_change(on, window, cx)),
-        )
-        .child(
-            div()
-                .id(SharedString::from(format!("{id}-label")))
-                .min_w_0()
-                .when(!disabled, |label| label.cursor_pointer())
-                .when(!disabled, |label| {
-                    label.on_click(move |_, window, cx| on_label(&!checked, window, cx))
-                })
-                .child(label),
-        )
+        .child(switch)
+        .child(label)
+}
+
+/// A panel's yes/no option on a row of its own: its label, then the switch at the row's end, as
+/// Settings lays its switches out. The label toggles it too.
+pub fn switch_row(
+    id: &'static str,
+    label: &'static str,
+    checked: bool,
+    disabled: bool,
+    on_change: impl Fn(&bool, &mut Window, &mut App) + 'static,
+) -> Div {
+    let (switch, label) = switch_parts(id, label, checked, disabled, on_change);
+    h_flex()
+        .w_full()
+        .gap(px(12.))
+        .items_center()
+        .justify_between()
+        .child(label.flex_1())
+        .child(div().flex_none().child(switch))
+}
+
+/// A switch named by `label`, and its label, which toggles it.
+fn switch_parts(
+    id: &'static str,
+    label: &'static str,
+    checked: bool,
+    disabled: bool,
+    on_change: impl Fn(&bool, &mut Window, &mut App) + 'static,
+) -> (gpui_kit::component::switch::Switch, Div) {
+    let on_change = std::rc::Rc::new(on_change);
+    let on_label = std::rc::Rc::clone(&on_change);
+    let switch = gpui_kit::component::switch::Switch::new(id)
+        .large()
+        .checked(checked)
+        .disabled(disabled)
+        .accessibility_label(label)
+        .on_click(move |on, window, cx| on_change(on, window, cx));
+    let label = div().min_w_0().child(
+        div()
+            .id(SharedString::from(format!("{id}-label")))
+            .test_support()
+            .when(!disabled, |label| label.cursor_pointer())
+            .when(!disabled, |label| {
+                label.on_click(move |_, window, cx| on_label(&!checked, window, cx))
+            })
+            .child(label),
+    );
+    (switch, label)
 }
 
 /// Blindfold and zen mode, as a board page offers them; zen mode's tooltip names its key.

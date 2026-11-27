@@ -502,7 +502,7 @@ impl Coordinates {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let page = cx.entity().downgrade();
-        widgets::labelled_switch(
+        widgets::switch_row(
             id,
             label,
             crate::prefs::get(cx, key, false),
@@ -631,7 +631,7 @@ impl Render for Coordinates {
             row,
             voice_line,
         );
-        let modes = widgets::wrapping_pills(
+        let modes = widgets::pills(
             "coordinates-mode",
             vec![
                 Pill {
@@ -666,6 +666,7 @@ impl Render for Coordinates {
                     .ok();
                 }
             },
+            false,
             &palette,
         );
         let sides = ["white", "black", "random"];

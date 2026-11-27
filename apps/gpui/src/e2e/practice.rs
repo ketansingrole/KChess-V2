@@ -220,6 +220,64 @@ fn a_typed_square_jumps_the_knight(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(knight(&mut app), to);
 }
 
+/// Regression: the side panel's choices wrapped, so Untimed took a second row of Length on its
+/// own and the modes stacked; and its switches sat before their labels where Settings puts them
+/// after. At every window size each choice keeps one row inside the panel, and each switch ends its
+/// row, after its label.
+#[gpui_kit::test]
+fn the_coordinates_panel_keeps_each_choice_on_one_row(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{ElementId, px, size};
+    // In a short window the panel scrolls, or sits under the board: where things are laid out is
+    // read whether or not they show.
+    fn bounds(app: &mut Harness, id: impl Into<ElementId>) -> gpui_kit::Bounds<gpui_kit::Pixels> {
+        let id = id.into();
+        app.with_window(|window, _| {
+            use gpui_kit::test::TestWindowExt as _;
+            window
+                .try_find(id.clone())
+                .unwrap_or_else(|| panic!("{id:?} is drawn"))
+                .bounds()
+        })
+    }
+    let mut app = practice(cx);
+    app.find("coordinates-start");
+    for (width, height) in super::SIZES {
+        app.cx
+            .simulate_window_resize(app.window, size(px(width), px(height)));
+        app.settle();
+        let panel = bounds(&mut app, "coordinates-panel");
+        for (bar, count) in [
+            ("coordinates-mode", 2usize),
+            ("coordinates-length", 5),
+            ("coordinates-side", 3),
+        ] {
+            let first = bounds(&mut app, (bar, 0usize));
+            for index in 0..count {
+                let pill = bounds(&mut app, (bar, index));
+                assert_eq!(
+                    pill.origin.y, first.origin.y,
+                    "{bar}'s choice {index} shares the first one's row at {width}×{height}"
+                );
+                assert!(
+                    pill.right() <= panel.right(),
+                    "{bar}'s choice {index} stays inside the panel at {width}×{height}"
+                );
+            }
+        }
+        for id in [
+            "coordinates-limited",
+            "coordinates-show",
+            "coordinates-pieces",
+        ] {
+            let label = bounds(&mut app, format!("{id}-label"));
+            assert!(
+                bounds(&mut app, id).left() > label.right(),
+                "{id}'s switch follows its label at {width}×{height}"
+            );
+        }
+    }
+}
+
 #[gpui_kit::test]
 fn a_coordinates_run_can_be_limited_to_some_files_and_ranks(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);

@@ -26,6 +26,7 @@ pub fn setting_pills(
             compact: false,
             wrap: false,
             fill: false,
+            segments: false,
         },
         palette,
     )
@@ -82,6 +83,7 @@ pub fn pills(
             compact,
             wrap: false,
             fill: !compact,
+            segments: !compact,
         },
         palette,
     )
@@ -104,6 +106,7 @@ pub fn header_pills(
             compact: false,
             wrap: false,
             fill: false,
+            segments: false,
         },
         palette,
     )
@@ -127,6 +130,7 @@ pub fn wrapping_pills(
             compact: false,
             wrap: true,
             fill: true,
+            segments: false,
         },
         palette,
     )
@@ -137,6 +141,10 @@ struct PillRow {
     compact: bool,
     wrap: bool,
     fill: bool,
+    /// A segmented choice in a panel: one row whatever its width, each segment its label's width
+    /// and an equal share of the room left. A label that still does not fit ends in "…" rather
+    /// than taking a row of its own.
+    segments: bool,
 }
 
 fn pill_row(
@@ -147,12 +155,13 @@ fn pill_row(
     look: PillRow,
     palette: &Palette,
 ) -> impl IntoElement {
-    let fill = look.fill;
+    let (fill, segments) = (look.fill, look.segments);
     h_flex()
         .id(id)
         .when(fill, |row| row.w_full())
-        // Pills too wide for one row take another rather than run past the edge.
-        .flex_wrap()
+        // Pills too wide for one row take another rather than run past the edge; segments
+        // stay on their row and shorten their labels instead.
+        .when(!segments, |row| row.flex_wrap())
         .p(BAR_PADDING)
         .gap(PILL_GAP)
         .rounded(radii::BOX)
@@ -175,6 +184,12 @@ const PILL_PADDING: Pixels = px(12.);
 const PILL_INNER_GAP: Pixels = px(8.);
 const PILL_ICON: Pixels = px(18.);
 const PILL_TEXT: Pixels = px(14.);
+/// A segment's side padding, the gap between its parts, its icon and its text: smaller than a
+/// tab's, so a panel's five lengths or two modes with icons share one row of a 300 px panel.
+const SEGMENT_PADDING: Pixels = px(8.);
+const SEGMENT_INNER_GAP: Pixels = px(6.);
+const SEGMENT_ICON: Pixels = px(16.);
+const SEGMENT_TEXT: Pixels = px(13.);
 const BADGE_TEXT: Pixels = px(11.);
 const BADGE_PADDING: Pixels = px(4.);
 
@@ -270,6 +285,7 @@ pub fn pill_bar(
         compact: false,
         wrap: false,
         fill: true,
+        segments: false,
     };
     let mut tabs = tabs.into_iter().enumerate();
     let rows = rows.counts.iter().map(|&count| {
@@ -306,23 +322,42 @@ fn pill<Choose: Fn(usize, &mut Window, &mut App) + 'static>(
         compact,
         wrap,
         fill,
+        segments,
     } = look;
     let chosen = index == selected;
+    let (gap, padding, icon_size, text_size) = if compact {
+        (px(6.), px(8.), PILL_ICON, px(12.))
+    } else if segments {
+        (
+            SEGMENT_INNER_GAP,
+            SEGMENT_PADDING,
+            SEGMENT_ICON,
+            SEGMENT_TEXT,
+        )
+    } else {
+        (PILL_INNER_GAP, PILL_PADDING, PILL_ICON, PILL_TEXT)
+    };
+    let label = if segments {
+        div().min_w_0().truncate().child(tab.label.clone())
+    } else {
+        div().child(tab.label.clone())
+    };
     h_flex()
         .id((id, index))
         .test_support()
         .role(Role::Tab)
         .keyboard_focus(palette.primary)
-        .aria_label(tab.label.clone())
+        .aria_label(tab.label)
         .aria_selected(chosen)
-        .when(fill && !wrap, |tab| tab.flex_1())
+        .when(segments, |tab| tab.flex_auto().min_w_0())
+        .when(fill && !wrap && !segments, |tab| tab.flex_1())
         .when(wrap, |tab| tab.flex_grow(1.))
         .justify_center()
-        .gap(if compact { px(6.) } else { PILL_INNER_GAP })
+        .gap(gap)
         .h(if compact { px(24.) } else { PILL_HEIGHT })
-        .px(if compact { px(8.) } else { PILL_PADDING })
+        .px(padding)
         .rounded(radii::BOX)
-        .text_size(if compact { px(12.) } else { PILL_TEXT })
+        .text_size(text_size)
         .font_weight(FontWeight::MEDIUM)
         .when(chosen, |tab| {
             tab.bg(palette.accented).text_color(palette.highlighted)
@@ -338,8 +373,8 @@ fn pill<Choose: Fn(usize, &mut Window, &mut App) + 'static>(
         .when(!tab.disabled, |row| {
             row.on_click(move |_, window, cx| choose(index, window, cx))
         })
-        .children(tab.icon.map(|glyph| glyph.size(PILL_ICON)))
-        .child(tab.label)
+        .children(tab.icon.map(|glyph| glyph.size(icon_size).flex_none()))
+        .child(label)
         .children(tab.badge.map(|badge| {
             div()
                 .px(BADGE_PADDING)
