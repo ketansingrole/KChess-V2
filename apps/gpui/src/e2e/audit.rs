@@ -1,6 +1,7 @@
 //! Every page's controls at the minimum, a mid and the default window size: each has an accessible
 //! name, lies inside the window across (a page scrolls only down), and overlaps no other control.
-//! No control is under 24 px (WCAG 2.5.8).
+//! No control is under 24 px (WCAG 2.5.8). A button or select in a row with a bar of pills is the
+//! bar's height: History's Export was 24 px beside a 30 px bar.
 
 use std::fmt::Write as _;
 
@@ -262,6 +263,36 @@ fn check(page: &str, width: f32, elements: &[ElementSnapshot], findings: &mut Fi
                 findings
                     .problems
                     .push(format!("{page}: {name} overlaps {}", describe(other)));
+            }
+        }
+    }
+    check_rows(page, elements, findings);
+}
+
+/// Buttons and selects in a row with a bar of pills: centred on the bar's middle and near it.
+/// Each is the bar's height. A field is left out: its element is its text line, not its box.
+fn check_rows(page: &str, elements: &[ElementSnapshot], findings: &mut Findings) {
+    let shown = |role: Role| {
+        elements
+            .iter()
+            .filter(move |e| e.visible() && e.role() == Some(role))
+    };
+    for bar in shown(Role::TabList) {
+        let row = bar.bounds();
+        for control in shown(Role::Button).chain(shown(Role::ComboBox)) {
+            let bounds = control.bounds();
+            let middle = f32::from(bounds.center().y - row.center().y).abs();
+            let apart = f32::from((bounds.left() - row.right()).max(row.left() - bounds.right()));
+            if contains(row, bounds) || middle > 2. || apart > 320. {
+                continue;
+            }
+            if f32::from(bounds.size.height - row.size.height).abs() > 0.5 {
+                findings.problems.push(format!(
+                    "{page}: {} is {:?} tall beside a bar of pills {:?} tall",
+                    describe(control),
+                    bounds.size.height,
+                    row.size.height
+                ));
             }
         }
     }

@@ -178,17 +178,31 @@ impl PlayersPage {
         let board_title: String = crate::prefs::get(cx, BOARD_TITLE_KEY, "all".to_string());
         let title_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let subscriptions = vec![
-            cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
-                match event {
-                    InputEvent::PressEnter { .. } => this.lookup(None, window, cx),
-                    InputEvent::Change => {
-                        // A message about what was typed before goes with it.
-                        this.profile_loading.clear_error();
-                        this.search_names(cx)
+            cx.subscribe_in(
+                &input,
+                window,
+                |this, input, event: &InputEvent, window, cx| {
+                    let focused = input.read(cx).focus_handle(cx).is_focused(window);
+                    this.names.follow(event, focused);
+                    match event {
+                        // The row chosen in the list under the field, or else the name typed.
+                        InputEvent::PressEnter { .. } => {
+                            let typed = this.input.read(cx).value().to_string();
+                            match this.names.entered(&typed) {
+                                Some(name) => this.show_player(&name, window, cx),
+                                None => this.lookup(None, window, cx),
+                            }
+                        }
+                        InputEvent::Change => {
+                            // A message about what was typed before goes with it.
+                            this.profile_loading.clear_error();
+                            this.search_names(cx)
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                }
-            }),
+                    cx.notify();
+                },
+            ),
             cx.subscribe(
                 &perf_select,
                 |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
@@ -329,6 +343,20 @@ impl PlayersPage {
         self.input
             .update(cx, |input, cx| input.set_value(name.clone(), window, cx));
         self.lookup(Some(name), window, cx);
+    }
+
+    /// Back from a player to the leaderboard: the profile, and any look-up still on its way, go,
+    /// and the field is emptied for the next name.
+    fn show_leaderboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.profile_loading.stop();
+        self.profile = None;
+        self.names.clear();
+        self.input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        if self.board.is_none() && !self.board_loading.busy() {
+            self.load_board(cx);
+        }
+        cx.notify();
     }
 
     fn active_account(cx: &App) -> Option<String> {

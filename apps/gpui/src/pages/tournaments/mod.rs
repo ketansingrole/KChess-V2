@@ -664,7 +664,6 @@ impl Render for TournamentsPage {
                     .when(!showing_event && !failed, |row| {
                         row.child(
                             Button::new("tournaments-refresh")
-                                .small()
                                 .outline()
                                 .icon(icon("refresh-cw"))
                                 .label("Refresh")
@@ -698,7 +697,6 @@ impl Render for TournamentsPage {
                     })
                     .child(
                         Button::new("tournaments-create")
-                            .small()
                             .primary()
                             .icon(icon("plus"))
                             .label("Create arena")

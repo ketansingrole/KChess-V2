@@ -158,6 +158,8 @@ fn pill_row(
     let (fill, segments) = (look.fill, look.segments);
     h_flex()
         .id(id)
+        .test_support()
+        .role(Role::TabList)
         .when(fill, |row| row.w_full())
         // Pills too wide for one row take another rather than run past the edge; segments
         // stay on their row and shorten their labels instead.
@@ -298,6 +300,8 @@ pub fn pill_bar(
     });
     v_flex()
         .id(id)
+        .test_support()
+        .role(Role::TabList)
         .w_full()
         .p(BAR_PADDING)
         .gap(PILL_GAP)
@@ -326,7 +330,7 @@ fn pill<Choose: Fn(usize, &mut Window, &mut App) + 'static>(
     } = look;
     let chosen = index == selected;
     let (gap, padding, icon_size, text_size) = if compact {
-        (px(6.), px(8.), PILL_ICON, px(12.))
+        (px(6.), px(10.), PILL_ICON, px(13.))
     } else if segments {
         (
             SEGMENT_INNER_GAP,
@@ -354,7 +358,9 @@ fn pill<Choose: Fn(usize, &mut Window, &mut App) + 'static>(
         .when(wrap, |tab| tab.flex_grow(1.))
         .justify_center()
         .gap(gap)
-        .h(if compact { px(24.) } else { PILL_HEIGHT })
+        // One height for every bar, 32 px with its border: the fields, selects and buttons beside
+        // it are the kit's default size, the same.
+        .h(PILL_HEIGHT)
         .px(padding)
         .rounded(radii::BOX)
         .text_size(text_size)

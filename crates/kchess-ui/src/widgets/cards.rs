@@ -183,3 +183,41 @@ fn study_card(card: StudyCard, palette: &Palette) -> AnyElement {
         )
         .into_any_element()
 }
+
+/// A grid's last card, the place another goes: an outline as wide as the cards and as tall as
+/// their row, naming what it adds.
+pub fn add_card(
+    id: &'static str,
+    label: &'static str,
+    width: Pixels,
+    palette: &Palette,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let hover = palette.elevated;
+    v_flex()
+        .id(id)
+        .test_support()
+        .role(Role::Button)
+        .keyboard_focus(palette.primary)
+        .aria_label(label)
+        .w(width)
+        .min_h(px(160.))
+        .items_center()
+        .justify_center()
+        .gap(px(8.))
+        .rounded(radii::BOX)
+        .border_1()
+        .border_dashed()
+        .border_color(palette.border_accented)
+        .text_color(palette.text_muted)
+        .cursor_pointer()
+        .hover(move |card| card.bg(hover))
+        .on_click(on_click)
+        .child(icon("plus").size(px(24.)))
+        .child(
+            div()
+                .text_size(px(13.))
+                .font_weight(FontWeight::MEDIUM)
+                .child(label),
+        )
+}

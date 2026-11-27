@@ -1396,7 +1396,7 @@ fn a_players_game_is_found_and_guessed_as_them(cx: &mut gpui_kit::TestAppContext
     tab(&mut app, crate::pages::practice::Tab::Guess);
     app.click_label("Lichess username");
     app.type_text("Showcase");
-    app.click("guess-player-games");
+    app.press("enter");
     // Their latest game: White, a Ruy Lopez.
     app.click(("guess-player-game", 0usize));
     app.find("chess-board");

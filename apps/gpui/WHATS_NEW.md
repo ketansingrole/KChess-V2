@@ -9,7 +9,7 @@ with nothing there.
 
 ## Unreleased
 
-KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving. The engine lines, the Watch page, move lists and the panels beside the board are cleaner and easier to read.
+KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving. Player search, Books, the engine lines, the Watch page, move lists and the panels beside the board are cleaner and easier to read.
 
 ### Changed
 
@@ -18,6 +18,10 @@ KChess stays connected to Lichess when it is left open for a long time, so chall
 - On the Database page, Import PGN comes first and the downloads share one Add games menu. With no databases yet, the page shows where to drop a PGN file.
 - On the Watch page, a TV game shows the players' head-to-head as a table: this match and all time, the leader in green.
 - Move lists are more compact, with every other row shaded.
+- Searching for a player on Players, Following, Guess the move and the database's player download lists matching Lichess players under the field as you type; pick one with the arrows or the pointer. Players has a way back to the leaderboard.
+- On the Books page, your books end with a card to open another, an open book has a way back to them, and its page buttons float at the foot of its pages. The diagram buttons sit under the board.
+- Filters, search fields and buttons that share a row are the same height.
+- The board editor speaks up only when the position is not legal yet.
 
 ### Fixed
 

@@ -938,40 +938,16 @@ impl Render for EditorPage {
             .min_h_0()
             .overflow_y_scroll()
             .gap(px(16.))
-            .child(
+            // Only what stops the analysis: a legal position needs no word, and the side to
+            // move is the choice below.
+            .children(problem.clone().map(|problem| {
                 widgets::StatusBanner::new(
-                    if problem.is_some() {
-                        Tone::Alert
-                    } else {
-                        Tone::Plain
-                    },
-                    if problem.is_some() {
-                        icon("triangle-alert")
-                    } else {
-                        icon("circle-check")
-                    },
-                    if problem.is_some() {
-                        "Not a legal position yet".into()
-                    } else {
-                        "Ready to analyse".into()
-                    },
+                    Tone::Alert,
+                    icon("triangle-alert"),
+                    "Not a legal position yet".into(),
                 )
-                .detail(
-                    problem
-                        .clone()
-                        .unwrap_or_else(|| {
-                            format!(
-                                "{} to move",
-                                if turn == Color::White {
-                                    "White"
-                                } else {
-                                    "Black"
-                                }
-                            )
-                        })
-                        .into(),
-                ),
-            )
+                .detail(problem.into())
+            }))
             // A position read from a picture: the squares it was unsure of are ringed.
             .when(!self.marked.is_empty(), |panel| {
                 panel.child(

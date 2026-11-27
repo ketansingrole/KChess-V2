@@ -435,7 +435,9 @@ fn the_player_download_offers_names_to_pick(cx: &mut gpui_kit::TestAppContext) {
     app.wait_for("the Lichess matches to go", |window, _| {
         window.try_find(("player-match", 0usize)).is_none()
     });
+    // Back on Lichess, the list is under the field again once it has the keys.
     app.click(("player-site", 0usize));
+    app.click_label("Username");
     app.click(("player-match", 1usize));
     app.wait_for("the picked name in the field", |window, _| {
         window
@@ -456,7 +458,11 @@ fn the_player_download_offers_names_to_pick(cx: &mut gpui_kit::TestAppContext) {
             == 1
     });
     // Their name is offered next time on Lichess, not on Chess.com.
+    // Emptied, the field lists them under it.
     add_games(&mut app, "Player's games…");
+    app.click_label("Username");
+    app.press("secondary-a");
+    app.press("backspace");
     assert_eq!(app.find(("player-recent", 0usize)).label(), Some(SCOUTED));
     app.click(("player-site", 1usize));
     app.wait_for("no Lichess name on Chess.com", |window, _| {

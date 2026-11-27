@@ -44,8 +44,6 @@ const BOOKS: &str = "kchess:books";
 const KEPT_BOOKS: usize = 24;
 /// The books the Open menu offers besides choosing a file, and the longest name it shows
 /// whole: its items do not cut a longer one short, which would run out of the menu.
-const MENU_BOOKS: usize = 8;
-const MENU_NAME: usize = 56;
 /// A cover's width as drawn, and its card's.
 const COVER_WIDTH: u32 = 360;
 const CARD_WIDTH: Pixels = px(176.);
@@ -57,6 +55,9 @@ const STACK: &str = "kchess:book-stack";
 const ENGINE_ON: &str = "kchess:book-engine";
 const LINES: u32 = 3;
 /// The toolbar's height, and the room the board leaves around itself in its panel.
+/// The diagram buttons under the board, and the gap above them: the board is smaller by both.
+const DIAGRAM_GAP: Pixels = px(8.);
+const DIAGRAM_ROW: Pixels = px(40.);
 const TOOLBAR: Pixels = px(48.);
 const BOARD_MARGIN: Pixels = px(16.);
 /// The smallest each side and the board's panel may be dragged to.
@@ -131,15 +132,6 @@ fn title(path: &str) -> SharedString {
             |name| name.to_string_lossy().into_owned(),
         )
         .into()
-}
-
-/// `name`, cut short with "…" past `most` characters.
-fn shortened(name: &str, most: usize) -> SharedString {
-    if name.chars().count() <= most {
-        return SharedString::from(name.to_string());
-    }
-    let kept: String = name.chars().take(most - 1).collect();
-    format!("{}…", kept.trim_end()).into()
 }
 
 /// The position set up from a diagram, and the moves played from it.
@@ -1126,8 +1118,6 @@ impl BooksPage {
             .as_ref()
             .and_then(|(path, _)| path.file_stem())
             .map(|name| SharedString::from(name.to_string_lossy().into_owned()));
-        let count = self.page_count();
-        let has_book = self.book.is_some();
         h_flex()
             .h(TOOLBAR)
             .flex_none()
@@ -1135,7 +1125,15 @@ impl BooksPage {
             .gap(px(8.))
             .border_b_1()
             .border_color(palette.border)
-            .child(self.render_open(cx))
+            // Back to the shelf, which opens another book from its last card.
+            .child(
+                Button::new("books-close")
+                    .small()
+                    .ghost()
+                    .icon(icon("arrow-left"))
+                    .label("Your books")
+                    .on_click(cx.listener(|this, _, window, cx| this.close(window, cx))),
+            )
             .children(title.map(|title| {
                 div()
                     .min_w_0()
@@ -1145,130 +1143,63 @@ impl BooksPage {
                     .text_color(palette.highlighted)
                     .child(title)
             }))
-            .when(has_book, |bar| {
-                bar.child(
-                    Button::new("books-close")
-                        .small()
-                        .ghost()
-                        .icon(icon("x"))
-                        .accessibility_label("Close book")
-                        .on_click(cx.listener(|this, _, window, cx| this.close(window, cx))),
-                )
-            })
-            .child(div().flex_1())
-            .when(has_book, |bar| {
-                bar.child(
-                    Button::new("books-previous-page")
-                        .small()
-                        .ghost()
-                        .icon(icon("chevron-left"))
-                        .accessibility_label("Previous page")
-                        .disabled(self.page == 0)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            if let Some(page) = this.page.checked_sub(1) {
-                                this.go_to(page, window, cx);
-                            }
-                        })),
-                )
-                .child(
-                    div()
-                        .text_size(px(13.))
-                        .text_color(palette.text_muted)
-                        .child(format!("Page {} of {count}", self.page + 1)),
-                )
-                .child(
-                    Button::new("books-next-page")
-                        .small()
-                        .ghost()
-                        .icon(icon("chevron-right"))
-                        .accessibility_label("Next page")
-                        .disabled(self.page + 1 >= count)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            let page = this.page + 1;
-                            this.go_to(page, window, cx);
-                        })),
-                )
-                .child(div().w(px(1.)).h(px(20.)).bg(palette.border))
-                .child(
-                    Button::new("books-previous-diagram")
-                        .small()
-                        .ghost()
-                        .icon(icon("skip-back"))
-                        .accessibility_label("Previous diagram")
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.step_diagram(false, window, cx)),
-                        ),
-                )
-                .child(
-                    Button::new("books-next-diagram")
-                        .small()
-                        .outline()
-                        .icon(icon("skip-forward"))
-                        .label("Next diagram")
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.step_diagram(true, window, cx)),
-                        ),
-                )
-            })
     }
 
-    /// Open book: a menu of the other books opened before and a file to choose; the file alone
-    /// when there are none, or while the books are listed beside it.
-    fn render_open(&self, cx: &mut Context<Self>) -> AnyElement {
-        let open = self
-            .book
-            .as_ref()
-            .map(|(path, _)| path.to_string_lossy().into_owned());
-        let others: Vec<String> = listed(cx)
-            .into_iter()
-            .map(|book| book.path)
-            .filter(|path| Some(path) != open.as_ref())
-            .take(MENU_BOOKS)
-            .collect();
-        if others.is_empty() || self.book.is_none() {
-            return Button::new("books-open")
-                .small()
-                .outline()
-                .icon(icon("folder-open"))
-                .label("Open book")
-                .on_click(cx.listener(|this, _, window, cx| this.choose_book(window, cx)))
-                .into_any_element();
-        }
-        let page = cx.entity().downgrade();
-        widgets::trailing_icon(
-            Button::new("books-open")
-                .small()
-                .outline()
-                .icon(icon("folder-open")),
-            "Open book",
-            "chevron-down",
-        )
-        .dropdown_menu(move |menu, _, _| {
-            let mut menu = menu;
-            for path in &others {
-                let (page, path) = (page.clone(), path.clone());
-                menu = menu.item(
-                    PopupMenuItem::new(shortened(&title(&path), MENU_NAME))
-                        .icon(icon("book-open"))
-                        .on_click(move |_, window, cx| {
-                            page.update(cx, |page, cx| {
-                                page.open_listed(PathBuf::from(&path), window, cx)
-                            })
-                            .ok();
-                        }),
-                );
-            }
-            let page = page.clone();
-            menu.separator().item(
-                PopupMenuItem::new("Open PDF…")
-                    .icon(icon("folder-open"))
-                    .on_click(move |_, window, cx| {
-                        page.update(cx, |page, cx| page.choose_book(window, cx))
-                            .ok();
-                    }),
+    /// The page shown and the ways to the next and the one before, floating at the foot of the
+    /// pages they turn, as a PDF reader's are.
+    fn render_pager(&self, palette: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        let count = self.page_count();
+        h_flex()
+            .absolute()
+            .bottom(px(16.))
+            .left_0()
+            .right_0()
+            .justify_center()
+            .child(
+                h_flex()
+                    .id("books-pager")
+                    .test_support()
+                    .occlude()
+                    .gap(px(4.))
+                    .p(px(4.))
+                    .rounded(radii::BOX)
+                    .border_1()
+                    .border_color(palette.border)
+                    .bg(palette.elevated)
+                    .shadow_md()
+                    .child(
+                        Button::new("books-previous-page")
+                            .small()
+                            .ghost()
+                            .icon(icon("chevron-left"))
+                            .accessibility_label("Previous page")
+                            .disabled(self.page == 0)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if let Some(page) = this.page.checked_sub(1) {
+                                    this.go_to(page, window, cx);
+                                }
+                            })),
+                    )
+                    .child(
+                        div()
+                            .px(px(4.))
+                            .text_size(px(13.))
+                            .text_color(palette.text_muted)
+                            .child(format!("Page {} of {count}", self.page + 1)),
+                    )
+                    .child(
+                        Button::new("books-next-page")
+                            .small()
+                            .ghost()
+                            .icon(icon("chevron-right"))
+                            .accessibility_label("Next page")
+                            .disabled(self.page + 1 >= count)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let page = this.page + 1;
+                                this.go_to(page, window, cx);
+                            })),
+                    ),
             )
-        })
-        .into_any_element()
     }
 
     /// The book's pages one after another, its diagrams outlined to click; or the books opened
@@ -1281,6 +1212,7 @@ impl BooksPage {
         div()
             .id("book-pages")
             .test_support()
+            .relative()
             .size_full()
             .bg(palette.bg)
             .child(
@@ -1293,16 +1225,17 @@ impl BooksPage {
                 .size_full()
                 .p(BOOK_PADDING),
             )
+            .child(self.render_pager(palette, cx))
             .into_any_element()
     }
 
     /// The books opened before, each a card to go on with; or, before any, a way to open one.
     fn render_shelf(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        // Before any book is listed: the toolbar's Open book is beside the books once they are.
+        // Before any book is listed, the page's one Open book; then the shelf's last card.
         let open = Button::new("books-open-empty")
             .primary()
             .icon(icon("folder-open"))
-            .label("Open PDF")
+            .label("Open book")
             .on_click(cx.listener(|this, _, window, cx| this.choose_book(window, cx)));
         if self.opening.is_some() {
             return v_flex()
@@ -1330,6 +1263,13 @@ impl BooksPage {
                 .into_any_element();
         }
         let now = kchess_games::now_ms();
+        let add = widgets::add_card(
+            "books-add",
+            "Open book",
+            CARD_WIDTH,
+            palette,
+            cx.listener(|this, _, window, cx| this.choose_book(window, cx)),
+        );
         let cards: Vec<AnyElement> = books
             .into_iter()
             .enumerate()
@@ -1343,11 +1283,13 @@ impl BooksPage {
             .gap(px(16.))
             .child(widgets::heading("Your books", palette))
             .child(
+                // Stretched, so the last card is as tall as the books beside it.
                 h_flex()
                     .flex_wrap()
-                    .items_start()
+                    .items_stretch()
                     .gap(px(12.))
-                    .children(cards),
+                    .children(cards)
+                    .child(add),
             )
             .into_any_element()
     }
@@ -1566,42 +1508,25 @@ impl BooksPage {
         } else {
             "—".into()
         };
-        let head = h_flex()
-            .gap(px(8.))
-            .child(
-                Switch::new("books-engine")
+        let head = crate::engine_view::engine_head(
+            crate::engine_view::EngineHead {
+                switch: Switch::new("books-engine")
                     .large()
                     .checked(on && allowed)
                     .disabled(!allowed)
                     .accessibility_label("Engine analysis")
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_engine(cx))),
-            )
-            .child(
-                div()
-                    .min_w(px(60.))
-                    .text_size(px(20.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(if active { palette.text } else { palette.dimmed })
-                    .child(score),
-            )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .child("Stockfish"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .truncate()
-                            .text_color(palette.text_muted)
-                            .child(status),
-                    ),
-            );
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_engine(cx)))
+                    .into_any_element(),
+                score: score.into(),
+                live: active,
+                busy: active && ended.is_none() && self.engine.update.is_none(),
+                status,
+                failed: self.engine.error.is_some(),
+                after_status: None,
+                actions: None,
+            },
+            palette,
+        );
         let page = cx.entity().downgrade();
         let lines = self.study.as_ref().filter(|_| active).map(|study| {
             crate::engine_view::engine_lines(
@@ -1715,13 +1640,18 @@ impl BooksPage {
             .as_ref()
             .filter(|study| study.moves.is_empty() && !study.doubtful.is_empty())
             .is_some();
-        widgets::side_panel(palette)
+        // Flat in the column the dividers already frame: a card there was a box in a box.
+        v_flex()
             .id("books-panel")
             .size_full()
+            .min_w_0()
+            .p(px(16.))
+            .gap(px(12.))
             .overflow_y_scroll()
+            // The position first, as it is the board's; then the engine on it.
+            .child(position_row)
             .child(head)
             .children(lines)
-            .child(position_row)
             .when(doubtful, |panel| {
                 panel.child(widgets::hint("Check the ringed squares", palette))
             })
@@ -1796,17 +1726,50 @@ impl Render for BooksPage {
         )
         .max(ENGINE_MIN);
         let board_height = (body - engine_height).max(SIDE_MIN);
-        let board_side = (side_width.min(board_height) - BOARD_MARGIN * 2.).max(px(120.));
-        let board = div()
+        // Under the board, the way through the book's diagrams: what it sets up is the board's.
+        let board_side =
+            (side_width.min(board_height - DIAGRAM_ROW) - BOARD_MARGIN * 2.).max(px(120.));
+        let board = v_flex()
             .size_full()
-            .flex()
             .items_center()
             .justify_center()
+            .gap(DIAGRAM_GAP)
             .child(
                 div()
                     .w(board_side)
                     .flex_none()
                     .child(crate::board::cached(&self.board)),
+            )
+            .child(
+                h_flex()
+                    .w(board_side)
+                    .h(DIAGRAM_ROW - DIAGRAM_GAP)
+                    .justify_center()
+                    .gap(px(8.))
+                    // Held open without a book, so the board keeps its size.
+                    .when(self.book.is_some(), |row| {
+                        row.child(
+                            Button::new("books-previous-diagram")
+                                .outline()
+                                .icon(icon("skip-back"))
+                                .label("Previous")
+                                .accessibility_label("Previous diagram")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.step_diagram(false, window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new("books-next-diagram")
+                                .outline()
+                                .icon(icon("skip-forward"))
+                                // gpui-lints: allow(icon_per_label) jumps to the next diagram, past pages
+                                .label("Next")
+                                .accessibility_label("Next diagram")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.step_diagram(true, window, cx)
+                                })),
+                        )
+                    }),
             );
         let book_panel = resizable_panel()
             .size_range(BOOK_MIN..Pixels::MAX)
@@ -1828,18 +1791,18 @@ impl Render for BooksPage {
                             .size_range(ENGINE_MIN..Pixels::MAX)
                             .size(engine_height)
                             .fixed()
-                            .child(
-                                div()
-                                    .size_full()
-                                    .p(px(8.))
-                                    .child(self.render_panel(&palette, cx)),
-                            ),
+                            .child(div().size_full().child(self.render_panel(&palette, cx))),
                     ),
             );
+        // A book's own bar; the shelf opens another from its last card.
+        let toolbar = self
+            .book
+            .is_some()
+            .then(|| self.render_toolbar(&palette, cx));
         v_flex()
             .size_full()
             .track_focus(&self.focus)
-            .child(self.render_toolbar(&palette, cx))
+            .children(toolbar)
             .child(
                 div().flex_1().min_h_0().child(
                     h_resizable("books-split")
@@ -1879,19 +1842,7 @@ impl crate::pages::PageView for BooksPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{Listed, shortened};
-
-    /// A long name is cut short with "…", never past the limit; a short one is left whole.
-    #[test]
-    fn a_long_name_is_cut_short() {
-        assert_eq!(shortened("Endings", 56), "Endings");
-        let long = "1001 Chess Exercises for Beginners The tactics workbook that explains the basic concepts";
-        let short = shortened(long, 56);
-        assert_eq!(short.chars().count(), 56);
-        assert!(short.starts_with("1001 Chess Exercises for Beginners The tactics workbook"));
-        assert!(short.ends_with('…'));
-        assert_eq!(shortened("Tactics book", 9), "Tactics…");
-    }
+    use super::Listed;
 
     /// A book with no diagram set up yet is kept with no `diagram` at all: the core refuses a
     /// preference holding null, which once lost the whole list.

@@ -425,3 +425,93 @@ impl RenderOnce for LinesView {
             }))
     }
 }
+
+/// The engine's head on every page that shows it: its switch, its name and what it is doing,
+/// and the score at the row's end, where its width changing moves nothing.
+pub struct EngineHead {
+    pub switch: AnyElement,
+    pub score: SharedString,
+    /// The engine is on and its score is today's, not left over.
+    pub live: bool,
+    /// A search is running: a spinner before the status.
+    pub busy: bool,
+    pub status: SharedString,
+    /// The status is a failure.
+    pub failed: bool,
+    /// After the status: a way to try again, say.
+    pub after_status: Option<AnyElement>,
+    /// At the row's end, after the score: the engine's settings.
+    pub actions: Option<AnyElement>,
+}
+
+/// The spinner before the status, its place kept so the status holds still.
+const SPINNER_SLOT: Pixels = px(12.);
+const SPINNER_GAP: Pixels = px(4.);
+
+pub fn engine_head(head: EngineHead, palette: &Palette) -> Div {
+    h_flex()
+        .gap(px(12.))
+        .child(head.switch)
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .line_height(relative(1.25))
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::MEDIUM)
+                        // In line with the status under it, past the spinner's place.
+                        .pl(SPINNER_SLOT + SPINNER_GAP)
+                        .truncate()
+                        .child("Stockfish"),
+                )
+                .child(
+                    h_flex()
+                        .gap(SPINNER_GAP)
+                        .min_w_0()
+                        .text_size(px(11.))
+                        .text_color(if head.failed {
+                            palette.error
+                        } else {
+                            palette.text_muted
+                        })
+                        .child(
+                            div()
+                                .flex_none()
+                                .size(SPINNER_SLOT)
+                                .when(head.busy, |slot| {
+                                    slot.child(crate::widgets::spinner(SPINNER_SLOT))
+                                }),
+                        )
+                        .child(
+                            div()
+                                .id("engine-status")
+                                .test_support()
+                                .truncate()
+                                .font_features(crate::widgets::tabular())
+                                .child(head.status),
+                        )
+                        .children(head.after_status),
+                ),
+        )
+        .child(
+            div()
+                .id("engine-score")
+                .test_support()
+                .flex_none()
+                // Wide enough for "−12.45": a longer score grows into it, so the box holds still.
+                .min_w(px(72.))
+                .text_right()
+                .text_size(px(20.))
+                .font_weight(FontWeight::MEDIUM)
+                .font_features(crate::widgets::tabular())
+                .text_color(if head.live {
+                    palette.text
+                } else {
+                    palette.dimmed
+                })
+                .child(head.score),
+        )
+        .children(head.actions)
+}

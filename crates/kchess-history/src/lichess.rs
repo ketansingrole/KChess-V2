@@ -657,25 +657,20 @@ impl HistoryPage {
             .gap(px(8.))
             .when(several, |row| {
                 row.child(
-                    div().w(px(180.)).child(
-                        Select::new(&tab.account_select)
-                            .small()
-                            .accessibility_label("Account"),
-                    ),
+                    div()
+                        .w(px(180.))
+                        .child(Select::new(&tab.account_select).accessibility_label("Account")),
                 )
             })
             .child(results)
             .child(
-                div().w(px(160.)).child(
-                    Select::new(&tab.rated_select)
-                        .small()
-                        .accessibility_label("Rated or casual"),
-                ),
+                div()
+                    .w(px(160.))
+                    .child(Select::new(&tab.rated_select).accessibility_label("Rated or casual")),
             )
             .child(
                 div().w(px(200.)).child(
                     Input::new(&tab.search_input)
-                        .small()
                         .cleanable(true)
                         .prefix(icon("search").size(px(14.)))
                         .aria_label("Search by opponent or opening"),
@@ -685,7 +680,6 @@ impl HistoryPage {
                 row.child(
                     Button::new("lichess-clear")
                         .ghost()
-                        .small()
                         .icon(icon("x"))
                         .label("Clear filters")
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -910,11 +904,12 @@ pub fn game_row(
             )
         })
         .child(
+            // One line each, never wrapped: "Correspondence" broke in two and doubled the row.
             v_flex()
-                .w(px(if detailed { 90. } else { 56. }))
+                .w(px(if detailed { 112. } else { 56. }))
                 .flex_none()
                 .when(!detailed, |column| column.text_color(muted))
-                .child(speed)
+                .child(div().truncate().child(speed))
                 .when(detailed, |column| {
                     column.child(line(if game.rated {
                         "Rated".into()

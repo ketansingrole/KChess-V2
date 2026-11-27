@@ -247,7 +247,7 @@ fn a_file_that_is_no_book_is_refused(cx: &mut gpui_kit::TestAppContext) {
     std::fs::write(&path, b"Not a PDF at all").expect("the file written");
     let mut app = Harness::start(cx);
     app.open("Books");
-    app.click("books-open");
+    app.click("books-open-empty");
     app.wait_for_open_dialog();
     app.cx
         .simulate_path_prompt_response(move |_| Some(vec![path]));
@@ -315,9 +315,22 @@ fn wait_for_label(app: &mut Harness, label: &str) {
     });
 }
 
+/// How many controls named Open book the page shows.
+fn open_book_buttons(app: &mut Harness) -> usize {
+    app.with_window(|window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .elements()
+            .into_iter()
+            .filter(|e| e.visible() && e.label() == Some("Open book"))
+            .count()
+    })
+}
+
 /// A closed book is listed with the others opened, each going on where it was left, its diagram
-/// on the board again; Open book offers the others; a book whose file moved is found again, and
-/// one is taken off the list. The list outlasts a restart.
+/// on the board again; a book whose file moved is found again, and
+/// one is taken off the list. The list outlasts a restart. The shelf ends with a card to open
+/// another, and has no toolbar to repeat it.
 #[gpui_kit::test]
 fn closed_books_are_listed_to_go_on_with(cx: &mut gpui_kit::TestAppContext) {
     let folder = tempfile::tempdir().expect("a folder");
@@ -333,9 +346,11 @@ fn closed_books_are_listed_to_go_on_with(cx: &mut gpui_kit::TestAppContext) {
     app.click(diagram_id(0, 0));
     wait_for_fen(&mut app, ITALIAN);
 
-    // Another book, from the toolbar, which has no other to offer yet: its diagram on its
-    // second page.
-    app.click("books-open");
+    // Another book, from the shelf the toolbar goes back to: its diagram on its second page.
+    // The toolbar has no Open book of its own to repeat the shelf's.
+    assert_eq!(open_book_buttons(&mut app), 0, "an open book's toolbar");
+    app.click("books-close");
+    app.click("books-add");
     choose_file(&mut app, &endings);
     wait_for_label(&mut app, "Diagram 1 on page 2");
     app.click("books-next-diagram");
@@ -347,16 +362,17 @@ fn closed_books_are_listed_to_go_on_with(cx: &mut gpui_kit::TestAppContext) {
     wait_for_label(&mut app, "Continue Tactics");
     let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
     wait_for_fen(&mut app, start);
-    // Beside the books listed, Open book asks for a file alone.
-    app.click("books-open");
+    // The shelf's last card asks for another file, the one Open book on the page.
+    assert_eq!(open_book_buttons(&mut app), 1, "the shelf");
+    app.click("books-add");
     app.wait_for_open_dialog();
     app.cx.simulate_path_prompt_response(|_| None);
 
     // Each goes on with its diagram on the board.
     app.click_label("Continue Tactics");
     wait_for_fen(&mut app, ITALIAN);
-    app.click("books-open");
-    app.click_label("Endings");
+    app.click("books-close");
+    app.click_label("Continue Endings");
     wait_for_fen(&mut app, ENDING);
     let page = app.cx.update(|cx| {
         crate::shell::view::<crate::pages::books::BooksPage>(cx).map(|page| page.read(cx).page())

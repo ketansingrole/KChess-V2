@@ -947,12 +947,12 @@ impl DatabasePage {
         let field = |input: &Entity<InputState>, width: f32, label: &'static str| {
             div()
                 .w(px(width))
-                .child(Input::new(input).small().cleanable(true).aria_label(label))
+                .child(Input::new(input).cleanable(true).aria_label(label))
         };
         let select = |state: &Entity<SelectState<Vec<Choice>>>, width: f32, label: &'static str| {
             div()
                 .w(px(width))
-                .child(Select::new(state).small().accessibility_label(label))
+                .child(Select::new(state).accessibility_label(label))
         };
         let more = self.more || self.more_filtered(cx);
         let toolbar = h_flex()
@@ -961,7 +961,6 @@ impl DatabasePage {
             .child(
                 div().w(px(180.)).child(
                     Input::new(&self.player_input)
-                        .small()
                         .cleanable(true)
                         .prefix(icon("search").size(px(14.)))
                         .aria_label("Player"),
@@ -979,7 +978,6 @@ impl DatabasePage {
             .child(
                 Button::new("database-more")
                     .ghost()
-                    .small()
                     .icon(icon("sliders-horizontal"))
                     .label("More filters")
                     .selected(more)
@@ -992,7 +990,6 @@ impl DatabasePage {
                 row.child(
                     Button::new("database-clear")
                         .ghost()
-                        .small()
                         .icon(icon("x"))
                         .label("Clear filters")
                         .on_click(

@@ -7,11 +7,6 @@ use kchess_contracts::calls;
 use kchess_contracts::check::{Bounded, Position};
 use kchess_contracts::types::{AnalysisReason, AnalysisRequest, EngineLine};
 
-/// The spinner's place before the engine's status while it is on, and the gap after it: the
-/// engine's name above starts as far in, so the two lines share a left edge.
-const SPINNER_SLOT: Pixels = px(12.);
-const SPINNER_GAP: Pixels = px(4.);
-
 impl AnalysisPage {
     pub(crate) fn engine_on(cx: &App) -> bool {
         crate::prefs::get(cx, ENGINE_ON, true)
@@ -561,81 +556,27 @@ impl AnalysisPage {
                     ))
             });
         let status = self.engine_status(cx);
-        let head = h_flex()
-            .gap(px(8.))
-            .child(
-                Switch::new("engine-on")
+        let head = crate::engine_view::engine_head(
+            crate::engine_view::EngineHead {
+                switch: Switch::new("engine-on")
                     .large()
                     .checked(engine_on)
                     .disabled(!self.engine_ready() || !allowed)
                     .accessibility_label("Engine analysis")
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_engine(cx))),
-            )
-            .child(
-                div()
-                    .min_w(px(75.))
-                    .text_size(px(20.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(if !engine_on && !using_cloud {
-                        palette.dimmed
-                    } else {
-                        palette.text
-                    })
-                    .child(score),
-            )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .line_height(relative(1.25))
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::MEDIUM)
-                            // In line with the status under it, past the spinner's place.
-                            .pl(SPINNER_SLOT + SPINNER_GAP)
-                            .truncate()
-                            .child("Stockfish"),
-                    )
-                    .child(
-                        h_flex()
-                            .gap(SPINNER_GAP)
-                            .min_w_0()
-                            .text_size(px(11.))
-                            .text_color(if self.search.error.is_some() {
-                                palette.error
-                            } else {
-                                palette.text_muted
-                            })
-                            // The spinner's place is always kept, so the status beside it holds
-                            // still as each search starts and ends and the engine turns on and off.
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .size(SPINNER_SLOT)
-                                    .when(engine_on && self.search.busy, |slot| {
-                                        slot.child(crate::widgets::spinner(SPINNER_SLOT))
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .id("engine-status")
-                                    .test_support()
-                                    .truncate()
-                                    .font_features(crate::widgets::tabular())
-                                    .child(status),
-                            )
-                            .when(
-                                Self::pause(cx) == Some(crate::online::Pause::Unverified),
-                                |row| {
-                                    row.child(crate::online::check_again_button(
-                                        "engine-check-again",
-                                    ))
-                                },
-                            ),
-                    ),
-            )
-            .child(settings_button);
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_engine(cx)))
+                    .into_any_element(),
+                score: score.into(),
+                live: engine_on || using_cloud,
+                busy: engine_on && self.search.busy,
+                status: status.into(),
+                failed: self.search.error.is_some(),
+                after_status: (Self::pause(cx) == Some(crate::online::Pause::Unverified)).then(
+                    || crate::online::check_again_button("engine-check-again").into_any_element(),
+                ),
+                actions: Some(settings_button.into_any_element()),
+            },
+            palette,
+        );
         let threat = self.threat_position().is_some();
         let cloud_line = (cloud_on && allowed && !using_cloud && !threat).then(|| {
             let cloud_lines = self.cloud_lines(cx);

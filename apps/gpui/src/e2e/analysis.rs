@@ -816,7 +816,10 @@ fn a_position_can_be_taken_from_the_analysis_board_to_the_editor(
 #[gpui_kit::test]
 fn the_editor_starts_from_the_standard_position(cx: &mut gpui_kit::TestAppContext) {
     let mut app = editor(cx);
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
     assert!(app.enabled("analyse-position"));
     assert_eq!(app.find(("editor-turn", 0usize)).selected(), Some(true));
     for key in ["K", "Q", "k", "q"] {
@@ -867,7 +870,10 @@ fn the_editor_sets_up_a_variant_position(cx: &mut gpui_kit::TestAppContext) {
         "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1",
     );
     // White has no king, which only Horde allows.
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
     app.click("analyse-position");
     app.wait_for("the Horde game on the analysis board", |_, cx| {
         crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx).is_some_and(|page| {
@@ -888,7 +894,10 @@ fn the_editor_sets_up_a_variant_position(cx: &mut gpui_kit::TestAppContext) {
         &mut app,
         "rnb1kbnr/ppp1pppp/8/q7/8/2N5/PPPP1PPP/R1BQKBNR[Pp] w KQkq - 0 1",
     );
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
     let variant = app.cx.update(|cx| {
         crate::shell::view::<crate::pages::editor::EditorPage>(cx)
             .map(|page| page.read(cx).game_setup())
@@ -931,7 +940,10 @@ fn an_empty_board_is_no_position_to_analyse(cx: &mut gpui_kit::TestAppContext) {
 
     app.click("start-position");
     wait_for_fen(&mut app, START_FEN);
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
 }
 
 #[gpui_kit::test]
@@ -950,7 +962,10 @@ fn a_position_set_up_with_pieces_is_analysed(cx: &mut gpui_kit::TestAppContext) 
         }
     }
     wait_for_fen(&mut app, "6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1");
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
 
     app.click("analyse-position");
     app.find("analysis-more");
@@ -987,7 +1002,10 @@ fn the_side_to_move_and_castling_rights_show_in_the_fen(cx: &mut gpui_kit::TestA
         &mut app,
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1",
     );
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
     app.click("castling-K");
     app.click("castling-q");
     wait_for_fen(
@@ -1025,7 +1043,10 @@ fn chess960_castling_is_kept_and_a_moved_king_drops_its_own(cx: &mut gpui_kit::T
             "{key}"
         );
     }
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
 }
 
 #[gpui_kit::test]
@@ -1038,7 +1059,10 @@ fn a_typed_fen_sets_the_board_and_one_that_is_not_legal_is_not_analysed(
     app.type_text("bad-fen");
     app.press("enter");
     // Nothing changed behind the refused text.
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
 
     app.press("secondary-a");
     app.type_text("4k3/8/8/8/8/8/4P3/4K3 b - - 0 1");
