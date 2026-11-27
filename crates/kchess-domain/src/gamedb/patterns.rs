@@ -7,6 +7,8 @@
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Bitboard, Board, Color, File, Position, Rank, Role, Square};
 
+pub use crate::perf::Speed;
+
 /// The plies a balance or a structure must last.
 pub const HOLD: usize = 4;
 
@@ -357,31 +359,6 @@ pub fn speed(time_control: &str) -> Option<Speed> {
         480..1500 => Speed::Rapid,
         _ => Speed::Classical,
     })
-}
-
-/// How fast a game was played.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Speed {
-    UltraBullet,
-    Bullet,
-    Blitz,
-    Rapid,
-    Classical,
-    Correspondence,
-}
-
-impl Speed {
-    /// Lichess's key for the speed (`ultraBullet`, `blitz`), as synced games name theirs.
-    pub fn key(self) -> &'static str {
-        match self {
-            Speed::UltraBullet => "ultraBullet",
-            Speed::Bullet => "bullet",
-            Speed::Blitz => "blitz",
-            Speed::Rapid => "rapid",
-            Speed::Classical => "classical",
-            Speed::Correspondence => "correspondence",
-        }
-    }
 }
 
 #[cfg(test)]

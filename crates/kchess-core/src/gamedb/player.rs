@@ -12,13 +12,12 @@ use std::fs::File;
 use std::future::Future;
 use std::io::{BufWriter, Write as _};
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 
-use super::{GameDbService, Reporter, failed, import, progress, schema};
+use super::{GameDbService, Reporter, import, schema};
 use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
@@ -226,43 +225,12 @@ impl GameDbService {
         F: FnOnce(Sink) -> Fut,
         Fut: Future<Output = Result<Sink>>,
     {
-        let result = self.player_install_inner(request, fetch).await;
-        self.inner.logged("player download", result)
-    }
-
-    async fn player_install_inner<F, Fut>(
-        &self,
-        request: PlayerGames,
-        fetch: F,
-    ) -> Result<GameDbImported>
-    where
-        F: FnOnce(Sink) -> Fut,
-        Fut: Future<Output = Result<Sink>>,
-    {
-        let id = id(request.site, &request.username);
-        let mut guard = self.claim(&id)?;
-        let running = Arc::clone(&guard.running);
-        let count = match self
-            .bring_player(&id, &request, &running.cancel, fetch)
-            .await
-        {
-            Ok(count) => count,
-            Err(error) => {
-                guard.end = Some(failed(&running, &id, &error));
-                return Err(error);
-            }
-        };
-        let database =
-            self.inner.info(&id).await?.ok_or_else(|| {
-                CoreError::new("The database could not be read after the download.")
-            })?;
-        guard.end = Some(progress(Phase::Done, &id, count, None));
-        drop(guard);
-        Ok(GameDbImported {
-            database,
-            added: count.games,
-            skipped: count.skipped,
+        let id = &id(request.site, &request.username);
+        let request = &request;
+        self.download_run("player download", id, |running| async move {
+            self.bring_player(id, request, &running.cancel, fetch).await
         })
+        .await
     }
 
     async fn bring_player<F, Fut>(
@@ -286,7 +254,7 @@ impl GameDbService {
         let fetched = fetch(Sink::new(file, reporter)).await;
         // However the site's request ended once Cancel came, the download was cancelled.
         if cancel.is_cancelled() {
-            return Err(CoreError::new("Download cancelled."));
+            return Err(super::cancelled());
         }
         let sink = fetched?;
         let (games, mut reporter) = sink.finish()?;

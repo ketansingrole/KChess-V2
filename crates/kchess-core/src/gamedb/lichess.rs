@@ -22,7 +22,7 @@ use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use super::master::{SILENCE, archive_months, fetch_text, installed, month_of};
-use super::{GameDbService, Reporter, TREE_ROWS, failed, import, progress};
+use super::{GameDbService, Reporter, TREE_ROWS, import};
 use crate::download;
 use crate::usage::Meter;
 use kchess_contracts::check::PgnPacking;
@@ -184,10 +184,6 @@ const WORDING: download::Wording = download::Wording {
     too_large: "The Lichess games download is unexpectedly large.",
 };
 
-fn cancelled() -> CoreError {
-    CoreError::new("Download cancelled.")
-}
-
 impl GameDbService {
     /// The archive's months (`archive`: `ARCHIVE`, or a test's), newest first, with a digest
     /// each, and the months each database of strong Lichess games holds.
@@ -258,45 +254,13 @@ impl GameDbService {
         request: LichessGames,
         meter: &dyn Meter,
     ) -> Result<GameDbImported> {
-        let result = self.lichess_install_inner(archive, request, meter).await;
-        self.inner.logged("Lichess games download", result)
-    }
-
-    async fn lichess_install_inner(
-        &self,
-        archive: &str,
-        request: LichessGames,
-        meter: &dyn Meter,
-    ) -> Result<GameDbImported> {
-        let id = id(request.min_rating);
-        let mut guard = self.claim(&id)?;
-        let running = Arc::clone(&guard.running);
-        let count = match self
-            .bring_month(&id, archive, &request, meter, &running.cancel)
-            .await
-        {
-            Ok(count) => count,
-            Err(error) => {
-                let error = if running.cancel.is_cancelled() {
-                    cancelled()
-                } else {
-                    error
-                };
-                guard.end = Some(failed(&running, &id, &error));
-                return Err(error);
-            }
-        };
-        let database =
-            self.inner.info(&id).await?.ok_or_else(|| {
-                CoreError::new("The database could not be read after the download.")
-            })?;
-        guard.end = Some(progress(Phase::Done, &id, count, None));
-        drop(guard);
-        Ok(GameDbImported {
-            database,
-            added: count.games,
-            skipped: count.skipped,
+        let id = &id(request.min_rating);
+        let request = &request;
+        self.download_run("Lichess games download", id, |running| async move {
+            self.bring_month(id, archive, request, meter, &running.cancel)
+                .await
         })
+        .await
     }
 
     async fn bring_month(

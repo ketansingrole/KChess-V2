@@ -10,14 +10,13 @@
 //! (`import::Target::Replace`); the release the database holds is the file its import recorded,
 //! so the same release is never downloaded twice.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use super::master::{Expected, Partial, SILENCE, fetch_file, installed};
-use super::{GameDbService, Reporter, Running, failed, import, progress};
+use super::{GameDbService, Reporter, Running, import};
 use crate::download;
 use crate::usage::Meter;
 use kchess_contracts::check::PgnPacking;
@@ -130,41 +129,10 @@ impl GameDbService {
         downloads: &str,
         meter: &dyn Meter,
     ) -> Result<GameDbImported> {
-        let result = self.tcec_install_inner(latest, downloads, meter).await;
-        self.inner.logged("engine games download", result)
-    }
-
-    async fn tcec_install_inner(
-        &self,
-        latest: &str,
-        downloads: &str,
-        meter: &dyn Meter,
-    ) -> Result<GameDbImported> {
-        let mut guard = self.claim(ID)?;
-        let running = Arc::clone(&guard.running);
-        let count = match self.bring_release(latest, downloads, meter, &running).await {
-            Ok(count) => count,
-            Err(error) => {
-                let error = if running.cancel.is_cancelled() {
-                    CoreError::new("Download cancelled.")
-                } else {
-                    error
-                };
-                guard.end = Some(failed(&running, ID, &error));
-                return Err(error);
-            }
-        };
-        let database =
-            self.inner.info(ID).await?.ok_or_else(|| {
-                CoreError::new("The database could not be read after the download.")
-            })?;
-        guard.end = Some(progress(Phase::Done, ID, count, None));
-        drop(guard);
-        Ok(GameDbImported {
-            database,
-            added: count.games,
-            skipped: count.skipped,
+        self.download_run("engine games download", ID, |running| async move {
+            self.bring_release(latest, downloads, meter, &running).await
         })
+        .await
     }
 
     /// Downloads and reads in the latest release, when the database does not hold it: what it
