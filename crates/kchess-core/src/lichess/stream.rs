@@ -49,6 +49,9 @@ pub struct LineOptions {
     pub max_line_bytes: usize,
     /// How long the stream may stay silent before it counts as stalled.
     pub idle: Duration,
+    /// Pass keep-alive blank lines on as empty lines, for a reader that counts them as signs
+    /// that the connection is alive.
+    pub heartbeats: bool,
 }
 
 impl Default for LineOptions {
@@ -56,6 +59,7 @@ impl Default for LineOptions {
         LineOptions {
             max_line_bytes: MAX_LINE_BYTES,
             idle: IDLE,
+            heartbeats: false,
         }
     }
 }
@@ -70,7 +74,8 @@ fn dropped() -> CoreError {
         .with_kind(kchess_contracts::error::ErrorKind::Offline)
 }
 
-/// Read `body` to its end, calling `on_line` for every non-empty trimmed line as it arrives.
+/// Read `body` to its end, calling `on_line` for every non-empty trimmed line as it arrives, and
+/// with an empty line for each blank one when `options.heartbeats` says so.
 ///
 /// `on_line` may fail: the read stops at that line, so a malformed record surfaces when it
 /// arrives rather than at the end of the stream.
@@ -120,7 +125,11 @@ where
             if offset > max {
                 return Err(CoreError::new(OVERSIZED).into());
             }
-            emit(rest.get(..offset).unwrap_or_default(), &mut on_line)?;
+            emit(
+                rest.get(..offset).unwrap_or_default(),
+                options.heartbeats,
+                &mut on_line,
+            )?;
             start += offset + 1;
         }
         if start > 0 {
@@ -131,7 +140,7 @@ where
         }
     }
     if !tail.is_empty() {
-        emit(&tail, &mut on_line)?;
+        emit(&tail, options.heartbeats, &mut on_line)?;
     }
     Ok(())
 }
@@ -184,14 +193,14 @@ where
 }
 
 /// One line: decoded as UTF-8 (invalid bytes become U+FFFD, as `TextDecoder` does), trimmed,
-/// and passed on when it is not empty.
-fn emit<F, Err>(line: &[u8], on_line: &mut F) -> std::result::Result<(), Err>
+/// and passed on when it is not empty, or with `heartbeats`.
+fn emit<F, Err>(line: &[u8], heartbeats: bool, on_line: &mut F) -> std::result::Result<(), Err>
 where
     F: FnMut(&str) -> std::result::Result<(), Err>,
 {
     let text = String::from_utf8_lossy(line);
     let trimmed = text.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() && !heartbeats {
         return Ok(());
     }
     on_line(trimmed)
@@ -244,7 +253,7 @@ mod tests {
         let body = stream_of(vec![b"xxxxxxxxxxxxxxxxxxxx\n"]);
         let options = LineOptions {
             max_line_bytes: 10,
-            idle: IDLE,
+            ..LineOptions::default()
         };
         let error: CoreError = read_lines(body, None, &options, |_| Ok::<(), CoreError>(()))
             .await
@@ -256,8 +265,8 @@ mod tests {
     async fn an_idle_stream_is_a_stall() {
         let body = futures_util::stream::pending::<std::result::Result<Vec<u8>, String>>();
         let options = LineOptions {
-            max_line_bytes: MAX_LINE_BYTES,
             idle: Duration::from_millis(20),
+            ..LineOptions::default()
         };
         let error: CoreError =
             read_lines(Box::pin(body), None, &options, |_| Ok::<(), CoreError>(()))

@@ -3105,6 +3105,47 @@ async fn a_refused_record_on_every_connect_backs_off_instead_of_reconnecting_eac
     online.close();
 }
 
+/// The event stream of an account with no challenges or games carries only Lichess's
+/// keep-alive blank lines, and the network drops it every few hours. Only an event used to count
+/// as progress, so seven such drops, however far apart, ended the stream for good: challenges
+/// stopped arriving until KChess restarted.
+#[tokio::test]
+async fn a_quiet_event_stream_that_kept_alive_reconnects_after_every_drop() {
+    const CONNECTIONS: usize = 10;
+    let (senders, mut connections): (Vec<_>, VecDeque<_>) = (0..CONNECTIONS)
+        .map(|_| tokio::sync::mpsc::unbounded_channel::<String>())
+        .unzip();
+    let fixture = serve(move |seen| match (seen.method.as_str(), seen.path()) {
+        ("GET", "/api/stream/event") => connections.pop_front().map_or(Reply::Hang, Reply::Stream),
+        _ => refuse(seen),
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let backoff = Backoff {
+        first: Duration::from_millis(1),
+        most: Duration::from_millis(5),
+    };
+    let online = session_with(&fixture.base, &host, &store, &tokens, backoff);
+    online.stay_connected("Alice");
+    for (connection, keep_alive) in senders.into_iter().enumerate() {
+        fixture.requested("/api/stream/event", connection + 1).await;
+        keep_alive
+            .send("\n".to_string())
+            .expect("the stream is open");
+        // The connection drops after its keep-alive.
+        drop(keep_alive);
+    }
+    fixture
+        .requested("/api/stream/event", CONNECTIONS + 1)
+        .await;
+    let lobby = emitted(&host, "online:lobby");
+    assert!(
+        lobby.iter().all(|state| state["phase"] != "disconnected"),
+        "the stream gave up: {lobby:?}"
+    );
+    online.close();
+}
+
 /// Waits for the challenge listing `ongoing` started in the background to end.
 async fn challenges_listed(online: &OnlineSession) {
     crate::support::until("the challenge listing ends", || !online.lists_challenges()).await;

@@ -192,7 +192,9 @@ impl OnlineSession {
             .request(request.method.clone(), &request.path, &request.auth)
             .query(&request.query)
             .lane(RequestLane::Live)
-            .cancel(cancel);
+            .cancel(cancel)
+            // Counted as progress between drops (`listen_loop`).
+            .heartbeats();
         if let Some(form) = &request.form {
             built = built.form(form);
         }
@@ -303,7 +305,12 @@ impl OnlineSession {
                 if cancel.is_cancelled() || line_error.is_some() {
                     return Ok(());
                 }
+                // A keep-alive counts too: a quiet account's event stream sends nothing else, and
+                // used to give up after a few drops however long each connection had lasted.
                 received = true;
+                if line.is_empty() {
+                    return Ok(());
+                }
                 let parsed = match serde_json::from_str::<Value>(line) {
                     Ok(raw) => kchess_domain::records::online::validate(&raw),
                     Err(cause) => Err(cause.to_string()),
