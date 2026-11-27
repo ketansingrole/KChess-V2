@@ -1377,13 +1377,16 @@ fn the_square_colors_card_is_a_panels_width(cx: &mut gpui_kit::TestAppContext) {
     );
 }
 
-/// Guess the move without bringing a game: a famous one is guessed as its winner, Black's
-/// Game of the Century opening with White's first move played.
+/// Guess the move without bringing a game: a famous one is guessed as its winner, Black's Game of the Century opening
+/// with White's first move played.
 #[gpui_kit::test]
 fn a_famous_game_is_guessed_as_its_winner(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
     tab(&mut app, crate::pages::practice::Tab::Guess);
-    app.click(("guess-classic", 5usize));
+    // The list is last on the page, under the cards that take a game of your own.
+    let over_page = app.find("guess-start").bounds().center();
+    app.scroll_point(over_page, gpui_kit::px(-4000.));
+    app.click_label("The Game of the Century, Byrne–Fischer, 1956");
     app.wait_for_moves(&["Nf3"]);
     assert_eq!(app.find(("guess-side", 1usize)).selected(), Some(true));
 }

@@ -932,7 +932,18 @@ impl GuessMoves {
                     .pb(kchess_nav::play_layout::PAGE_BOTTOM)
                     .gap(px(16.))
                     .child(self.finder.clone())
-                    .child(card),
+                    .child(card)
+                    // Last: a long list, under the cards that take a game of your own.
+                    .child(super::guess_find::famous_games(
+                        {
+                            let page = cx.entity().downgrade();
+                            move |pgn, side, _, cx| {
+                                page.update(cx, |page, cx| page.load(pgn, Some(side), cx))
+                                    .ok();
+                            }
+                        },
+                        &palette,
+                    )),
             )
             .into_any_element()
     }
