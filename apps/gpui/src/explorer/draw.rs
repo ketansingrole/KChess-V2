@@ -200,7 +200,6 @@ impl PositionExplorer {
                     .map(|(index, name)| {
                         let name = name.clone();
                         Button::new(("explorer-account", index))
-                            .small()
                             .outline()
                             .label(name.clone())
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -268,20 +267,14 @@ impl PositionExplorer {
                         .flex_wrap()
                         .gap(px(8.))
                         .when(count > 1, |row| {
-                            row.child(
-                                div().w(px(160.)).child(
-                                    Select::new(&self.databases)
-                                        .small()
-                                        .accessibility_label("Game database"),
-                                ),
-                            )
+                            row.child(div().w(px(160.)).child(
+                                Select::new(&self.databases).accessibility_label("Game database"),
+                            ))
                         })
                         .child(
-                            div().w(px(144.)).child(
-                                Input::new(&self.db_player)
-                                    .xsmall()
-                                    .aria_label("Player name"),
-                            ),
+                            div()
+                                .w(px(144.))
+                                .child(Input::new(&self.db_player).aria_label("Player name")),
                         )
                         .when(!prefs.db_player.trim().is_empty(), |row| {
                             row.child(widgets::pills(
@@ -308,7 +301,7 @@ impl PositionExplorer {
                 )
             })
             .when(count == 0 || importing, |column| {
-                column.child(game_db::import_card(cx, palette))
+                column.child(game_db::import_card(cx, false, palette))
             })
     }
 
@@ -603,12 +596,10 @@ impl Render for PositionExplorer {
         let needs_player = self.needs_player(cx);
         let needs_database = self.needs_database(cx);
         let about = if prefs.kind == PositionLookupKind::Database {
-            "Looked up in a game database on this computer. Statistics describe games, not \
-             move quality."
+            "From a game database on this computer. Statistics describe games, not move quality."
         } else {
-            "Lookups send this position to Lichess. The Lichess, Masters and Player databases \
-             use a connected account; saved results stay available offline. Statistics \
-             describe games, not move quality."
+            "Sends this position to Lichess; results seen once stay available offline. \
+             Statistics describe games, not move quality."
         };
         let choose_kind = {
             let explorer = cx.entity().downgrade();
@@ -649,7 +640,6 @@ impl Render for PositionExplorer {
                 |head| {
                     head.child(
                         Button::new("explorer-filters")
-                            .small()
                             .size(px(24.))
                             .ghost()
                             .icon(icon("sliders-horizontal"))
@@ -667,7 +657,10 @@ impl Render for PositionExplorer {
                 div()
                     .id("explorer-about")
                     .text_color(palette.text_muted)
-                    .tooltip(move |window, cx| Tooltip::new(about).build(window, cx))
+                    // A few lines rather than one across the window.
+                    .tooltip(move |window, cx| {
+                        Tooltip::new(about).max_w(px(280.)).build(window, cx)
+                    })
                     .child(icon("info").size(px(14.))),
             );
         let status = if self.busy {

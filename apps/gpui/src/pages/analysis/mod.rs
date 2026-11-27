@@ -22,7 +22,7 @@ use crate::shortcuts::{PageKey, page_key};
 use engine::prefs_lines;
 use kchess_contracts::calls;
 use kchess_contracts::types::AnalysisUpdate;
-use tree_view::{TreeView, flow};
+use tree_view::TreeView;
 
 /// What the analysis board's own keys do.
 #[derive(Clone, Copy)]

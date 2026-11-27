@@ -8,10 +8,10 @@
 // Only for its features (`crates/kchess-hack`); naming it tells Cargo the dependency is used.
 use kchess_hack as _;
 
-use kchess_app::{core, loading, log, network, prefs, reviews, settings, studies, timer};
+use kchess_app::{core, loading, log, prefs, reviews, settings, studies, timer};
 use kchess_board::{
-    board, game, live_game, notation, player_search, position_engine, puzzle_board, sound, voice,
-    widgets,
+    board, game, game_db, game_db_list, live_game, notation, player_search, position_engine,
+    puzzle_board, sound, voice, widgets,
 };
 use kchess_ui::theme;
 
@@ -23,6 +23,7 @@ pub mod endgame_lesson;
 mod endgames;
 mod engine_move;
 pub mod guess;
+mod guess_db;
 mod guess_find;
 mod knight;
 pub mod mistakes;

@@ -2,20 +2,21 @@
 //! up as on Players, or a famous game.
 
 use crate::loading::Epoch;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{Disableable as _, h_flex, v_flex};
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::{GameId, Username};
 use kchess_contracts::types::{GameSite, LichessGame};
 use shakmaty::Color;
 
-use super::classics::{CLASSICS, winner};
+use super::classics::{CLASSICS, eras, winner};
+use super::guess_db::DatabaseFinder;
 use crate::core::AppCore;
 use crate::player_search::{self, NameGroup, NameMatches};
-use crate::theme::Palette;
+use crate::theme::{Palette, radii};
 use crate::widgets;
+use crate::widgets::{KeyboardFocus as _, Pressable as _};
 use kchess_history::lichess::{RowDetail, game_row};
 use kchess_ui::icon;
 
@@ -35,6 +36,8 @@ pub struct GameFinder {
     /// The row of the game being fetched.
     opening: Option<usize>,
     error: Option<SharedString>,
+    /// A game from your databases, shown when there is one.
+    databases: Entity<DatabaseFinder>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -43,15 +46,35 @@ impl EventEmitter<Found> for GameFinder {}
 impl GameFinder {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> GameFinder {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Lichess username"));
-        let subscriptions = vec![cx.subscribe_in(
+        let databases = cx.new(|cx| DatabaseFinder::new(window, cx));
+        let mut subscriptions = vec![cx.subscribe_in(
             &input,
             window,
-            |this, _, event: &InputEvent, _, cx| match event {
-                InputEvent::Change => this.search_names(cx),
-                InputEvent::PressEnter { .. } => this.show_games(None, cx),
-                _ => {}
+            |this, input, event: &InputEvent, window, cx| {
+                let focused = input.read(cx).focus_handle(cx).is_focused(window);
+                this.names.follow(event, focused);
+                match event {
+                    InputEvent::Change => this.search_names(cx),
+                    // The row chosen in the list under the field, or else the name typed.
+                    InputEvent::PressEnter { .. } => {
+                        let typed = this.input.read(cx).value().to_string();
+                        match this.names.entered(&typed) {
+                            Some(name) => this.pick(name, window, cx),
+                            None => this.show_games(None, cx),
+                        }
+                    }
+                    _ => {}
+                }
+                cx.notify();
             },
         )];
+        subscriptions.push(cx.subscribe(&databases, |_, _, found: &Found, cx| {
+            let Found::Game { pgn, side } = found;
+            cx.emit(Found::Game {
+                pgn: pgn.clone(),
+                side: *side,
+            });
+        }));
         GameFinder {
             input,
             names: NameMatches::default(),
@@ -60,6 +83,7 @@ impl GameFinder {
             epoch: Epoch::default(),
             opening: None,
             error: None,
+            databases,
             _subscriptions: subscriptions,
         }
     }
@@ -170,28 +194,31 @@ impl GameFinder {
     }
 
     fn player_card(&self, cx: &mut Context<Self>, palette: &Palette) -> Div {
-        let online = crate::network::online(cx);
-        let typed = !self.input.read(cx).value().trim().is_empty();
-        // What is typed matches these players; before that, the ones looked up lately.
-        let finder = cx.entity().downgrade();
-        let suggestions = player_search::name_rows(
-            "guess-player-match",
-            &self.names,
-            vec![NameGroup::new(
-                "Recent",
-                "guess-recent-player",
-                player_search::recent(GameSite::Lichess, cx),
-            )],
-            self.player.as_deref(),
-            palette,
-            |name| {
-                let finder = finder.clone();
-                Box::new(move |_, window, cx| {
-                    finder
-                        .update(cx, |finder, cx| finder.pick(name.clone(), window, cx))
-                        .ok();
-                })
+        // Before a name is typed, the players looked up lately; then the players it starts.
+        let typed = self.input.read(cx).value().to_string();
+        let field = Input::new(&self.input)
+            .prefix(icon("search").size(px(16.)))
+            .cleanable(true)
+            .aria_label("Lichess username")
+            .into_any_element();
+        let search = player_search::name_search(
+            player_search::NameSearch {
+                id: "guess-player-match",
+                field,
+                typed: &typed,
+                typed_hint: Some("Show games"),
+                known: vec![NameGroup::new(
+                    "Recent",
+                    "guess-recent-player",
+                    player_search::recent(GameSite::Lichess, cx),
+                )],
+                shown: self.player.as_deref(),
             },
+            &self.names,
+            |finder: &mut Self| &mut finder.names,
+            |finder, name, window, cx| finder.pick(name, window, cx),
+            palette,
+            cx,
         );
         let finder = cx.entity().downgrade();
         let games: Option<Div> = self.player.as_ref().map(|player| {
@@ -227,31 +254,13 @@ impl GameFinder {
         widgets::card(palette)
             .gap(px(12.))
             .child(widgets::heading("A player's games", palette))
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap(px(8.))
-                    .child(
-                        div().flex_1().min_w(px(192.)).max_w(px(480.)).child(
-                            Input::new(&self.input)
-                                .prefix(icon("user-search").size(px(16.)))
-                                .cleanable(true)
-                                .aria_label("Lichess username"),
-                        ),
-                    )
-                    .child(
-                        Button::new("guess-player-games")
-                            .primary()
-                            .icon(icon("search"))
-                            .label("Show games")
-                            .loading(self.player.is_some() && self.games.is_none())
-                            .disabled(!online || !typed)
-                            .on_click(cx.listener(|this, _, _, cx| this.show_games(None, cx))),
-                    ),
-            )
+            // Centred, as Players' and Following's searches are.
+            .child(player_search::centred_search(search, None))
             .children(self.error.clone().map(|error| {
                 div()
                     .id("guess-find-error")
+                    .w_full()
+                    .text_center()
                     .test_support()
                     .aria_label(error.clone())
                     .relative()
@@ -263,33 +272,93 @@ impl GameFinder {
                     ))
                     .child(error)
             }))
-            .children(suggestions)
             .children(games)
     }
+}
 
-    fn classics_card(&self, cx: &mut Context<Self>, palette: &Palette) -> Div {
-        let chips = CLASSICS.iter().enumerate().map(|(index, classic)| {
-            player_search::name_chip(
-                ("guess-classic", index),
-                classic.name,
-                None,
-                false,
-                palette,
-                cx.listener(move |_, _, _, cx| {
-                    let pgn = CLASSICS[index].pgn;
-                    cx.emit(Found::Game {
-                        pgn: pgn.to_string(),
-                        side: winner(pgn),
-                    });
-                }),
-            )
-            .into_any_element()
+/// The famous games under the list's eras: a game's name, or its players, then the year. `pick`
+/// is called with the game's PGN and the side to guess it as, its winner's.
+pub fn famous_games(
+    pick: impl Fn(&str, Color, &mut Window, &mut App) + Clone + 'static,
+    palette: &Palette,
+) -> Div {
+    let muted = palette.text_muted;
+    let eras = eras().into_iter().map(|(era, games)| {
+        let rows = games.into_iter().map(|index| {
+            let classic = &CLASSICS[index];
+            let title = classic.name.unwrap_or(classic.players);
+            let label = match classic.name {
+                Some(name) => format!("{name}, {}, {}", classic.players, classic.year),
+                None => format!("{}, {}", classic.players, classic.year),
+            };
+            h_flex()
+                .id(("guess-classic", index))
+                .test_support()
+                .role(Role::Button)
+                .aria_label(label)
+                .keyboard_focus(palette.primary)
+                .h(px(28.))
+                .px(px(8.))
+                .gap(px(8.))
+                .rounded(radii::BOX)
+                .text_size(px(13.))
+                .cursor_pointer()
+                .pressable(palette)
+                .on_click({
+                    let pick = pick.clone();
+                    move |_, window, cx| {
+                        let pgn = CLASSICS[index].pgn;
+                        pick(pgn, winner(pgn), window, cx)
+                    }
+                })
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(px(8.))
+                        .child(div().flex_none().child(title))
+                        .children(classic.name.map(|_| {
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(muted)
+                                .child(classic.players)
+                        })),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .text_color(muted)
+                        .font_features(widgets::tabular())
+                        .child(classic.year.to_string()),
+                )
         });
-        widgets::card(palette)
-            .gap(px(12.))
-            .child(widgets::heading("Famous games", palette))
-            .child(h_flex().flex_wrap().gap(px(6.)).children(chips))
-    }
+        v_flex()
+            .flex_1()
+            .min_w(px(300.))
+            .gap(px(2.))
+            .child(
+                div()
+                    .px(px(8.))
+                    .pb(px(2.))
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(muted)
+                    .child(era),
+            )
+            .children(rows)
+    });
+    widgets::card(palette)
+        .gap(px(12.))
+        .child(widgets::heading("Famous games", palette))
+        .child(
+            h_flex()
+                .flex_wrap()
+                .items_start()
+                .gap_x(px(24.))
+                .gap_y(px(16.))
+                .children(eras),
+        )
 }
 
 impl Render for GameFinder {
@@ -298,7 +367,7 @@ impl Render for GameFinder {
         v_flex()
             .gap(px(16.))
             .child(self.player_card(cx, &palette))
-            .child(self.classics_card(cx, &palette))
+            .child(self.databases.clone())
     }
 }
 

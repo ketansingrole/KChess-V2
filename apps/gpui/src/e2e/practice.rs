@@ -220,6 +220,64 @@ fn a_typed_square_jumps_the_knight(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(knight(&mut app), to);
 }
 
+/// Regression: the side panel's choices wrapped, so Untimed took a second row of Length on its
+/// own and the modes stacked; and its switches sat before their labels where Settings puts them
+/// after. At every window size each choice keeps one row inside the panel, and each switch ends its
+/// row, after its label.
+#[gpui_kit::test]
+fn the_coordinates_panel_keeps_each_choice_on_one_row(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{ElementId, px, size};
+    // In a short window the panel scrolls, or sits under the board: where things are laid out is
+    // read whether or not they show.
+    fn bounds(app: &mut Harness, id: impl Into<ElementId>) -> gpui_kit::Bounds<gpui_kit::Pixels> {
+        let id = id.into();
+        app.with_window(|window, _| {
+            use gpui_kit::test::TestWindowExt as _;
+            window
+                .try_find(id.clone())
+                .unwrap_or_else(|| panic!("{id:?} is drawn"))
+                .bounds()
+        })
+    }
+    let mut app = practice(cx);
+    app.find("coordinates-start");
+    for (width, height) in super::SIZES {
+        app.cx
+            .simulate_window_resize(app.window, size(px(width), px(height)));
+        app.settle();
+        let panel = bounds(&mut app, "coordinates-panel");
+        for (bar, count) in [
+            ("coordinates-mode", 2usize),
+            ("coordinates-length", 5),
+            ("coordinates-side", 3),
+        ] {
+            let first = bounds(&mut app, (bar, 0usize));
+            for index in 0..count {
+                let pill = bounds(&mut app, (bar, index));
+                assert_eq!(
+                    pill.origin.y, first.origin.y,
+                    "{bar}'s choice {index} shares the first one's row at {width}×{height}"
+                );
+                assert!(
+                    pill.right() <= panel.right(),
+                    "{bar}'s choice {index} stays inside the panel at {width}×{height}"
+                );
+            }
+        }
+        for id in [
+            "coordinates-limited",
+            "coordinates-show",
+            "coordinates-pieces",
+        ] {
+            let label = bounds(&mut app, format!("{id}-label"));
+            assert!(
+                bounds(&mut app, id).left() > label.right(),
+                "{id}'s switch follows its label at {width}×{height}"
+            );
+        }
+    }
+}
+
 #[gpui_kit::test]
 fn a_coordinates_run_can_be_limited_to_some_files_and_ranks(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
@@ -567,6 +625,13 @@ fn an_insights_endgame_opens_the_positions_it_let_go(cx: &mut gpui_kit::TestAppC
     });
     let line = app.find(("insights-endgame-won", 0usize));
     assert_eq!(line.label(), Some("KR vs K: 1 let go"));
+    // Below the headline and the breakdown cards, the line starts under the window's edge:
+    // scrolled to, as a player would.
+    let middle = app.with_window(|window, _| {
+        let size = window.viewport_size();
+        gpui_kit::point(size.width * 0.6, size.height / 2.)
+    });
+    app.scroll_point(middle, gpui_kit::px(-400.));
     app.click(("insights-endgame-won", 0usize));
     app.find("drill-hint");
     let drill = app.with_window(|_, cx| {
@@ -1319,15 +1384,121 @@ fn the_square_colors_card_is_a_panels_width(cx: &mut gpui_kit::TestAppContext) {
     );
 }
 
-/// Guess the move without bringing a game: a famous one is guessed as its winner, Black's
-/// Game of the Century opening with White's first move played.
+/// Guess the move without bringing a game: a famous one is guessed as its winner, Black's Game of the Century opening
+/// with White's first move played.
 #[gpui_kit::test]
 fn a_famous_game_is_guessed_as_its_winner(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
     tab(&mut app, crate::pages::practice::Tab::Guess);
-    app.click(("guess-classic", 5usize));
+    // The list is last on the page, under the cards that take a game of your own.
+    let over_page = app.find("guess-start").bounds().center();
+    app.scroll_point(over_page, gpui_kit::px(-4000.));
+    app.click_label("The Game of the Century, Byrne–Fischer, 1956");
     app.wait_for_moves(&["Nf3"]);
     assert_eq!(app.find(("guess-side", 1usize)).selected(), Some(true));
+}
+
+/// A game from your databases is guessed through: the card lists the database's games, a player
+/// typed narrows them to theirs, and a game picked is guessed as that player (Black here), with
+/// White's first move played. With no database there is no card.
+#[gpui_kit::test]
+fn a_game_from_your_databases_is_guessed_as_its_player(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Practice");
+    tab(&mut app, crate::pages::practice::Tab::Guess);
+    assert!(!app.shows("guess-databases"), "no database, no card");
+
+    super::database::import_games(&mut app);
+    app.open("Practice");
+    tab(&mut app, crate::pages::practice::Tab::Guess);
+    app.find("guess-databases");
+    super::database::wait_for_listed(
+        &mut app,
+        "the database's games",
+        &[
+            "Gukesh D against Carlsen, Magnus, 1/2-1/2",
+            "Carlsen, Magnus against Gukesh D, 1-0",
+            "Smith against Jones, 0-1",
+        ],
+    );
+    app.click_label("Player");
+    app.type_text("Carlsen");
+    super::database::wait_for_listed(
+        &mut app,
+        "Carlsen's games",
+        &[
+            "Gukesh D against Carlsen, Magnus, 1/2-1/2",
+            "Carlsen, Magnus against Gukesh D, 1-0",
+        ],
+    );
+    // The draw: guessed as Carlsen, Black, not as White as a draw is by its result.
+    app.click_label("Gukesh D against Carlsen, Magnus, 1/2-1/2");
+    app.wait_for_moves(&["Nf3"]);
+    assert_eq!(app.find(("guess-side", 1usize)).selected(), Some(true));
+}
+
+/// The wheel over the database's games scrolls them and not the page around them, which GPUI
+/// moved with them; once they are at their end, the page takes the wheel.
+#[gpui_kit::test]
+fn the_database_games_scroll_without_the_page(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    // More games than the list shows at once, newest first.
+    let pgn: String = (1..=12)
+        .map(|day| {
+            format!(
+                "[Date \"2024.01.{day:02}\"]\n[White \"White {day}\"]\n[Black \"Black {day}\"]\n\
+                 [Result \"1-0\"]\n\n1. e4 e5 1-0\n\n"
+            )
+        })
+        .collect();
+    let listed: Vec<String> = (1..=12)
+        .rev()
+        .map(|day| format!("White {day} against Black {day}, 1-0"))
+        .collect();
+    let listed: Vec<&str> = listed.iter().map(String::as_str).collect();
+    super::database::import_pgn(&mut app, &pgn, &listed);
+    app.open("Practice");
+    tab(&mut app, crate::pages::practice::Tab::Guess);
+    super::database::wait_for_listed(&mut app, "the database's games", &listed);
+    // The card is below the famous games: the page is scrolled to it, by its left edge, which
+    // the list never comes under.
+    let (edge, height) = app.with_window(|window, _| {
+        let size = window.viewport_size();
+        (
+            gpui_kit::point(size.width * 0.3, size.height / 2.),
+            size.height,
+        )
+    });
+    for _ in 0..20 {
+        if app.shows("guess-db-games") && app.find("guess-db-games").bounds().bottom() < height {
+            break;
+        }
+        app.scroll_point(edge, gpui_kit::px(-200.));
+    }
+
+    let list = app.find("guess-db-games").bounds();
+    let card = app.find("guess-databases").bounds();
+    // A row that stays in the list as it scrolls.
+    let first = app.find(("guess-db-game", 4usize)).bounds();
+    app.scroll_point(list.center(), gpui_kit::px(-60.));
+    let scrolled = app.find(("guess-db-game", 4usize)).bounds();
+    assert!(
+        scrolled.top() < first.top(),
+        "the games scroll: {first:?} then {scrolled:?}"
+    );
+    assert_eq!(
+        app.find("guess-databases").bounds(),
+        card,
+        "the page holds still while the games scroll"
+    );
+    // To the list's end, and then the page moves.
+    app.scroll_point(list.center(), gpui_kit::px(-2000.));
+    let card = app.find("guess-databases").bounds();
+    app.scroll_point(list.center(), gpui_kit::px(-60.));
+    assert!(
+        app.find("guess-databases").bounds().top() < card.top(),
+        "at the list's end the page scrolls"
+    );
 }
 
 /// A Lichess player is looked up on Guess the move, and one of their games is guessed as them.
@@ -1338,7 +1509,7 @@ fn a_players_game_is_found_and_guessed_as_them(cx: &mut gpui_kit::TestAppContext
     tab(&mut app, crate::pages::practice::Tab::Guess);
     app.click_label("Lichess username");
     app.type_text("Showcase");
-    app.click("guess-player-games");
+    app.press("enter");
     // Their latest game: White, a Ruy Lopez.
     app.click(("guess-player-game", 0usize));
     app.find("chess-board");

@@ -24,6 +24,7 @@ pub mod engine_view;
 pub mod export;
 pub mod game;
 pub mod game_db;
+pub mod game_db_list;
 pub mod game_image;
 pub mod live_game;
 pub mod microphone;

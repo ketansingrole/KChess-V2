@@ -91,6 +91,24 @@ pub trait Pressable: StatefulInteractiveElement + Sized {
         )
     }
 
+    /// A picture that opens something (a board): a ring around it on hover, the accented border
+    /// and then the muted text colour while pressed, so the picture itself keeps its colours.
+    fn pressable_ring(self, palette: &Palette) -> Self {
+        let ring = |color: Hsla| {
+            move |style: StyleRefinement| {
+                style.shadow(vec![BoxShadow {
+                    color,
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(3.),
+                    inset: false,
+                }])
+            }
+        };
+        let (hover, pressed) = (palette.border_accented, palette.text_muted);
+        self.hover(ring(hover)).active(ring(pressed))
+    }
+
     /// Pictures and colored buttons: faded to `opacity` on hover, further while pressed.
     fn pressable_fade(self, opacity: f32) -> Self {
         self.press(
@@ -206,6 +224,7 @@ mod inputs;
 mod pager;
 mod panel;
 mod pills;
+mod scroll;
 mod status;
 #[cfg(test)]
 mod tests;
@@ -219,4 +238,5 @@ pub use inputs::*;
 pub use pager::*;
 pub use panel::*;
 pub use pills::*;
+pub use scroll::*;
 pub use status::*;

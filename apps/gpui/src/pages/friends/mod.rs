@@ -64,6 +64,8 @@ fn sync_all(window: &mut Window, cx: &mut App) {
 
 pub struct FriendsPage {
     input: Entity<InputState>,
+    /// Lichess players whose names start with what is typed, listed under the field.
+    names: crate::player_search::NameMatches,
     /// Profiles by lowercase name, and presence (`UserPresence`).
     profiles: HashMap<String, LichessUser>,
     /// When every profile was last asked for.
@@ -118,28 +120,41 @@ impl FriendsPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> FriendsPage {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Lichess username"));
         let accounts = crate::accounts::handle(cx);
-        let subscriptions =
-            vec![
-                cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
+        let subscriptions = vec![
+            cx.subscribe_in(
+                &input,
+                window,
+                |this, input, event: &InputEvent, window, cx| {
+                    let focused = input.read(cx).focus_handle(cx).is_focused(window);
+                    this.names.follow(event, focused);
                     match event {
-                        InputEvent::PressEnter { .. } => this.follow(window, cx),
-                        InputEvent::Change => cx.notify(),
+                        // The row chosen in the list under the field, or else the name typed, is
+                        // followed.
+                        InputEvent::PressEnter { .. } => {
+                            let typed = this.input.read(cx).value().to_string();
+                            if let Some(name) = this.names.entered(&typed) {
+                                this.pick(name, window, cx);
+                            }
+                        }
+                        InputEvent::Change => this.search_names(cx),
                         _ => {}
                     }
-                }),
-                cx.observe(&accounts, |this, accounts, cx| {
-                    // Someone new (followed or imported): their profile and presence.
-                    let count = accounts.read(cx).tracked().len();
-                    if count != this.followed {
-                        this.followed = count;
-                        this.load_profiles(cx);
-                        this.refresh_status(cx);
-                        this.load_timeline(cx);
-                    }
-                    this.load_versus(cx);
                     cx.notify();
-                }),
-            ];
+                },
+            ),
+            cx.observe(&accounts, |this, accounts, cx| {
+                // Someone new (followed or imported): their profile and presence.
+                let count = accounts.read(cx).tracked().len();
+                if count != this.followed {
+                    this.followed = count;
+                    this.load_profiles(cx);
+                    this.refresh_status(cx);
+                    this.load_timeline(cx);
+                }
+                this.load_versus(cx);
+                cx.notify();
+            }),
+        ];
         // Cheap (one small request for everyone), and stops with the page.
         let poll = crate::timer::every(PRESENCE_EVERY, cx, |this, cx| {
             this.refresh_status(cx);
@@ -147,6 +162,7 @@ impl FriendsPage {
         });
         FriendsPage {
             input,
+            names: Default::default(),
             profiles: HashMap::new(),
             profiles_asked: None,
             status: HashMap::new(),
@@ -325,10 +341,28 @@ impl FriendsPage {
         self.order = Some(friends.iter().map(|friend| key(&friend.username)).collect());
     }
 
+    /// Lichess players whose names start with what is typed, once typing settles.
+    fn search_names(&mut self, cx: &mut Context<Self>) {
+        let typed = self.input.read(cx).value().to_string();
+        self.names
+            .search(&typed, None, |page: &mut Self| &mut page.names, cx);
+    }
+
+    /// Follow a player picked from the list under the field, their name in it until they are
+    /// added.
+    fn pick(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.names.clear();
+        self.input
+            .update(cx, |input, cx| input.set_value(name, window, cx));
+        self.follow(window, cx);
+        cx.notify();
+    }
+
     /// Follow the player typed and download their games.
     fn follow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.input.read(cx).value().trim().to_string();
-        if name.is_empty() {
+        // One change to the accounts at a time: the field spins until the last one is done.
+        if name.is_empty() || crate::accounts::handle(cx).read(cx).busy {
             return;
         }
         let input = self.input.clone();
@@ -463,7 +497,8 @@ impl FriendsPage {
                 })
                 .child(widgets::badge("New", Look::Primary, palette))
         });
-        let cell = |width: f32| div().w(px(width)).text_right();
+        // Centred under their headings, a rating as its dash for none.
+        let cell = |width: f32| div().w(px(width)).text_center();
         let syncing = accounts.syncing();
         let (sync_name, clear_name, remove_name, games_name, challenge_name) = (
             name.clone(),
@@ -686,6 +721,35 @@ impl FriendsPage {
 impl Render for FriendsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
+        // The field to follow a player by, and the Lichess players its name starts.
+        let busy = crate::accounts::handle(cx).read(cx).busy;
+        let typed_name = self.input.read(cx).value().to_string();
+        let search = crate::player_search::name_search(
+            crate::player_search::NameSearch {
+                id: "friends-match",
+                // As Players' search: the players a name starts, picked to follow.
+                field: Input::new(&self.input)
+                    .prefix(icon("search").size(px(16.)))
+                    .cleanable(true)
+                    .when(busy, |field| field.suffix(widgets::spinner(px(14.))))
+                    .aria_label("Lichess username to follow")
+                    .into_any_element(),
+                typed: &typed_name,
+                typed_hint: Some("Follow"),
+                // The players followed are listed on the page already.
+                known: vec![crate::player_search::NameGroup::new(
+                    "Recent",
+                    "friends-recent",
+                    crate::player_search::recent(kchess_contracts::types::GameSite::Lichess, cx),
+                )],
+                shown: None,
+            },
+            &self.names,
+            |page: &mut Self| &mut page.names,
+            |page, name, window, cx| page.pick(name, window, cx),
+            &palette,
+            cx,
+        );
         let handle = cx.global::<AccountsHandle>().0.clone();
         let accounts = handle.read(cx);
         let mut friends = accounts.tracked();
@@ -714,8 +778,7 @@ impl Render for FriendsPage {
                     downloaded + accounts.downloaded(name),
                 )
             });
-        let typed = !self.input.read(cx).value().trim().is_empty();
-        let (busy, syncing) = (accounts.busy, accounts.syncing());
+        let syncing = accounts.syncing();
         let new_games = friends
             .iter()
             .filter(|friend| {
@@ -725,60 +788,45 @@ impl Render for FriendsPage {
             })
             .count();
         let has_connected = !accounts.connected().is_empty();
-        let header = h_flex()
-            .flex_wrap()
-            .gap(px(8.))
-            .child(
-                div().flex_1().min_w(px(160.)).max_w(px(352.)).child(
-                    Input::new(&self.input)
-                        .prefix(icon("user-plus").size(px(16.)))
-                        .aria_label("Lichess username to follow"),
-                ),
-            )
-            .child(
-                Button::new("friends-follow")
-                    .primary()
-                    .icon(icon("user-plus"))
-                    .label("Follow player")
-                    .tooltip(match accounts.active(cx) {
-                        Some(account) if has_connected => {
-                            format!("Follows on Lichess as @{account} and downloads public games")
-                        }
-                        _ => "Follows in KChess and downloads public games".to_string(),
+        // As Players' search: the field centred; the page's actions above the players, at the right.
+        let mut actions = Vec::new();
+        if has_connected {
+            actions.push(
+                Button::new("friends-import")
+                    .outline()
+                    .icon(icon("download"))
+                    .label("Import from Lichess")
+                    .tooltip("Adds players without downloading their games")
+                    .on_click(cx.listener(|this, _, window, cx| this.open_import(window, cx)))
+                    .into_any_element(),
+            );
+        }
+        if !friends.is_empty() {
+            actions.push(
+                Button::new("friends-sync")
+                    .outline()
+                    .icon(icon("refresh-cw"))
+                    .label(match new_games {
+                        0 => "Sync all".to_string(),
+                        count => format!("Sync all · {count} new"),
                     })
-                    .disabled(!typed || busy)
-                    .on_click(cx.listener(|this, _, window, cx| this.follow(window, cx))),
-            )
-            .when(has_connected, |row| {
-                row.child(
-                    Button::new("friends-import")
-                        .outline()
-                        .icon(icon("download"))
-                        .label("Import from Lichess")
-                        .tooltip("Adds players without downloading their games")
-                        .on_click(cx.listener(|this, _, window, cx| this.open_import(window, cx))),
-                )
-            })
-            .child(div().flex_1())
-            .when(!friends.is_empty(), |row| {
-                row.child(
-                    Button::new("friends-sync")
-                        .outline()
-                        .icon(icon("refresh-cw"))
-                        .label(match new_games {
-                            0 => "Sync all".to_string(),
-                            count => format!("Sync all · {count} new"),
+                    .when(new_games > 0, |button| {
+                        button.tooltip(match new_games {
+                            1 => "1 player has new games".to_string(),
+                            count => format!("{count} players have new games"),
                         })
-                        .when(new_games > 0, |button| {
-                            button.tooltip(match new_games {
-                                1 => "1 player has new games".to_string(),
-                                count => format!("{count} players have new games"),
-                            })
-                        })
-                        .loading(syncing)
-                        .disabled(syncing)
-                        .on_click(|_, window, cx| sync_all(window, cx)),
-                )
+                    })
+                    .loading(syncing)
+                    .disabled(syncing)
+                    .on_click(|_, window, cx| sync_all(window, cx))
+                    .into_any_element(),
+            );
+        }
+        let header = v_flex()
+            .gap(px(12.))
+            .child(crate::player_search::centred_search(search, None))
+            .when(!actions.is_empty(), |header| {
+                header.child(h_flex().justify_end().gap(px(8.)).children(actions))
             });
         let body =
             if friends.is_empty() {
@@ -792,7 +840,7 @@ impl Render for FriendsPage {
                     .into_any_element()
             } else {
                 let head_cell =
-                    |text: &'static str, width: f32| div().w(px(width)).text_right().child(text);
+                    |text: &'static str, width: f32| div().w(px(width)).text_center().child(text);
                 v_flex()
                 .gap(px(8.))
                 .child(

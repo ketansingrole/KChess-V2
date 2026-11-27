@@ -358,7 +358,9 @@ impl HomePage {
             .size(side_length)
             .flex_none()
             .cursor_pointer()
-            .pressable_fade(0.92)
+            // Its own corners, which the ring follows.
+            .rounded(theme::radii::BOX)
+            .pressable_ring(palette)
             .on_click(move |_, window, cx| match &board_game {
                 Some(id) => kchess_history::open_game(id, window, cx),
                 None => kchess_nav::shell::open(Page::Computer, window, cx),

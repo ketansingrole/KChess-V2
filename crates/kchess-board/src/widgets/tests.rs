@@ -159,3 +159,72 @@ fn a_held_move_draws_its_pressed_background(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// A long game's list in a panel too short for it, on the ply `shown` says.
+struct LongGame {
+    shown: Rc<Cell<usize>>,
+}
+
+/// The moves of a game of 120 plies, the knights going out and back.
+fn long_game() -> Vec<String> {
+    ["Nf3", "Nf6", "Ng1", "Ng8"]
+        .iter()
+        .cycle()
+        .take(120)
+        .map(|san| san.to_string())
+        .collect()
+}
+
+impl Render for LongGame {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let palette = Palette::of(&colors("kchess", &[], false), false);
+        let sans = long_game();
+        div()
+            .size_full()
+            .child(div().h(gpui_kit::px(160.)).child(super::moves_list(
+                "moves",
+                super::MoveSheet {
+                    sans: &sans,
+                    shown: self.shown.get(),
+                    first: super::FirstMove::default(),
+                },
+                "No moves".into(),
+                |_, _, _| {},
+                None,
+                &palette,
+            )))
+    }
+}
+
+/// The list had no scroll of its own to follow the game: in a long game the newest move was
+/// played below the panel's bottom edge, out of sight until scrolled to by hand. The move on the
+/// board is brought into view as it changes, the newest as it is played and the first at the
+/// start.
+#[gpui_kit::test]
+fn a_long_games_list_follows_the_move_on_the_board(cx: &mut TestAppContext) {
+    let shown = Rc::new(Cell::new(120));
+    let window = cx.add_window(|_, _| LongGame {
+        shown: shown.clone(),
+    });
+    let in_view = |cx: &mut TestAppContext, index: usize| -> bool {
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            // The first frame scrolls, the next draws the list scrolled.
+            window.refresh();
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let list = window.try_find("moves").expect("the list").bounds();
+            let cell = window.try_find(("move", index)).expect("the move").bounds();
+            list.top() <= cell.top() && cell.bottom() <= list.bottom()
+        })
+        .unwrap()
+    };
+    assert!(in_view(cx, 119), "the newest move in view");
+    shown.set(1);
+    assert!(
+        in_view(cx, 0),
+        "back at the first move, the list's top in view"
+    );
+    shown.set(120);
+    assert!(in_view(cx, 119), "on to the last move again");
+}

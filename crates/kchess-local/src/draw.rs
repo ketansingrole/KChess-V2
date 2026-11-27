@@ -208,53 +208,59 @@ impl LocalPage {
         let banner = match &result {
             Some(result) => {
                 let winner = result.winner;
-                widgets::StatusBanner::new(
-                    if winner.is_some() {
-                        Tone::Win
-                    } else {
-                        Tone::Plain
-                    },
-                    if winner.is_some() {
-                        icon("trophy")
-                    } else {
-                        icon("handshake")
-                    },
-                    match winner {
-                        Some(Color::White) => "White wins".into(),
-                        Some(Color::Black) => "Black wins".into(),
-                        None => "Draw".into(),
-                    },
+                Some(
+                    widgets::StatusBanner::new(
+                        if winner.is_some() {
+                            Tone::Win
+                        } else {
+                            Tone::Plain
+                        },
+                        if winner.is_some() {
+                            icon("trophy")
+                        } else {
+                            icon("handshake")
+                        },
+                        match winner {
+                            Some(Color::White) => "White wins".into(),
+                            Some(Color::Black) => "Black wins".into(),
+                            None => "Draw".into(),
+                        },
+                    )
+                    .announce()
+                    .detail(SharedString::from(result.reason.clone())),
                 )
-                .announce()
-                .detail(SharedString::from(result.reason.clone()))
             }
-            None if !self.at_live() => {
-                widgets::StatusBanner::reviewing(cx.listener(|this, _, _, cx| {
+            None if !self.at_live() => Some(widgets::StatusBanner::reviewing(cx.listener(
+                |this, _, _, cx| {
                     let last = this.moves().len();
                     this.show_ply(last, cx)
-                }))
-            }
+                },
+            ))),
+            // The board says whose turn it is (the last move, the clocks, and its description
+            // for a screen reader): the line speaks only for a check or a paused clock.
             None => {
                 let check = display.as_ref().is_some_and(shakmaty::Position::is_check);
                 let detail = if timed && paused && !moves.is_empty() {
-                    Some("Clock paused".into())
+                    Some("Clock paused")
                 } else if check {
-                    Some("Check".into())
+                    Some("Check")
                 } else {
                     None
                 };
-                widgets::StatusBanner::turn(
-                    format!(
-                        "{} to move",
-                        if self.turn() == Color::White {
-                            "White"
-                        } else {
-                            "Black"
-                        }
+                detail.map(|detail| {
+                    widgets::StatusBanner::turn(
+                        format!(
+                            "{} to move",
+                            if self.turn() == Color::White {
+                                "White"
+                            } else {
+                                "Black"
+                            }
+                        )
+                        .into(),
                     )
-                    .into(),
-                )
-                .when_some(detail, |banner, value| banner.detail(value))
+                    .detail(SharedString::new_static(detail))
+                })
             }
         };
         let opening = (frontend.show_opening_name && self.setup().variant == Variant::Standard)
@@ -305,7 +311,12 @@ impl LocalPage {
                     })
                     .child(widgets::view_toggles(cx)),
             )
-            .child(banner)
+            // An empty line where it has nothing to say: Earlier position or a check takes it
+            // without pushing the moves under the pointer down.
+            .child(match banner {
+                Some(banner) => banner.into_any_element(),
+                None => div().h(px(24.)).flex_none().into_any_element(),
+            })
             .child(widgets::section_title(
                 "Moves",
                 opening.flatten().map(|(eco, name)| format!("{eco} {name}")),

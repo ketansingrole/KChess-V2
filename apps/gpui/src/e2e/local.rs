@@ -121,15 +121,31 @@ fn an_empty_move_list_mentions_the_clock_only_in_a_timed_game(cx: &mut gpui_kit:
 #[gpui_kit::test]
 fn the_players_take_turns_at_one_board(cx: &mut gpui_kit::TestAppContext) {
     let mut app = board(cx);
-    assert_eq!(app.status(), "White to move");
+    assert_eq!(app.side_to_move(), "White");
     app.click_square("e2", true);
     app.click_square("e4", true);
     app.wait_for_moves(&["e4"]);
-    assert_eq!(app.status(), "Black to move");
+    assert_eq!(app.side_to_move(), "Black");
     // The board does not turn: Black plays from the top.
     app.drag_square("e7", "e5", true);
     app.wait_for_moves(&["e4", "e5"]);
-    assert_eq!(app.status(), "White to move");
+    assert_eq!(app.side_to_move(), "White");
+}
+
+/// The board already says whose turn it is: the panel's "White to move" line said it again on
+/// every move. The line now speaks only when it adds something, as a check.
+#[gpui_kit::test]
+fn the_turn_line_speaks_only_for_a_check(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = board(cx);
+    assert!(!app.shows("status-banner"));
+    type_moves(&mut app, &["e4", "f5", "Qh5+"]);
+    assert_eq!(app.status(), "Black to move");
+    assert_eq!(app.find("status-banner").description(), Some("Check"));
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("g6");
+    app.press("enter");
+    app.wait_for_moves(&["e4", "f5", "Qh5+", "g6"]);
+    assert!(!app.shows("status-banner"));
 }
 
 /// Copy PGN writes the game with today's date: it was always "????.??.??", from a rules
@@ -167,7 +183,7 @@ fn an_illegal_typed_move_is_refused(cx: &mut gpui_kit::TestAppContext) {
     app.type_text("Ke3");
     app.press("enter");
     assert!(app.moves().is_empty());
-    assert_eq!(app.status(), "White to move");
+    assert_eq!(app.side_to_move(), "White");
     assert_eq!(
         app.find("move-box-message").label(),
         Some("Enter a legal move, such as Nf3 or g1f3")
@@ -187,7 +203,7 @@ fn take_back_undoes_the_last_move(cx: &mut gpui_kit::TestAppContext) {
     type_moves(&mut app, &["e4", "e5"]);
     app.click("local-takeback");
     app.wait_for_moves(&["e4"]);
-    assert_eq!(app.status(), "Black to move");
+    assert_eq!(app.side_to_move(), "Black");
     app.click("local-takeback");
     app.wait_for_moves(&[]);
     assert!(!app.enabled("local-takeback"));
@@ -203,7 +219,7 @@ fn an_earlier_position_can_be_reviewed_but_not_played_on(cx: &mut gpui_kit::Test
     app.click("skip-back");
     assert!(!app.enabled("skip-back"));
     app.click("skip-forward");
-    assert_eq!(app.status(), "Black to move");
+    assert_eq!(app.side_to_move(), "Black");
     assert!(!app.enabled("chevron-right"));
     assert!(!app.shows("back-to-game"));
 }
@@ -215,7 +231,7 @@ fn the_review_banner_goes_back_to_the_game(cx: &mut gpui_kit::TestAppContext) {
     app.click("skip-back");
     assert_eq!(app.status(), "Earlier position");
     app.click("back-to-game");
-    assert_eq!(app.status(), "Black to move");
+    assert_eq!(app.side_to_move(), "Black");
     assert!(!app.shows("back-to-game"));
 }
 
@@ -229,7 +245,7 @@ fn resigning_asks_first_then_the_other_side_wins(cx: &mut gpui_kit::TestAppConte
     type_moves(&mut app, &["e4"]);
     app.click("local-resign");
     app.click("cancel");
-    assert_eq!(app.status(), "Black to move");
+    assert_eq!(app.side_to_move(), "Black");
 
     // It is Black's turn, so Black resigns.
     app.click("local-resign");
@@ -293,7 +309,7 @@ fn a_game_in_progress_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
     let mut app = app.restart();
     app.open("Over the board");
     app.wait_for_moves(&["e4", "c5", "Nf3"]);
-    assert_eq!(app.status(), "Black to move");
+    assert_eq!(app.side_to_move(), "Black");
 }
 
 /// 2026-11-24: an idle Over the board saved its game again when the app quit, over the moves the
@@ -604,7 +620,7 @@ fn a_crazyhouse_capture_can_be_dropped_back(cx: &mut gpui_kit::TestAppContext) {
     app.click("pocket-White-Pawn");
     app.click_square("e3", true);
     app.wait_for_moves(&["e4", "d5", "exd5", "Qxd5", "P@e3"]);
-    assert_eq!(app.status(), "Black to move");
+    assert_eq!(app.side_to_move(), "Black");
     // Black's pawn is still in hand; White's was spent.
     assert!(
         app.find("pocket-Black-Pawn")
@@ -650,7 +666,7 @@ fn a_new_game_starts_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContext
     app.click("pocket-White-Pawn");
     app.click_square("e3", true);
     app.wait_for_moves(&["P@e3"]);
-    assert_eq!(app.status(), "Black to move");
+    assert_eq!(app.side_to_move(), "Black");
     // The next new game opens on this one: Crazyhouse, from that position.
     app.click("local-new");
     app.wait_for("the position to come back", |window, _| {
@@ -814,4 +830,51 @@ fn a_dialog_opened_by_a_key_appears_at_once(cx: &mut gpui_kit::TestAppContext) {
         rest.origin.y > opened.origin.y && rest.origin.y - opened.origin.y < gpui_kit::px(8.),
         "settles a few pixels down: {opened:?} to {rest:?}"
     );
+}
+
+/// The Opera Game: 33 moves, more than the move list has room for.
+const OPERA: &str = "e2e4 e7e5 g1f3 d7d6 d2d4 c8g4 d4e5 g4f3 d1f3 d6e5 f1c4 g8f6 f3b3 d8e7 b1c3 c7c6 \
+                     c1g5 b7b5 c3b5 c6b5 c4b5 b8d7 e1c1 a8d8 d1d7 d8d7 h1d1 e7e6 b5d7 f6d7 b3b8 \
+                     d7b8 d1d8";
+
+/// Whether the move list shows the move at `index` whole, inside its visible bounds.
+fn move_in_view(window: &mut gpui_kit::Window, index: usize) -> bool {
+    use gpui_kit::test::TestWindowExt as _;
+    let (Some(list), Some(cell)) = (
+        window.try_find("local-moves"),
+        window.try_find(("move", index)),
+    ) else {
+        return false;
+    };
+    let (list, cell) = (list.bounds(), cell.bounds());
+    list.top() <= cell.top() && cell.bottom() <= list.bottom()
+}
+
+/// The move list stayed scrolled at move 1 as a long game went on, the board at the last move
+/// and the list showing the first ones until scrolled by hand (2026.11.10): it keeps the move on
+/// the board in view, the newest as it is played.
+#[gpui_kit::test]
+fn a_long_games_move_list_keeps_the_newest_move_in_view(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::local::LocalPage;
+    let mut app = board(cx);
+    let moves: Vec<&str> = OPERA.split_whitespace().collect();
+    app.with_window(|_, cx| {
+        let local = crate::shell::view::<LocalPage>(cx).expect("the page");
+        local.update(cx, |local, cx| {
+            for uci in &moves {
+                local.play(uci, cx);
+            }
+        });
+    });
+    let last = moves.len() - 1;
+    app.wait_for("the last move in view", |window, _| {
+        move_in_view(window, last)
+    });
+    // The list is shorter than the game: the first move has scrolled out of it.
+    assert!(app.with_window(|window, _| !move_in_view(window, 0)));
+    // Back at the start, the list follows it there.
+    app.click("skip-back");
+    app.wait_for("the first move in view", |window, _| {
+        move_in_view(window, 0)
+    });
 }

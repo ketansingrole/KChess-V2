@@ -11,7 +11,7 @@
 use kchess_hack as _;
 
 use kchess_app::{core, loading, prefs};
-use kchess_board::{game_db, live_game, widgets};
+use kchess_board::{game_db, game_db_list, live_game, widgets};
 use kchess_ui::theme;
 
 mod event;
@@ -51,7 +51,7 @@ use crate::game_db::{Chosen, GameDbEvent, GameDbHandle};
 use crate::live_game::Refused;
 use crate::loading::Loading;
 use crate::theme::{Palette, radii};
-use crate::widgets::{Choice, KeyboardFocus as _, Pill, Pressable as _};
+use crate::widgets::{Choice, Pill};
 
 /// What the page keeps between runs: the database shown, the order and the page size.
 const PREFS: &str = "kchess:database";
@@ -97,12 +97,9 @@ const MOST_MOVES: u32 = 600;
 /// The broadcast games: Lichess's broadcast archive, some 770 MB to download in all (2026-11).
 const MASTERS_LABEL: &str = "Broadcast games · 770 MB";
 const MASTERS_BYTES: u64 = 770 * 1024 * 1024;
-const MASTERS_TIP: &str = "Games of the top over-the-board events Lichess has broadcast since 2020";
 /// TCEC's engine games: its compact release, some 27 MB to download (2026-06).
 const TCEC_LABEL: &str = "Engine games · 27 MB";
 const TCEC_BYTES: u64 = 27 * 1024 * 1024;
-const TCEC_TIP: &str = "Every game of the Top Chess Engine Championship's competitions";
-const LICHESS_TIP: &str = "A month of rated games between strong Lichess players";
 /// Below this width the table keeps the players and the result.
 const NARROW: Pixels = px(720.);
 
@@ -950,12 +947,12 @@ impl DatabasePage {
         let field = |input: &Entity<InputState>, width: f32, label: &'static str| {
             div()
                 .w(px(width))
-                .child(Input::new(input).small().cleanable(true).aria_label(label))
+                .child(Input::new(input).cleanable(true).aria_label(label))
         };
         let select = |state: &Entity<SelectState<Vec<Choice>>>, width: f32, label: &'static str| {
             div()
                 .w(px(width))
-                .child(Select::new(state).small().accessibility_label(label))
+                .child(Select::new(state).accessibility_label(label))
         };
         let more = self.more || self.more_filtered(cx);
         let toolbar = h_flex()
@@ -964,7 +961,6 @@ impl DatabasePage {
             .child(
                 div().w(px(180.)).child(
                     Input::new(&self.player_input)
-                        .small()
                         .cleanable(true)
                         .prefix(icon("search").size(px(14.)))
                         .aria_label("Player"),
@@ -982,7 +978,6 @@ impl DatabasePage {
             .child(
                 Button::new("database-more")
                     .ghost()
-                    .small()
                     .icon(icon("sliders-horizontal"))
                     .label("More filters")
                     .selected(more)
@@ -995,7 +990,6 @@ impl DatabasePage {
                 row.child(
                     Button::new("database-clear")
                         .ghost()
-                        .small()
                         .icon(icon("x"))
                         .label("Clear filters")
                         .on_click(
@@ -1020,47 +1014,13 @@ impl DatabasePage {
     }
 
     fn render_rows(&self, narrow: bool, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
-        let muted = palette.text_muted;
-        let column = |width: f32| div().w(px(width)).flex_none().truncate();
-        let head = h_flex()
-            .px(px(12.))
-            .pb(px(8.))
-            .gap(px(12.))
-            .text_size(px(11.))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(muted)
-            .child(div().flex_1().child("WHITE"))
-            .child(div().flex_1().child("BLACK"))
-            .child(column(64.).child("RESULT"))
-            .when(!narrow, |head| {
-                head.child(div().flex_1().child("EVENT"))
-                    .child(column(84.).child("DATE"))
-                    .child(column(44.).child("ECO"))
-                    .child(column(52.).text_right().child("MOVES"))
-            })
-            .child(div().w(px(24.)).flex_none());
-        let player = |name: &str, elo: Option<u32>| {
-            h_flex()
-                .flex_1()
-                .min_w_0()
-                .gap(px(6.))
-                .items_baseline()
-                .child(div().truncate().child(name.to_string()))
-                .children(elo.map(|elo| {
-                    div()
-                        .flex_none()
-                        .text_size(px(12.))
-                        .text_color(muted)
-                        .child(elo.to_string())
-                }))
-        };
         let rows: Vec<AnyElement> = self
             .games
             .iter()
             .enumerate()
             .map(|(index, game)| {
                 let chosen = game.clone();
-                let label = format!("{} against {}, {}", game.white, game.black, game.result);
+                let label = game_db_list::label(game);
                 let menu = self.games_menu(Chosen::Game(game.id), 1, Some(game.clone()), cx);
                 let actions = Button::new(("database-game-actions", index))
                     .ghost()
@@ -1071,60 +1031,20 @@ impl DatabasePage {
                     .dropdown_menu_with_anchor(Anchor::TopRight, move |popup, _, _| {
                         menu.build(popup)
                     });
-                h_flex()
-                    .id(("database-game", index))
-                    .test_support()
-                    .role(Role::Button)
-                    .keyboard_focus(palette.primary)
-                    .aria_label(label)
-                    .px(px(12.))
-                    .py(px(8.))
-                    .gap(px(12.))
-                    .rounded(radii::BOX)
-                    .text_size(px(13.))
-                    .cursor_pointer()
-                    .pressable(palette)
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.open_game(&chosen, window, cx)),
-                    )
-                    .child(player(&game.white, game.white_elo))
-                    .child(player(&game.black, game.black_elo))
-                    .child(
-                        column(64.)
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(game.result.clone()),
-                    )
-                    .when(!narrow, |row| {
-                        row.child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(muted)
-                                .child(game.event.clone().unwrap_or_default()),
-                        )
-                        .child(
-                            column(84.)
-                                .text_color(muted)
-                                .child(game.date.clone().unwrap_or_default()),
-                        )
-                        .child(
-                            column(44.)
-                                .text_color(muted)
-                                .child(game.eco.clone().unwrap_or_default()),
-                        )
-                        .child(
-                            column(52.)
-                                .text_right()
-                                .text_color(muted)
-                                .child(game.plies.div_ceil(2).to_string()),
-                        )
-                    })
-                    .child(actions)
-                    .into_any_element()
+                game_db_list::row(
+                    ("database-game", index),
+                    game,
+                    narrow,
+                    Some(actions.into_any_element()),
+                    cx.listener(move |this, _, window, cx| this.open_game(&chosen, window, cx)),
+                    palette,
+                )
             })
             .collect();
-        v_flex().child(head).children(rows).into_any_element()
+        v_flex()
+            .child(game_db_list::head(narrow, palette))
+            .children(rows)
+            .into_any_element()
     }
 }
 
@@ -1389,55 +1309,53 @@ impl Render for DatabasePage {
                     )
                 })
         });
+        // Import is the page's main action; the downloads share one menu beside it, their sizes
+        // in their names, so the row keeps three weights rather than five equal buttons.
         let downloads = h_flex()
             .gap(px(12.))
             .flex_wrap()
+            .child(game_db::import_card(cx, true, &palette))
             .when(!busy, |row| {
                 row.child(
-                    Button::new("database-player")
-                        .outline()
-                        .small()
-                        .icon(icon("user"))
-                        .label("Player's games…")
-                        .on_click(|_, window, cx| player::open(None, window, cx)),
-                )
-                .child(
-                    Button::new("database-lichess")
+                    Button::new("database-add")
                         .outline()
                         .small()
                         .icon(icon("download"))
-                        .label("Lichess games…")
-                        .tooltip(LICHESS_TIP)
-                        .on_click(|_, window, cx| lichess::open(None, window, cx)),
-                )
-                .child(
-                    Button::new("database-masters")
-                        .outline()
-                        .small()
-                        .icon(icon("download"))
-                        .label(if masters {
-                            SharedString::new_static("Update broadcast games")
-                        } else {
-                            SharedString::new_static(MASTERS_LABEL)
-                        })
-                        .tooltip(MASTERS_TIP)
-                        .on_click(|_, window, cx| install_masters(window, cx)),
-                )
-                .child(
-                    Button::new("database-tcec")
-                        .outline()
-                        .small()
-                        .icon(icon("download"))
-                        .label(if engines {
-                            SharedString::new_static("Update engine games")
-                        } else {
-                            SharedString::new_static(TCEC_LABEL)
-                        })
-                        .tooltip(TCEC_TIP)
-                        .on_click(|_, window, cx| install_tcec(window, cx)),
+                        .label("Add games")
+                        .dropdown_caret(true)
+                        .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, _, _| {
+                            menu.item(
+                                PopupMenuItem::new("Player's games…")
+                                    .icon(icon("user"))
+                                    .on_click(|_, window, cx| player::open(None, window, cx)),
+                            )
+                            .item(
+                                PopupMenuItem::new("Lichess games…")
+                                    .icon(icon("download"))
+                                    .on_click(|_, window, cx| lichess::open(None, window, cx)),
+                            )
+                            .separator()
+                            .item(
+                                PopupMenuItem::new(if masters {
+                                    SharedString::new_static("Update broadcast games")
+                                } else {
+                                    SharedString::new_static(MASTERS_LABEL)
+                                })
+                                .icon(icon("download"))
+                                .on_click(|_, window, cx| install_masters(window, cx)),
+                            )
+                            .item(
+                                PopupMenuItem::new(if engines {
+                                    SharedString::new_static("Update engine games")
+                                } else {
+                                    SharedString::new_static(TCEC_LABEL)
+                                })
+                                .icon(icon("download"))
+                                .on_click(|_, window, cx| install_tcec(window, cx)),
+                            )
+                        }),
                 )
             })
-            .child(game_db::import_card(cx, &palette))
             // Always there, so what the databases take is found before the first download.
             .child(div().flex_1())
             .child(
@@ -1451,12 +1369,20 @@ impl Render for DatabasePage {
             );
         let header = v_flex().gap(px(12.)).child(downloads).children(chosen);
         let body = if databases == 0 {
-            widgets::card(&palette)
+            // Drawn as the place a file goes, which is what it asks for.
+            v_flex()
+                .id("database-empty")
+                .test_support()
                 .py(px(30.))
+                .px(px(20.))
+                .rounded(radii::BOX)
+                .border_2()
+                .border_dashed()
+                .border_color(palette.border)
                 .child(widgets::empty_state(
                     icon("database"),
                     "No game databases",
-                    Some("Import a PGN file, or drop one here".into()),
+                    Some("Drop a PGN file here".into()),
                     &palette,
                 ))
                 .into_any_element()

@@ -53,7 +53,8 @@ const KEYS: &[(&str, &str)] = &[
     ("warning.foreground", "--ui-text-inverted"),
     ("info.background", "--ui-info"),
     ("info.foreground", "--ui-text-inverted"),
-    ("ring", "--ui-primary"),
+    // A focused control's line: neutral, so it shows on a primary button or a switch that is on.
+    ("ring", "--ui-text-muted"),
     ("link", "--ui-primary"),
     ("caret", "--ui-primary"),
     ("popover.background", "--ui-bg"),
@@ -237,7 +238,11 @@ pub fn apply(window: &mut Window, cx: &mut App, choice: &ThemeChoice) {
     cx.set_global(Palette::of(&resolved, dark));
     match kit_config(&resolved, dark) {
         Ok(config) => {
-            Theme::global_mut(cx).apply_config(&Rc::new(config));
+            let theme = Theme::global_mut(cx);
+            theme.apply_config(&Rc::new(config));
+            // A focused control takes a 1 px line, a text field its border, rather than the
+            // kit's 3 px glow around it: the caret already shows where typing goes.
+            theme.focus_ring = false;
             window.refresh();
         }
         Err(error) => crate::log(
@@ -369,6 +374,33 @@ mod tests {
                 .as_str()
                 .unwrap())
         );
+    }
+
+    /// A focused text field was ringed by GPUI Kit's 3 px green glow, which the command palette's
+    /// field never had. Every theme turns the glow off for a 1 px line in a neutral color, one
+    /// that still shows on a primary button or a switch that is on.
+    #[gpui_kit::test]
+    fn focus_is_a_neutral_line_not_a_glow(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        cx.update(gpui_kit::init);
+        let window = cx.add_window(|_, _| Blank);
+        for appearance in [Appearance::Light, Appearance::Dark] {
+            let choice = ThemeChoice {
+                appearance,
+                light: "kchess".into(),
+                dark: "kchess".into(),
+                custom: Vec::new(),
+            };
+            cx.update_window(window.into(), |_, window, cx| apply(window, cx, &choice))
+                .unwrap();
+            let (glow, ring, palette) = cx.read(|cx| {
+                let theme = Theme::global(cx);
+                (theme.focus_ring, theme.ring, *cx.global::<Palette>())
+            });
+            assert!(!glow, "{appearance:?}: no glow around a focused control");
+            assert_eq!(ring, palette.text_muted, "{appearance:?}");
+            assert_ne!(ring, palette.primary, "{appearance:?}");
+        }
     }
 
     #[test]

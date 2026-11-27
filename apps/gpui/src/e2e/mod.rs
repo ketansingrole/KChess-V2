@@ -607,6 +607,21 @@ impl Harness {
         self.cx.run_until_parked();
     }
 
+    /// Move the pointer to a point of the window, no button held: what a hover reacts to.
+    pub fn move_mouse(&mut self, position: Point<Pixels>) {
+        self.with_window(|window, cx| {
+            let event = gpui_kit::MouseMoveEvent {
+                position,
+                pressed_button: None,
+                modifiers: Modifiers::default(),
+            }
+            .to_platform_input();
+            window.dispatch_event(event, cx);
+            draw(window, cx);
+        });
+        self.cx.run_until_parked();
+    }
+
     /// Turn the wheel at a point of the window by `delta` (negative scrolls down).
     pub fn scroll_point(&mut self, position: Point<Pixels>, delta: Pixels) {
         self.with_window(|window, cx| {
@@ -700,6 +715,21 @@ impl Harness {
                 panic!("the moves stayed {shown:?}, expected {expected:?}. Registered: {paths}");
             }
             self.tick();
+        }
+    }
+
+    /// The side to move, as the board tells a screen reader: "White" or "Black".
+    pub fn side_to_move(&mut self) -> &'static str {
+        let description = self
+            .find("chess-board")
+            .description()
+            .unwrap_or_default()
+            .to_string();
+        if description.ends_with("Black to move") {
+            "Black"
+        } else {
+            assert!(description.ends_with("White to move"), "{description:?}");
+            "White"
         }
     }
 

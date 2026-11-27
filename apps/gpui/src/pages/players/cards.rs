@@ -11,7 +11,6 @@ impl PlayersPage {
         palette: &Palette,
     ) -> Div {
         let online = crate::network::online(cx);
-        let typed = !self.input.read(cx).value().trim().is_empty();
         let clear = Button::new("players-recent-clear")
             .ghost()
             .small()
@@ -23,8 +22,8 @@ impl PlayersPage {
                 player_search::clear_recent(GameSite::Lichess, cx);
                 cx.notify();
             }));
-        // Names typed so far match these players; otherwise the ones looked up lately and
-        // followed, the player open (already in the field) left out.
+        // Before a name is typed, the players looked up lately and the ones followed, the player
+        // open (already in the field) left out; then the players the name starts.
         let known = vec![
             NameGroup {
                 action: Some(clear.into_any_element()),
@@ -36,50 +35,51 @@ impl PlayersPage {
             },
             NameGroup::new("Following", "players-followed", followed.to_vec()),
         ];
-        let page = cx.entity().downgrade();
-        let groups = player_search::name_rows(
-            "players-match",
-            &self.names,
-            known,
-            self.username().as_deref(),
-            palette,
-            |name| {
-                let page = page.clone();
-                Box::new(move |_, window, cx| {
-                    page.update(cx, |page, cx| page.show_player(&name, window, cx))
-                        .ok();
-                })
+        let typed = self.input.read(cx).value().to_string();
+        // Lichess answers the search: offline there is none. A name on its way spins at the end.
+        let field = Input::new(&self.input)
+            .prefix(icon("search").size(px(16.)))
+            .cleanable(true)
+            .disabled(!online)
+            .when(self.profile_loading.busy(), |field| {
+                field.suffix(widgets::spinner(px(14.)))
+            })
+            .aria_label("Lichess username")
+            .into_any_element();
+        let search = player_search::name_search(
+            player_search::NameSearch {
+                id: "players-match",
+                field,
+                typed: &typed,
+                typed_hint: Some("Look up"),
+                known,
+                shown: self.username().as_deref(),
             },
+            &self.names,
+            |page: &mut Self| &mut page.names,
+            |page, name, window, cx| page.show_player(&name, window, cx),
+            palette,
+            cx,
         );
-        widgets::card(palette)
-            .gap(px(12.))
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap(px(8.))
-                    .child(
-                        // A name is at most 30 characters: the field stops at 480px.
-                        div().flex_1().min_w(px(192.)).max_w(px(480.)).child(
-                            Input::new(&self.input)
-                                .prefix(icon("user-search").size(px(16.)))
-                                .cleanable(true)
-                                .aria_label("Lichess username"),
-                        ),
-                    )
-                    .child(
-                        Button::new("players-lookup")
-                            .primary()
-                            .icon(icon("search"))
-                            .label("Look up")
-                            .loading(self.profile_loading.busy())
-                            .disabled(!online || !typed)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.lookup(None, window, cx)),
-                            ),
-                    ),
-            )
+        // The page's search, centred over what it finds as Quick Pick is: a field as wide as a
+        // name needs, the way back to the leaderboard at the left once a player is open.
+        let back = (self.profile.is_some() && online).then(|| {
+            Button::new("players-back")
+                .ghost()
+                .icon(icon("arrow-left"))
+                .label("Leaderboard")
+                .on_click(cx.listener(|this, _, window, cx| this.show_leaderboard(window, cx)))
+        });
+        v_flex()
+            .w_full()
+            .gap(px(8.))
+            .child(player_search::centred_search(
+                search,
+                back.map(IntoElement::into_any_element),
+            ))
             .children(self.profile_loading.error().cloned().map(|error| {
                 h_flex()
+                    .justify_center()
                     .id("players-error")
                     .test_support()
                     .aria_label(error.clone())
@@ -89,9 +89,6 @@ impl PlayersPage {
                     .child(icon("circle-alert").size(px(14.)))
                     .child(error)
             }))
-            .when(!groups.is_empty(), |card| {
-                card.child(v_flex().gap(px(8.)).children(groups))
-            })
     }
 
     pub(super) fn profile_card(

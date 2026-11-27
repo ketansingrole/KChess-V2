@@ -80,6 +80,16 @@ mod catalog;
 mod draw;
 use catalog::*;
 
+/// The popular openings the page lists first, each as its name and position, for the board
+/// editor to set up.
+pub(crate) fn popular_positions() -> Vec<(String, String)> {
+    catalog()
+        .popular
+        .iter()
+        .map(|entry| (entry.name.clone(), entry.fen.clone()))
+        .collect()
+}
+
 /// An open line's actions, as its buttons offer them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {

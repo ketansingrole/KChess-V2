@@ -13,7 +13,8 @@ pub mod view;
 /// The clocks both new-game dialogs offer (Play with computer, Over the board), as minutes and
 /// increment.
 pub const CLOCKS: &[(&str, Option<(f64, f64)>)] = &[
-    ("No clock", None),
+    // No clock: infinite time, as the clock reads.
+    ("∞", None),
     ("3+2", Some((3., 2.))),
     ("5+0", Some((5., 0.))),
     ("5+3", Some((5., 3.))),
