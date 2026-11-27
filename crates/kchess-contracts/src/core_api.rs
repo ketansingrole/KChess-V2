@@ -898,6 +898,11 @@ core_api! {
         /// The bytes of every file in the profile's folder: its databases, downloads, logs,
         /// themes and working files, so what it takes in all is never less than shown.
         ProfileSize = "profileSize" fn profile_size() -> u64;
+        /// The bytes the Electron app (2026.11.4 and before) left in the profile: Chromium's
+        /// caches and web storage, which nothing reads now.
+        LeftoverSize = "leftoverSize" fn leftover_size() -> u64;
+        /// Removes what the Electron app left in the profile, and nothing of KChess's own.
+        RemoveLeftovers = "removeLeftovers" fn remove_leftovers() -> ();
         #[writes(Usage)]
         ResetUsage = "resetUsage" fn reset_usage() -> ();
         /// The user's own app themes from the profile's themes folder, with a line per file that

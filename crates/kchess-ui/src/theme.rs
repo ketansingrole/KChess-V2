@@ -174,6 +174,25 @@ pub fn judgment_color(judgment: &str, dark: bool) -> Hsla {
     gpui_kit::rgb(hex).into()
 }
 
+/// The validated categorical palette, light and dark: colours that stay apart from one another
+/// for the series of a chart or the parts of a whole, the same in every theme.
+const CATEGORICAL_LIGHT: [u32; 8] = [
+    0x2a78d6, 0xeb6834, 0x1baf7a, 0xeda100, 0xe87ba4, 0x008300, 0x4a3aa7, 0xe34948,
+];
+const CATEGORICAL_DARK: [u32; 8] = [
+    0x3987e5, 0xd95926, 0x199e70, 0xc98500, 0xd55181, 0x008300, 0x9085e9, 0xe66767,
+];
+
+/// The categorical palette's colour in `slot`, from 1 to 8 (beyond 8, the eighth).
+pub fn categorical(slot: usize, dark: bool) -> Hsla {
+    let colors = if dark {
+        CATEGORICAL_DARK
+    } else {
+        CATEGORICAL_LIGHT
+    };
+    gpui_kit::rgb(colors[slot.clamp(1, 8) - 1]).into()
+}
+
 /// `color-mix(in srgb, color share%, transparent)`.
 pub fn tint(color: Hsla, share: f32) -> Hsla {
     color.opacity(share / 100.)

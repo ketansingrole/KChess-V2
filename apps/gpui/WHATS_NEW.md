@@ -9,7 +9,15 @@ with nothing there.
 
 ## Unreleased
 
-KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving.
+KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving. Settings → Storage shows what KChess keeps on your computer and helps you free up space.
+
+### Added
+
+- Clean up in Settings → Storage removes the files earlier versions of KChess left behind, which nothing uses any more.
+
+### Changed
+
+- Settings → Storage shows what KChess keeps on your computer in a bar and a list, largest first, each in its own colour, with Update or Delete beside what you downloaded. Your disk's free space is shown with what you can still download.
 
 ### Fixed
 

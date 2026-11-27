@@ -30,6 +30,27 @@ impl SystemApi for Core {
             .map_err(|cause| CoreError::wrap("The profile's size could not be read", cause))
     }
 
+    async fn leftover_size(&self) -> Result<u64> {
+        let data_dir = self.data_dir();
+        tokio::task::spawn_blocking(move || crate::leftovers::bytes(&data_dir))
+            .await
+            .map_err(|cause| {
+                CoreError::wrap("The earlier versions' files could not be measured", cause)
+            })
+    }
+
+    async fn remove_leftovers(&self) -> Result<()> {
+        let data_dir = self.data_dir();
+        tokio::task::spawn_blocking(move || crate::leftovers::remove(&data_dir))
+            .await
+            .map_err(|cause| {
+                CoreError::wrap("The earlier versions' files could not be removed", cause)
+            })?
+            .map_err(|cause| {
+                CoreError::wrap("The earlier versions' files could not be removed", cause)
+            })
+    }
+
     async fn reset_usage(&self) -> Result<()> {
         self.usage.reset().await
     }

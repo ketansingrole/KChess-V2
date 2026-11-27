@@ -31,18 +31,10 @@ const FIXED_SLOT_KEYS: [&str; 7] = [
     "chess960",
 ];
 const VARIANT_SLOT: usize = 8;
-/// The validated categorical palette, light and dark, by slot from 1.
-const LIGHT: [u32; 8] = [
-    0x2a78d6, 0xeb6834, 0x1baf7a, 0xeda100, 0xe87ba4, 0x008300, 0x4a3aa7, 0xe34948,
-];
-const DARK: [u32; 8] = [
-    0x3987e5, 0xd95926, 0x199e70, 0xc98500, 0xd55181, 0x008300, 0x9085e9, 0xe66767,
-];
 const RANGES: [(&str, f64); 4] = [("1M", 31.), ("3M", 92.), ("1Y", 366.), ("All", 0.)];
 
 fn slot_color(slot: usize, dark: bool) -> Hsla {
-    let colors = if dark { DARK } else { LIGHT };
-    rgb(colors[(slot - 1).min(7)]).into()
+    kchess_ui::theme::categorical(slot, dark)
 }
 
 /// One speed's line.

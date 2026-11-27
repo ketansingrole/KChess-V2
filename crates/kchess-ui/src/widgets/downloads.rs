@@ -8,6 +8,8 @@ use super::*;
 pub struct DownloadRow {
     id: ElementId,
     glyph: Icon,
+    /// Its colour where a chart draws it too: the icon's, on a wash of it.
+    tint: Option<Hsla>,
     title: SharedString,
     detail: SharedString,
     /// Under way: how far (0 to 1), when that is known.
@@ -27,12 +29,19 @@ impl DownloadRow {
         DownloadRow {
             id: id.into(),
             glyph,
+            tint: None,
             title: title.into(),
             detail: detail.into(),
             progress: None,
             error: None,
             actions: Vec::new(),
         }
+    }
+
+    /// The colour a chart of the rows draws this one in, so the row is that chart's legend.
+    pub fn tint(mut self, color: Hsla) -> Self {
+        self.tint = Some(color);
+        self
     }
 
     /// A download runs: a bar shows `share` of it, and the detail says how far in words.
@@ -72,8 +81,14 @@ impl RenderOnce for DownloadRow {
                     .items_center()
                     .justify_center()
                     .rounded(radii::BOX)
-                    .bg(palette.accented)
-                    .child(self.glyph.size(px(16.)).text_color(palette.text_muted)),
+                    .bg(self
+                        .tint
+                        .map_or(palette.accented, |color| crate::theme::tint(color, 16.)))
+                    .child(
+                        self.glyph
+                            .size(px(16.))
+                            .text_color(self.tint.unwrap_or(palette.text_muted)),
+                    ),
             )
             .child(
                 v_flex()

@@ -483,15 +483,17 @@ fn storage_lists_every_download_and_asks_before_filling_the_disk(
         .to_string();
     assert!(free.ends_with(" free on this disk"), "{free}");
     // The profile's own files are counted, whatever else is: nothing KChess keeps is left out.
-    app.wait_for("the profile's files", |window, _| {
-        use gpui_kit::test::TestWindowExt as _;
-        (0..6usize).any(|index| {
-            window
-                .try_find(gpui_kit::ElementId::from(("storage-part", index)))
-                .and_then(|part| part.label().map(str::to_string))
-                .is_some_and(|label| label.starts_with("Logs and other files "))
-        })
-    });
+    let other = app
+        .find("storage-other")
+        .label()
+        .unwrap_or_default()
+        .to_string();
+    assert!(other.starts_with("Logs and other files, "), "{other}");
+    // The free space heads what can still be downloaded, apart from what KChess takes: beside
+    // it, people read what KChess takes as their whole disk.
+    let free = app.find("storage-free").bounds();
+    assert!(free.top() > app.find("storage-other").bounds().bottom());
+    assert!(free.bottom() < app.find("storage-databases").bounds().top());
     // No game database yet: the row leads to the Database page.
     app.click("storage-databases-open");
     app.wait_for_page(crate::pages::Page::Database);
@@ -510,6 +512,64 @@ fn storage_lists_every_download_and_asks_before_filling_the_disk(
         window.try_find_by_label("Download anyway").is_none()
     });
     assert!(app.shows("db-install"), "nothing downloads");
+}
+
+/// What the Electron app left in the profile is listed with its size, and Clean up, once
+/// confirmed, removes it and nothing of KChess's own.
+#[gpui_kit::test]
+fn storage_cleans_up_what_earlier_versions_left(cx: &mut gpui_kit::TestAppContext) {
+    let mut profile = std::path::PathBuf::new();
+    let mut app = Harness::start_with(cx, |dir| {
+        profile = dir.to_path_buf();
+        std::fs::create_dir_all(dir.join("IndexedDB/app.leveldb")).expect("IndexedDB");
+        std::fs::write(
+            dir.join("IndexedDB/app.leveldb/000003.log"),
+            vec![0; 3 << 20],
+        )
+        .expect("a leftover");
+        std::fs::write(dir.join("Cookies"), [0; 64]).expect("cookies");
+        std::fs::create_dir_all(dir.join("databases")).expect("databases");
+        std::fs::write(dir.join("databases/kept.txt"), "KChess's own").expect("an own file");
+    });
+    app.open_settings("Storage");
+    let row = app
+        .find("storage-leftovers")
+        .label()
+        .unwrap_or_default()
+        .to_string();
+    assert_eq!(row, "Files from earlier versions, 3.0 MB");
+    // The bar draws the rows in the list's order, the largest first: the list is its legend.
+    let mut rows: Vec<(gpui_kit::Pixels, String)> =
+        ["storage-leftovers", "storage-own", "storage-other"]
+            .into_iter()
+            .map(|id| {
+                let row = app.find(id);
+                let label = row.label().unwrap_or_default();
+                let title = label.split(", ").next().unwrap_or_default().to_string();
+                (row.bounds().top(), title)
+            })
+            .collect();
+    rows.sort_by(|a, b| f32::from(a.0).total_cmp(&f32::from(b.0)));
+    let mut segments: Vec<(String, gpui_kit::Pixels)> = Vec::new();
+    for index in 0..9usize {
+        if app.shows(("storage-segment", index)) {
+            let segment = app.find(("storage-segment", index));
+            let label = segment.label().unwrap_or_default().to_string();
+            segments.push((label, segment.bounds().size.width));
+        }
+    }
+    let titles: Vec<&str> = rows.iter().map(|(_, title)| title.as_str()).collect();
+    let drawn: Vec<&str> = segments.iter().map(|(title, _)| title.as_str()).collect();
+    assert_eq!(drawn, titles);
+    assert!(
+        segments.windows(2).all(|pair| pair[0].1 >= pair[1].1),
+        "{segments:?}"
+    );
+    app.click("storage-leftovers-remove");
+    app.click_label("Clean up");
+    app.wait_gone("storage-leftovers");
+    assert!(!profile.join("IndexedDB").exists() && !profile.join("Cookies").exists());
+    assert!(profile.join("databases/kept.txt").exists());
 }
 
 /// Tablebases partly on disk (a download stopped part way): Storage counts what is there and

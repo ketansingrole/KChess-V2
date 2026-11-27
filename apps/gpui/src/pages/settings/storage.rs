@@ -1,8 +1,12 @@
-//! Settings → Storage: everything KChess keeps on this computer in one place. What it takes in
-//! all (the app itself, its service and every file in the profile, so nothing is left out) and
-//! what the disk has left, every download with its size and its Download or Delete
-//! (the game databases, the puzzles, the speech model, Stockfish, the endgame tablebases), what
-//! each account keeps and downloaded, and the local scores and diagnostics.
+//! Settings → Storage: everything KChess keeps on this computer in one place. One list of what it
+//! takes, the largest first, each with what can be done about it: the app itself and its service,
+//! every download (the game databases, the puzzles, the speech model, Stockfish, the endgame
+//! tablebases) with its Update or Delete, the files the Electron app left with Clean up, and
+//! what else the profile holds, so nothing is left out. Then what can still be downloaded, under
+//! what the disk has left, what each account keeps and downloaded, and the local scores and
+//! diagnostics. A bar over the list draws each row in the row's own colour, and the list is
+//! its legend. Nothing beside the bar speaks of the disk: with the free space at its end and a
+//! part in a gray near its track's, people read it as their whole disk.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
@@ -18,13 +22,6 @@ use crate::pages::Page;
 use crate::theme::Palette;
 use crate::widgets::{self, DownloadRow, format_bytes};
 
-/// One part of what KChess takes, as the summary's bar and legend show it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Part {
-    pub label: &'static str,
-    pub bytes: u64,
-}
-
 /// What the page has measured, each in bytes.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Measured {
@@ -39,48 +36,109 @@ pub struct Measured {
     pub speech: u64,
     pub engine: u64,
     pub tablebases: u64,
+    /// What the Electron app left in the profile.
+    pub leftovers: u64,
 }
 
-/// The parts in the bar's order. What the profile holds besides the named parts (logs, themes,
-/// the databases' working files) is its own part, so the parts add up to all KChess takes.
-pub fn parts(measured: &Measured) -> Vec<Part> {
-    let named = [
-        ("Game databases", measured.databases),
-        ("Puzzles", measured.puzzles),
-        ("Your games and studies", measured.own),
-        (
-            "Stockfish, speech and tablebases",
-            measured
-                .speech
-                .saturating_add(measured.engine)
-                .saturating_add(measured.tablebases),
-        ),
-    ];
-    let named_total = named
-        .iter()
-        .fold(0u64, |total, (_, bytes)| total.saturating_add(*bytes));
-    let other = measured
-        .profile
-        .map_or(0, |profile| profile.saturating_sub(named_total));
-    std::iter::once(("KChess app", measured.app.unwrap_or(0)))
-        .chain(named)
-        .chain(std::iter::once(("Logs and other files", other)))
-        .map(|(label, bytes)| Part { label, bytes })
-        .collect()
+impl Measured {
+    /// What has a row of its own in the profile.
+    fn named(&self) -> u64 {
+        [
+            self.databases,
+            self.puzzles,
+            self.own,
+            self.speech,
+            self.engine,
+            self.tablebases,
+            self.leftovers,
+        ]
+        .into_iter()
+        .fold(0u64, u64::saturating_add)
+    }
+
+    /// What the profile holds besides what has a row (logs, themes, the databases' working
+    /// files): never less than nothing, and nothing until the profile is measured.
+    pub fn other(&self) -> u64 {
+        self.profile
+            .map_or(0, |profile| profile.saturating_sub(self.named()))
+    }
+
+    /// All KChess takes: the app and every row, so the rows add up to it.
+    pub fn total(&self) -> u64 {
+        self.app
+            .unwrap_or(0)
+            .saturating_add(self.named())
+            .saturating_add(self.other())
+    }
 }
 
-/// "KChess uses 1.2 GB", the summary's headline.
-pub fn headline(parts: &[Part]) -> String {
-    let total: u64 = parts.iter().map(|part| part.bytes).sum();
+/// "KChess uses 1.2 GB", the list's headline.
+pub fn headline(total: u64) -> String {
     format!("KChess uses {}", format_bytes(total as f64))
 }
 
+/// The rows by what they take, the largest first; rows of one size keep their order.
+pub fn largest_first<T>(mut rows: Vec<(u64, T)>) -> Vec<(u64, T)> {
+    rows.sort_by_key(|row| std::cmp::Reverse(row.0));
+    rows
+}
+
+/// What a row on this computer is. Each keeps its colour in the bar and on its icon wherever its
+/// size puts it in the list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    App,
+    Leftovers,
+    Own,
+    Engine,
+    Puzzles,
+    Databases,
+    Tablebases,
+    Speech,
+    Other,
+}
+
+impl Kind {
+    /// Its row's title.
+    pub fn title(self) -> &'static str {
+        match self {
+            Kind::App => "KChess app",
+            Kind::Leftovers => "Files from earlier versions",
+            Kind::Own => "Your games and studies",
+            Kind::Engine => "Stockfish",
+            Kind::Puzzles => "Puzzles",
+            Kind::Databases => "Game databases",
+            Kind::Tablebases => "Endgame tablebases",
+            Kind::Speech => "Voice input",
+            Kind::Other => "Logs and other files",
+        }
+    }
+
+    /// Its colour: one of the categorical palette's, and for the profile's other files the
+    /// toned gray, which stands out from the bar's track where a gray near the track's did not.
+    pub fn color(self, palette: &Palette) -> Hsla {
+        let slot = match self {
+            Kind::App => 1,
+            Kind::Leftovers => 2,
+            Kind::Own => 3,
+            Kind::Engine => 4,
+            Kind::Puzzles => 5,
+            Kind::Databases => 6,
+            Kind::Tablebases => 7,
+            Kind::Speech => 8,
+            Kind::Other => return palette.toned,
+        };
+        kchess_ui::theme::categorical(slot, palette.dark)
+    }
+}
+
 impl SettingsPage {
-    /// The bytes free on the profile's disk, what the profile holds, and what the app and its
-    /// service take, read again.
+    /// The bytes free on the profile's disk, what the profile holds, what the Electron app left
+    /// in it, and what the app and its service take, read again.
     pub(super) fn refresh_free_space(&mut self, cx: &mut Context<Self>) {
         let free = cx.global::<AppCore>().request(calls::FreeSpace {});
         let profile = cx.global::<AppCore>().request(calls::ProfileSize {});
+        let leftovers = cx.global::<AppCore>().request(calls::LeftoverSize {});
         let app = cx.background_spawn(async move {
             let install = crate::updates::install_path()?;
             let service = crate::core::service_folder();
@@ -91,10 +149,12 @@ impl SettingsPage {
         cx.spawn(async move |this, cx| {
             let free = free.await.warn_on_err().flatten();
             let profile = profile.await.warn_on_err();
+            let leftovers = leftovers.await.warn_on_err();
             let app = app.await;
             this.update(cx, |this, cx| {
                 this.free_space = free;
                 this.profile_bytes = profile;
+                this.leftover_bytes = leftovers;
                 this.app_bytes = app;
                 cx.notify();
             })
@@ -104,7 +164,7 @@ impl SettingsPage {
     }
 
     /// What each kind of thing takes now.
-    fn storage_parts(&self, cx: &App) -> Vec<Part> {
+    fn measured(&self, cx: &App) -> Measured {
         let databases = {
             let db = cx.global::<crate::game_db::GameDbHandle>().0.read(cx);
             crate::pages::database::total_bytes(db.databases())
@@ -128,7 +188,7 @@ impl SettingsPage {
             .as_ref()
             .filter(|status| status.managed.installed)
             .map_or(0, |status| status.managed.bytes);
-        parts(&Measured {
+        Measured {
             app: self.app_bytes,
             profile: self.profile_bytes,
             databases,
@@ -137,83 +197,223 @@ impl SettingsPage {
             speech,
             engine,
             tablebases: self.tablebase_bytes(),
-        })
+            leftovers: self.leftover_bytes.unwrap_or(0),
+        }
     }
 
-    /// What KChess takes in all, what is left on the disk, and a bar of the parts.
-    fn storage_summary(&self, cx: &App, palette: &Palette) -> Div {
-        let parts = self.storage_parts(cx);
-        let total: u64 = parts.iter().map(|part| part.bytes).sum();
-        let colors = [
-            palette.dimmed,
-            palette.primary,
-            palette.info,
-            palette.success,
-            palette.warning,
-            palette.border_accented,
-        ];
-        let headline = headline(&parts);
-        let free = self
-            .free_space
-            .map(|free| format!("{} free on this disk", format_bytes(free as f64)));
-        let shown: Vec<(Part, Hsla)> = parts
-            .into_iter()
-            .zip(colors)
-            .filter(|(part, _)| part.bytes > 0)
-            .collect();
+    /// The files the Electron app left: what they take and Clean up, which asks first.
+    fn leftovers_row(&self, bytes: u64, cx: &mut Context<Self>) -> DownloadRow {
+        let busy = self.leftovers_busy;
+        DownloadRow::new(
+            "storage-leftovers",
+            icon("history"),
+            Kind::Leftovers.title(),
+            format_bytes(bytes as f64),
+        )
+        .error("storage-leftovers-error", self.leftovers_error.clone())
+        .action(
+            Button::new("storage-leftovers-remove")
+                .outline()
+                .small()
+                .icon(icon("trash-2"))
+                .label("Clean up")
+                .accessibility_label("Clean up files from earlier versions")
+                .loading(busy)
+                .disabled(busy)
+                .on_click(cx.listener(|this, _, window, cx| this.ask_remove_leftovers(window, cx))),
+        )
+    }
+
+    fn ask_remove_leftovers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let this = cx.entity().downgrade();
+        widgets::confirm_danger(
+            window,
+            cx,
+            "Clean up files from earlier versions?",
+            "KChess no longer uses them.",
+            "Clean up",
+            move |_, cx| {
+                this.update(cx, |this, cx| this.remove_leftovers(cx)).ok();
+            },
+        );
+    }
+
+    fn remove_leftovers(&mut self, cx: &mut Context<Self>) {
+        self.leftovers_busy = true;
+        self.leftovers_error = None;
+        cx.notify();
+        let remove = cx.global::<AppCore>().request(calls::RemoveLeftovers {});
+        cx.spawn(async move |this, cx| {
+            let removed = remove.await;
+            this.update(cx, |this, cx| {
+                this.leftovers_busy = false;
+                if let Err(cause) = removed {
+                    this.leftovers_error =
+                        Some(kchess_app::loading::failure("leftovers", &cause).into());
+                }
+                this.refresh_free_space(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// A row with nothing to do but read what it takes.
+    fn size_row(id: &'static str, glyph: &'static str, kind: Kind, bytes: u64) -> DownloadRow {
+        DownloadRow::new(id, icon(glyph), kind.title(), format_bytes(bytes as f64))
+    }
+
+    /// Everything KChess keeps on this computer, the largest first, under what it takes in all;
+    /// then what it can still download, under what the disk has left. A download stays with
+    /// those to download until it is done, so a row never moves while it runs.
+    fn storage_lists(&self, cx: &mut Context<Self>, palette: &Palette) -> (Div, Option<Div>) {
+        let measured = self.measured(cx);
+        let mut kept: Vec<(u64, (Kind, DownloadRow))> = Vec::new();
+        let mut offered: Vec<DownloadRow> = Vec::new();
+        if let Some(app) = measured.app {
+            kept.push((
+                app,
+                (
+                    Kind::App,
+                    Self::size_row("storage-app", "monitor", Kind::App, app),
+                ),
+            ));
+        }
+        let databases = cx
+            .global::<crate::game_db::GameDbHandle>()
+            .0
+            .read(cx)
+            .databases()
+            .len();
+        if databases > 0 {
+            kept.push((
+                measured.databases,
+                (Kind::Databases, self.databases_row(cx)),
+            ));
+        } else {
+            offered.push(self.databases_row(cx));
+        }
+        let puzzles = crate::puzzle_db::row(cx);
+        if measured.puzzles > 0 {
+            kept.push((measured.puzzles, (Kind::Puzzles, puzzles)));
+        } else {
+            offered.push(puzzles);
+        }
+        let voice = self.voice_model_row(cx);
+        if measured.speech > 0 {
+            kept.push((measured.speech, (Kind::Speech, voice)));
+        } else {
+            offered.push(voice);
+        }
+        if let Some(engine) = self.engine_row(cx) {
+            if measured.engine > 0 {
+                kept.push((measured.engine, (Kind::Engine, engine)));
+            } else {
+                offered.push(engine);
+            }
+        }
+        let tablebases = self.tablebase_row(cx);
+        let downloading = self.tablebase_progress.is_some()
+            || self.tablebases.as_ref().is_some_and(|status| status.busy);
+        if measured.tablebases > 0 && !downloading {
+            kept.push((measured.tablebases, (Kind::Tablebases, tablebases)));
+        } else {
+            offered.push(tablebases);
+        }
+        if measured.own > 0 {
+            kept.push((
+                measured.own,
+                (
+                    Kind::Own,
+                    Self::size_row("storage-own", "library-big", Kind::Own, measured.own),
+                ),
+            ));
+        }
+        if measured.leftovers > 0 || self.leftovers_error.is_some() {
+            kept.push((
+                measured.leftovers,
+                (Kind::Leftovers, self.leftovers_row(measured.leftovers, cx)),
+            ));
+        }
+        let other = measured.other();
+        if other > 0 {
+            kept.push((
+                other,
+                (
+                    Kind::Other,
+                    Self::size_row("storage-other", "file-text", Kind::Other, other),
+                ),
+            ));
+        }
+        let headline = headline(measured.total());
+        let kept = largest_first(kept);
+        // The rows fill the bar between them, in the list's order.
+        let filled = kept
+            .iter()
+            .fold(0u64, |total, (bytes, _)| total.saturating_add(*bytes))
+            .max(1);
         let bar = h_flex()
             .h(px(10.))
             .w_full()
             .rounded_full()
             .overflow_hidden()
             .bg(palette.accented)
-            .children(shown.iter().map(|(part, color)| {
-                div()
-                    .h_full()
-                    .w(relative(part.bytes as f32 / total.max(1) as f32))
-                    .bg(*color)
-            }));
-        let legend = h_flex().flex_wrap().gap_x(px(20.)).gap_y(px(6.)).children(
-            shown.iter().enumerate().map(|(index, (part, color))| {
-                let text = format!("{} {}", part.label, format_bytes(part.bytes as f64));
-                h_flex()
-                    .id(("storage-part", index))
-                    .test_support()
-                    .aria_label(text.clone())
-                    .gap(px(6.))
-                    .text_size(px(12.))
-                    .child(div().size(px(8.)).rounded_full().bg(*color))
-                    .child(div().text_color(palette.text_muted).child(text))
-            }),
-        );
-        widgets::card(palette)
-            .gap(px(12.))
+            .children(
+                kept.iter()
+                    .enumerate()
+                    .filter(|(_, (bytes, _))| *bytes > 0)
+                    .map(|(index, (bytes, (kind, _)))| {
+                        div()
+                            .id(("storage-segment", index))
+                            .test_support()
+                            .aria_label(kind.title())
+                            .h_full()
+                            .w(relative(*bytes as f32 / filled as f32))
+                            .bg(kind.color(palette))
+                    }),
+            );
+        let rows = kept
+            .into_iter()
+            .map(|(_, (kind, row))| row.tint(kind.color(palette)))
+            .collect();
+        let list = widgets::card(palette)
+            .gap(px(4.))
             .child(
-                h_flex()
-                    .justify_between()
-                    .items_end()
-                    .flex_wrap()
-                    .gap(px(12.))
-                    .child(
-                        div()
-                            .id("storage-total")
-                            .test_support()
-                            .aria_label(headline.clone())
-                            .text_size(px(20.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(headline),
-                    )
-                    .children(free.map(|free| {
-                        div()
-                            .id("storage-free")
-                            .test_support()
-                            .aria_label(free.clone())
-                            .text_size(px(13.))
-                            .text_color(palette.text_muted)
-                            .child(free)
-                    })),
+                div()
+                    .id("storage-total")
+                    .test_support()
+                    .aria_label(headline.clone())
+                    .pb(px(4.))
+                    .text_size(px(20.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(headline),
             )
-            .when(total > 0, |card| card.child(bar).child(legend))
+            .child(div().pb(px(4.)).child(bar))
+            .children(separated(rows, palette));
+        let free = self
+            .free_space
+            .map(|free| format!("{} free on this disk", format_bytes(free as f64)));
+        let downloads = (!offered.is_empty()).then(|| {
+            widgets::card(palette)
+                .gap(px(4.))
+                .child(
+                    v_flex()
+                        .gap(px(2.))
+                        .child(widgets::heading("Downloads", palette))
+                        .children(free.map(|free| {
+                            div()
+                                .id("storage-free")
+                                .test_support()
+                                .aria_label(free.clone())
+                                .text_size(px(12.))
+                                .text_color(palette.text_muted)
+                                .child(free)
+                        })),
+                )
+                .children(separated(offered, palette))
+        });
+        (list, downloads)
     }
 
     /// The game databases' row: how many and their size, with Manage.
@@ -313,82 +513,133 @@ impl SettingsPage {
         Some(row)
     }
 
-    /// Everything KChess downloads, one row each.
-    fn downloads_card(&self, cx: &mut Context<Self>, palette: &Palette) -> Div {
-        let rows: Vec<DownloadRow> = [
-            Some(self.databases_row(cx)),
-            Some(crate::puzzle_db::row(cx)),
-            Some(self.voice_model_row(cx)),
-            self.engine_row(cx),
-            Some(self.tablebase_row(cx)),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        widgets::card(palette)
-            .gap(px(4.))
-            .child(widgets::heading("Downloads", palette))
-            .children(rows.into_iter().enumerate().map(|(index, row)| {
-                div()
-                    .when(index > 0, |line| {
-                        line.border_t_1().border_color(palette.border)
-                    })
-                    .child(row)
-            }))
-    }
-
     pub(super) fn storage(&self, cx: &mut Context<Self>, palette: &Palette) -> Div {
+        let (list, downloads) = self.storage_lists(cx, palette);
         v_flex()
             .gap(px(16.))
-            .child(self.storage_summary(cx, palette))
-            .child(self.downloads_card(cx, palette))
+            .child(list)
+            .children(downloads)
             .child(self.accounts_card(cx, palette))
             .child(self.scores_card(cx, palette))
     }
 }
 
+/// Rows one under another, a line between each.
+fn separated(rows: Vec<DownloadRow>, palette: &Palette) -> impl Iterator<Item = Div> + use<> {
+    let border = palette.border;
+    rows.into_iter().enumerate().map(move |(index, row)| {
+        div()
+            .when(index > 0, |line| line.border_t_1().border_color(border))
+            .child(row)
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Measured, headline, parts};
+    use super::{Kind, Measured, headline, largest_first};
+    use gpui_kit::Hsla;
+    use kchess_domain::theme::Rgb;
+    use kchess_ui::theme::{Palette, colors};
 
-    /// The app and what the profile holds besides the named parts are parts too, so the
-    /// headline is all KChess takes.
+    const KINDS: [Kind; 9] = [
+        Kind::App,
+        Kind::Leftovers,
+        Kind::Own,
+        Kind::Engine,
+        Kind::Puzzles,
+        Kind::Databases,
+        Kind::Tablebases,
+        Kind::Speech,
+        Kind::Other,
+    ];
+
+    /// Every theme's palette, light and dark.
+    fn palettes() -> Vec<(String, Palette)> {
+        let presets: Vec<kchess_contracts::types::AppTheme> =
+            serde_json::from_value(kchess_domain::theme::presets().clone()).unwrap();
+        std::iter::once("kchess".to_string())
+            .chain(presets.into_iter().map(|theme| theme.id))
+            .flat_map(|id| {
+                [false, true].map(|dark| {
+                    let palette = Palette::of(&colors(&id, &[], dark), dark);
+                    (format!("{id}, dark {dark}"), palette)
+                })
+            })
+            .collect()
+    }
+
+    fn rgb(color: Hsla) -> Rgb {
+        let color = color.to_rgb();
+        Rgb(
+            f64::from(color.r) * 255.,
+            f64::from(color.g) * 255.,
+            f64::from(color.b) * 255.,
+        )
+    }
+
+    /// The app, every row and what the profile holds besides them add up to all KChess takes.
     #[test]
-    fn the_summary_adds_up_everything_kchess_takes() {
+    fn the_rows_add_up_to_everything_kchess_takes() {
         let mb = 1024 * 1024;
         let measured = Measured {
             app: Some(200 * mb),
-            profile: Some(730 * mb),
+            profile: Some(830 * mb),
             databases: 500 * mb,
             puzzles: 100 * mb,
             own: 20 * mb,
             speech: 40 * mb,
             engine: 50 * mb,
             tablebases: 10 * mb,
+            leftovers: 100 * mb,
         };
-        let all = parts(&measured);
-        let labels: Vec<_> = all.iter().map(|part| part.label).collect();
-        assert_eq!(
-            labels,
-            [
-                "KChess app",
-                "Game databases",
-                "Puzzles",
-                "Your games and studies",
-                "Stockfish, speech and tablebases",
-                "Logs and other files"
-            ]
-        );
-        assert_eq!(all[4].bytes, 100 * mb);
-        assert_eq!(all[5].bytes, 10 * mb, "the profile's other files");
-        assert_eq!(headline(&all), "KChess uses 930 MB");
+        assert_eq!(measured.other(), 10 * mb, "the profile's other files");
+        assert_eq!(headline(measured.total()), "KChess uses 1.0 GB");
         // Not yet measured: only what is known, and never less than nothing.
-        let early = parts(&Measured {
+        let early = Measured {
             profile: Some(mb),
             databases: 5 * mb,
             ..Measured::default()
-        });
-        assert_eq!((early[0].bytes, early[5].bytes), (0, 0));
-        assert_eq!(headline(&parts(&Measured::default())), "KChess uses 0 B");
+        };
+        assert_eq!((early.other(), early.total()), (0, 5 * mb));
+        assert_eq!(headline(Measured::default().total()), "KChess uses 0 B");
+    }
+
+    /// The largest first; rows of one size keep their order.
+    #[test]
+    fn rows_are_listed_largest_first() {
+        let rows = vec![(10, "logs"), (330, "app"), (40, "stockfish"), (10, "own")];
+        let order: Vec<_> = largest_first(rows)
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect();
+        assert_eq!(order, ["app", "stockfish", "logs", "own"]);
+    }
+
+    /// No two rows share a colour in any theme, so each part of the bar names one row.
+    #[test]
+    fn every_row_has_its_own_colour() {
+        for (theme, palette) in palettes() {
+            for (index, kind) in KINDS.iter().enumerate() {
+                for other in &KINDS[index + 1..] {
+                    assert_ne!(
+                        kind.color(&palette),
+                        other.color(&palette),
+                        "{theme}: {kind:?}, {other:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The one gray part stands out from the bar's track by WCAG's 3:1 for non-text contrast in
+    /// every theme. The profile's other files were drawn in a gray at 1.25 to 2.91:1 (1.45 in
+    /// the dark theme): the bar seemed to stop short, and people read the rest as their disk's
+    /// free space.
+    #[test]
+    fn the_gray_part_stands_out_from_the_track() {
+        for (theme, palette) in palettes() {
+            let contrast = rgb(Kind::Other.color(&palette)).contrast(rgb(palette.accented));
+            assert!(contrast >= 3., "{theme}: {contrast:.2}:1");
+        }
     }
 }
