@@ -23,6 +23,7 @@
 use kchess_hack as _;
 
 mod grid;
+mod page;
 mod picture;
 mod position;
 mod sprites;
@@ -35,6 +36,7 @@ use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg;
 use shakmaty::{Board, Color, Piece, Square};
 
+pub use crate::page::{Area, find_boards};
 use crate::picture::Picture;
 use crate::squares::{Cell, Features};
 
@@ -131,53 +133,13 @@ impl Recogniser {
     }
 
     fn read_picture(&self, original: &Picture) -> Result<Recognised, Refusal> {
-        if original.width < 8 * grid::MIN_SQUARE as usize
-            || original.height < 8 * grid::MIN_SQUARE as usize
-        {
-            return Err(Refusal::NoBoard);
-        }
-        // A printed diagram's textured squares are read through their tone: the picture
-        // averaged over the texture's period.
-        let period = texture::period(&original.luma(), original.width, original.height);
-        let averaged;
-        let picture = match period {
-            Some(period) => {
-                averaged = texture::smooth(original, period);
-                &averaged
-            }
-            None => original,
-        };
-        // An edge averaged over the period is a ramp that wide: the flat stretches either side
-        // of it start beyond it.
-        let skip = 1 + period.map_or(0, |period| (period / 2.) as usize);
-        // Lines drawn between the squares are passed over as the ramp is: a line wider than
-        // that gap (a large board's) shows as two weaker edges, one either side of it, and
-        // passed over whole as one edge at its middle, half again as strong as both. (A
-        // textured picture's gap is already the texture's.)
-        let find = |cut: f32| {
-            let first = |skip| -> Vec<grid::Grid> {
-                grid::candidates(picture, skip, cut)
-                    .into_iter()
-                    .take(6)
-                    .collect()
-            };
-            let mut grids = first(skip);
-            if period.is_none() {
-                let wider = first(skip + 2);
-                let best = |grids: &[grid::Grid]| grids.first().map_or(0., |grid| grid.score);
-                if best(&wider) > 1.5 * best(&grids) {
-                    grids = wider;
-                } else {
-                    grids.extend(wider);
-                }
-            }
-            grids.into_iter().find_map(|grid| {
-                let probe = cell_size(&grid);
-                let cells = squares::cells(picture, &grid, probe, 0.);
-                squares::checkered(&cells).map(|colours| (grid, colours))
-            })
-        };
-        let (mut grid, colours) = find(grid::CUT).ok_or(Refusal::NoBoard)?;
+        let Located {
+            averaged,
+            period,
+            mut grid,
+            colours,
+        } = locate(original).ok_or(Refusal::NoBoard)?;
+        let picture = averaged.as_ref().unwrap_or(original);
         grid.gap = grid::gap(picture, &grid, colours);
         let size = cell_size(&grid);
         // The texture's period in the cells' pixels.
@@ -423,6 +385,65 @@ fn plain(colour: [f32; 3], blur: f32, paper: f32) -> Cell {
         floor: 0.,
         overlays: Vec::new(),
     }
+}
+
+/// Where a picture's board lies, and the picture it was found in.
+struct Located {
+    /// A printed diagram's picture averaged over its texture, which the board was found in.
+    averaged: Option<Picture>,
+    /// The texture's period, on a printed diagram.
+    period: Option<f32>,
+    grid: grid::Grid,
+    /// The light and dark squares' colours.
+    colours: [[f32; 3]; 2],
+}
+
+/// The board in `original`: its squares, which alternate between two colours.
+fn locate(original: &Picture) -> Option<Located> {
+    if original.width < 8 * grid::MIN_SQUARE as usize
+        || original.height < 8 * grid::MIN_SQUARE as usize
+    {
+        return None;
+    }
+    // A printed diagram's textured squares are read through their tone: the picture averaged
+    // over the texture's period.
+    let period = texture::period(&original.luma(), original.width, original.height);
+    let averaged = period.map(|period| texture::smooth(original, period));
+    let picture = averaged.as_ref().unwrap_or(original);
+    // An edge averaged over the period is a ramp that wide: the flat stretches either side of it
+    // start beyond it.
+    let skip = 1 + period.map_or(0, |period| (period / 2.) as usize);
+    // Lines drawn between the squares are passed over as the ramp is: a line wider than that gap
+    // (a large board's) shows as two weaker edges, one either side of it, and passed over whole
+    // as one edge at its middle, half again as strong as both. (A textured picture's gap is
+    // already the texture's.)
+    let first = |skip| -> Vec<grid::Grid> {
+        grid::candidates(picture, skip, grid::CUT)
+            .into_iter()
+            .take(6)
+            .collect()
+    };
+    let mut grids = first(skip);
+    if period.is_none() {
+        let wider = first(skip + 2);
+        let best = |grids: &[grid::Grid]| grids.first().map_or(0., |grid| grid.score);
+        if best(&wider) > 1.5 * best(&grids) {
+            grids = wider;
+        } else {
+            grids.extend(wider);
+        }
+    }
+    let (grid, colours) = grids.into_iter().find_map(|grid| {
+        let probe = cell_size(&grid);
+        let cells = squares::cells(picture, &grid, probe, 0.);
+        squares::checkered(&cells).map(|colours| (grid, colours))
+    })?;
+    Some(Located {
+        averaged,
+        period,
+        grid,
+        colours,
+    })
 }
 
 /// The size a square of `grid` is resampled to.

@@ -887,3 +887,129 @@ fn unseen_sets_are_read() {
     assert!(positions >= POSITIONS, "{positions:.1}% of positions");
     assert!(doubted >= DOUBTED, "{doubted:.0}% doubtful");
 }
+
+/// A book's page: six printed diagrams in two rows, each with a blot run into its frame, lines of
+/// text above them, and a square photograph, which is no board. Each diagram is found where it was printed, in reading order,
+/// and read from the area found as it reads alone; a board drawn in colour on a page is found too.
+#[test]
+fn every_board_on_a_page_is_found() {
+    let sets = [set("cburnett"), set("merida")];
+    kchess_testkit::random::check(3, |rng: &mut Rng| {
+        let square = 22 + rng.below(12);
+        let print = Print {
+            square,
+            spacing: square as f32 / 6.,
+            thickness: square as f32 / 15.,
+            rising: true,
+            outline: 1. / 20.,
+            one_bit: rng.chance(50),
+        };
+        let side = 8 * square + 2 * square;
+        let gap = 40;
+        let (columns, rows, text) = (3, 2, 120);
+        let width = columns * side + (columns + 1) * gap;
+        let height = text + rows * (side + gap) + side + gap;
+        let mut page =
+            image::GrayImage::from_pixel(width as u32, height as u32, image::Luma([255]));
+        // Lines of words: small blocks of ink.
+        for line in 0..4 {
+            let mut x = gap;
+            while x + 30 < width - gap {
+                let word = 8 + rng.below(30);
+                for y in gap + line * 20..gap + line * 20 + 9 {
+                    for dx in 0..word.min(width - gap - x) {
+                        page.put_pixel((x + dx) as u32, y as u32, image::Luma([20]));
+                    }
+                }
+                x += word + 6;
+            }
+        }
+        let mut printed_at = Vec::new();
+        for row in 0..rows {
+            for column in 0..columns {
+                let board = random_position(rng);
+                let diagram = printed(&board, rng.pick(&sets).unwrap(), print);
+                let (x, y) = (gap + column * (side + gap), text + gap + row * (side + gap));
+                image::imageops::overlay(&mut page, &diagram, x as i64, y as i64);
+                // A scan's letter run into the frame: a blot under its corner.
+                for blot_y in y + 9 * square..y + 9 * square + square / 2 {
+                    for blot_x in x + square / 2..x + square {
+                        page.put_pixel(blot_x as u32, blot_y as u32, image::Luma([0]));
+                    }
+                }
+                // The frame's corner: the margin of a square in.
+                // Read alone, as a picture of one diagram is: what the page's reading must match.
+                let alone = recogniser()
+                    .read_image(&image::DynamicImage::ImageLuma8(diagram.clone()))
+                    .unwrap();
+                printed_at.push(((x + square) as u32, (y + square) as u32, alone.board));
+            }
+        }
+        // A photograph's grain, as square as a board.
+        let photo_y = text + gap + rows * (side + gap);
+        for y in photo_y..photo_y + side - gap {
+            for x in gap..gap + side - gap {
+                page.put_pixel(x as u32, y as u32, image::Luma([rng.below(160) as u8]));
+            }
+        }
+        let page = image::DynamicImage::ImageLuma8(page);
+        let found = find_boards(&page);
+        assert_eq!(found.len(), printed_at.len(), "{found:?}");
+        for (area, (x, y, board)) in found.iter().zip(&printed_at) {
+            let near = |a: u32, b: u32| a.abs_diff(b) <= 2;
+            assert!(
+                near(area.x, *x) && near(area.y, *y),
+                "{area:?} not at {x},{y}"
+            );
+            assert!(near(area.width, 8 * square as u32), "{area:?}");
+            assert!(near(area.height, 8 * square as u32), "{area:?}");
+            let grown = area.grown(0.12, page.width(), page.height());
+            let read = recogniser()
+                .read_image(&page.crop_imm(grown.x, grown.y, grown.width, grown.height))
+                .unwrap();
+            assert_eq!(&read.board, board, "the board at {area:?}");
+        }
+    });
+    // A board drawn in colour, as an e-book draws one.
+    let board = "r1bq1rk1/pp2bppp/2n1pn2/3p4/2PP4/2N1PN2/PP1B1PPP/R2QKB1R w KQ - 0 1"
+        .parse::<shakmaty::fen::Fen>()
+        .unwrap()
+        .into_setup()
+        .board;
+    let drawn = picture(&board, &set("cburnett"), 30, true, 0);
+    let mut page = image::RgbaImage::from_pixel(700, 900, image::Rgba([255, 255, 255, 255]));
+    image::imageops::overlay(&mut page, &drawn, 200, 300);
+    let found = find_boards(&image::DynamicImage::ImageRgba8(page));
+    assert_eq!(
+        found,
+        vec![Area {
+            x: 200,
+            y: 300,
+            width: 240,
+            height: 240
+        }]
+    );
+}
+
+/// Finds the boards on the pages `KCHESS_RECOGNISE_PAGES` names (separated by `:`) and reads
+/// each, printing its area and position: for trying the finder on pages of books that cannot be
+/// in the repository.
+#[test]
+#[ignore = "reads files named in KCHESS_RECOGNISE_PAGES"]
+fn read_pages() {
+    let files = kchess_host::env::var("KCHESS_RECOGNISE_PAGES").unwrap_or_default();
+    for path in files.split(':').filter(|path| !path.is_empty()) {
+        let page = image::open(path).unwrap();
+        let started = std::time::Instant::now();
+        let found = find_boards(&page);
+        println!("{path}: {} boards in {:?}", found.len(), started.elapsed());
+        for area in found {
+            let grown = area.grown(0.12, page.width(), page.height());
+            let crop = page.crop_imm(grown.x, grown.y, grown.width, grown.height);
+            match recogniser().read_image(&crop) {
+                Ok(read) => println!("  {area:?}\t{}\tdoubtful {:?}", read.fen, read.doubtful),
+                Err(refusal) => println!("  {area:?}\trefused: {refusal}"),
+            }
+        }
+    }
+}

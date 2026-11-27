@@ -1,0 +1,18 @@
+[package]
+name = "kchess-books"
+description = "A chess book's pages, drawn on this computer alone: a PDF opened and each page rendered as a picture."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The PDF renderer: pure Rust, CPU only, and reads the JBIG2 and CCITT scans that scanned books
+# are made of. Its embedded fonts draw the text of a PDF that names a standard font without
+# embedding it; the CJK character maps are left out.
+hayro = { version = "0.9", default-features = false, features = ["embed-fonts"] }
+image = { version = "0.25", default-features = false }
+kchess-hack = { version = "0.1", path = "../kchess-hack" }
+
+[lints]
+workspace = true
