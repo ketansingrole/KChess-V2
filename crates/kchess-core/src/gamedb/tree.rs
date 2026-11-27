@@ -9,9 +9,8 @@
 //! than one map, and SQLite receives its rows in the order its B-tree stores them.
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::collections::HashMap;
+use std::io::{Read, Write};
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 
@@ -141,8 +140,7 @@ fn read_record(input: &mut impl Read) -> std::io::Result<Option<(u64, u16, Stats
 pub struct TreeBuilder {
     rows: HashMap<(u64, u16), Stats>,
     capacity: usize,
-    runs: Vec<File>,
-    temp: tempfile::TempDir,
+    runs: super::runs::Runs,
 }
 
 fn io(error: std::io::Error) -> CoreError {
@@ -157,11 +155,7 @@ impl TreeBuilder {
         Ok(TreeBuilder {
             rows: HashMap::with_capacity(capacity),
             capacity: capacity.max(1),
-            runs: Vec::new(),
-            temp: tempfile::Builder::new()
-                .prefix(".tree-")
-                .tempdir_in(parent)
-                .map_err(io)?,
+            runs: super::runs::Runs::new(parent, ".tree-", io)?,
         })
     }
 
@@ -182,29 +176,21 @@ impl TreeBuilder {
 
     /// The rows in memory in key order, by reference: a sorted copy would double what a run
     /// holds in memory.
-    fn sorted(&self) -> Vec<(&(u64, u16), &Stats)> {
-        let mut rows: Vec<_> = self.rows.iter().collect();
+    fn sorted(rows: &HashMap<(u64, u16), Stats>) -> Vec<(&(u64, u16), &Stats)> {
+        let mut rows: Vec<_> = rows.iter().collect();
         rows.sort_unstable_by_key(|(at, _)| **at);
         rows
     }
 
     /// The rows in memory written out as a sorted run; the map keeps its size for the next.
     fn spill(&mut self) -> Result<()> {
-        let rows = self.sorted();
-        let path = self.temp.path().join(format!("run-{}", self.runs.len()));
-        let file = File::options()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(io)?;
-        let mut out = BufWriter::with_capacity(1 << 20, file);
-        for ((key, mv), stats) in rows {
-            write_record(&mut out, *key, *mv, stats).map_err(io)?;
-        }
-        let mut file = out.into_inner().map_err(|e| io(e.into_error()))?;
-        std::io::Seek::rewind(&mut file).map_err(io)?;
-        self.runs.push(file);
+        let rows = Self::sorted(&self.rows);
+        self.runs.spill(|out| {
+            for ((key, mv), stats) in rows {
+                write_record(out, *key, *mv, stats)?;
+            }
+            Ok(())
+        })?;
         self.rows.clear();
         Ok(())
     }
@@ -212,7 +198,7 @@ impl TreeBuilder {
     /// Every row in key order, those of several runs added together, to `each`.
     fn merged(mut self, mut each: impl FnMut(u64, u16, &Stats) -> Result<()>) -> Result<()> {
         if self.runs.is_empty() {
-            for (&(key, mv), stats) in self.sorted() {
+            for (&(key, mv), stats) in Self::sorted(&self.rows) {
                 each(key, mv, stats)?;
             }
             return Ok(());
@@ -222,33 +208,21 @@ impl TreeBuilder {
         }
         // The runs hold every row now; the map's memory goes back before the merge.
         self.rows = HashMap::new();
-        let mut readers: Vec<_> = self
-            .runs
-            .drain(..)
-            .map(|file| BufReader::with_capacity(1 << 18, file))
-            .collect();
-        let mut heap = BinaryHeap::new();
-        for (index, reader) in readers.iter_mut().enumerate() {
-            if let Some((key, mv, stats)) = read_record(reader).map_err(io)? {
-                heap.push(Reverse(((key, mv), index, StatsOrd(stats))));
-            }
-        }
         let mut current: Option<((u64, u16), Stats)> = None;
-        while let Some(Reverse((at, index, StatsOrd(stats)))) = heap.pop() {
-            if let Some(reader) = readers.get_mut(index)
-                && let Some((key, mv, next)) = read_record(reader).map_err(io)?
-            {
-                heap.push(Reverse(((key, mv), index, StatsOrd(next))));
-            }
-            match &mut current {
-                Some((open, sum)) if *open == at => sum.add(&stats),
-                _ => {
-                    if let Some(((key, mv), sum)) = current.replace((at, stats)) {
-                        each(key, mv, &sum)?;
+        self.runs.merge(
+            |reader| Ok(read_record(reader)?.map(|(key, mv, stats)| ((key, mv), StatsOrd(stats)))),
+            |(at, StatsOrd(stats))| {
+                match &mut current {
+                    Some((open, sum)) if *open == at => sum.add(&stats),
+                    _ => {
+                        if let Some(((key, mv), sum)) = current.replace((at, stats)) {
+                            each(key, mv, &sum)?;
+                        }
                     }
                 }
-            }
-        }
+                Ok(())
+            },
+        )?;
         if let Some(((key, mv), sum)) = current {
             each(key, mv, &sum)?;
         }

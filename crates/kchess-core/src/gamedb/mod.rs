@@ -23,6 +23,7 @@ pub mod own;
 pub mod player;
 pub mod repertoire;
 pub mod report;
+mod runs;
 pub mod scan;
 pub mod schema;
 pub mod search;

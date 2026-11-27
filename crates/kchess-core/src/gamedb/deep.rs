@@ -11,10 +11,7 @@
 //! in memory up to a bound and in sorted run files beyond, and merges them into the buckets at
 //! its end, as the tree does.
 
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{Read, Write};
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 use shakmaty::variant::VariantPosition;
@@ -71,8 +68,7 @@ pub fn structures(
 pub struct DeepBuilder {
     entries: Vec<u64>,
     capacity: usize,
-    runs: Vec<File>,
-    temp: tempfile::TempDir,
+    runs: super::runs::Runs,
 }
 
 impl DeepBuilder {
@@ -81,11 +77,7 @@ impl DeepBuilder {
         Ok(DeepBuilder {
             entries: Vec::new(),
             capacity: capacity.max(1),
-            runs: Vec::new(),
-            temp: tempfile::Builder::new()
-                .prefix(".deep-")
-                .tempdir_in(parent)
-                .map_err(io)?,
+            runs: super::runs::Runs::new(parent, ".deep-", io)?,
         })
     }
 
@@ -120,20 +112,13 @@ impl DeepBuilder {
 
     fn spill(&mut self) -> Result<()> {
         self.entries.sort_unstable();
-        let path = self.temp.path().join(format!("run-{}", self.runs.len()));
-        let file = File::options()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(io)?;
-        let mut out = BufWriter::with_capacity(1 << 20, file);
-        for value in &self.entries {
-            out.write_all(&value.to_le_bytes()).map_err(io)?;
-        }
-        let mut file = out.into_inner().map_err(|e| io(e.into_error()))?;
-        std::io::Seek::rewind(&mut file).map_err(io)?;
-        self.runs.push(file);
+        let entries = &self.entries;
+        self.runs.spill(|out| {
+            for value in entries {
+                out.write_all(&value.to_le_bytes())?;
+            }
+            Ok(())
+        })?;
         self.entries.clear();
         Ok(())
     }
@@ -151,34 +136,17 @@ impl DeepBuilder {
             self.spill()?;
         }
         self.entries = Vec::new();
-        let mut readers: Vec<_> = self
-            .runs
-            .drain(..)
-            .map(|file| BufReader::with_capacity(1 << 16, file))
-            .collect();
-        let next = |reader: &mut BufReader<File>| -> Result<Option<u64>> {
-            let mut bytes = [0u8; 8];
-            match reader.read_exact(&mut bytes) {
-                Ok(()) => Ok(Some(u64::from_le_bytes(bytes))),
-                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
-                Err(error) => Err(io(error)),
-            }
-        };
-        let mut heap = BinaryHeap::new();
-        for (index, reader) in readers.iter_mut().enumerate() {
-            if let Some(value) = next(reader)? {
-                heap.push(Reverse((value, index)));
-            }
-        }
-        while let Some(Reverse((value, index))) = heap.pop() {
-            if let Some(reader) = readers.get_mut(index)
-                && let Some(following) = next(reader)?
-            {
-                heap.push(Reverse((following, index)));
-            }
-            each(value)?;
-        }
-        Ok(())
+        self.runs.merge(
+            |reader| {
+                let mut bytes = [0u8; 8];
+                match reader.read_exact(&mut bytes) {
+                    Ok(()) => Ok(Some(u64::from_le_bytes(bytes))),
+                    Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
+                    Err(error) => Err(error),
+                }
+            },
+            each,
+        )
     }
 
     /// Writes the entries into `db`'s buckets, merged with those already there. The caller holds
