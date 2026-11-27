@@ -23,11 +23,17 @@ request (Dependabot included), bad config and a measurement that surprises you.
 - Code reaches `main` through a pull request, so CI tests it on macOS, Windows and Linux before
   it lands. The local check runs only on this Mac and cannot see platform-only failures: all six
   red runs on `main` from 2026-10-29 to 2026-11-06 passed here first.
+- The user decides when a pull request opens. Work on a branch in your own worktree and commit
+  each change there as you go, so the user can try it and steer it first. Push and open the pull
+  request only when the user asks (or types `/ship`); an unattended run leaves its branches
+  unpushed and lists them in its report. Asked for only some of the work, put those commits on a
+  fresh branch from `origin/main`, and say first when they do not split cleanly. Until it is in a
+  pull request, the work has not run on Windows or Linux: say so when reporting it.
 - Before opening or updating the PR, run `cargo xtask check-fast`. CI runs the full check, so
   you do not need `cargo xtask check` for a PR.
 - When CI fails, read every failed job (`gh run view <id> --log-failed`) and fix them all in one
   push: each push restarts the whole run and cancels the one before it.
-- Open the PR and carry on. Merge it once CI is green, with auto-merge if it is enabled. Fix
+- Once the PR is open, carry on. Merge it once CI is green, with auto-merge if it is enabled. Fix
   failures with new commits on the branch, not on `main`. Watch CI in the background
   (`gh run watch <id> --exit-status` with the tool's background mode); do not sit idle on it
   unless the next step needs its result.
