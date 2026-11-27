@@ -1669,6 +1669,54 @@ fn the_squares_to_check_are_marked_until_changed(cx: &mut gpui_kit::TestAppConte
     assert!(!app.shows("editor-marked"));
 }
 
+/// A picture read from White's side that was drawn from Black's: one click puts every piece on
+/// the opposite square and turns the board, the rings moving with their pieces, and back again.
+/// Another position set up is no picture's, so the choice goes.
+#[gpui_kit::test]
+fn a_picture_read_from_the_wrong_side_is_turned_around(cx: &mut gpui_kit::TestAppContext) {
+    use shakmaty::Square;
+    let mut app = editor(cx);
+    let page = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view::<crate::pages::editor::EditorPage>(cx)
+                .map(|page| page.read(cx).marked().to_vec())
+                .unwrap_or_default()
+        })
+    };
+    assert!(!app.shows("editor-turn-around"));
+    app.with_window(|window, cx| {
+        if let Some(editor) = crate::shell::view::<crate::pages::editor::EditorPage>(cx) {
+            editor.update(cx, |editor, cx| {
+                editor.set_picture_position(
+                    "1k6/8/8/8/8/8/1P6/R3K2R w KQ - 0 1",
+                    shakmaty::Color::White,
+                    vec![Square::B2],
+                    window,
+                    cx,
+                )
+            });
+        }
+    });
+    wait_for_fen(&mut app, "1k6/8/8/8/8/8/1P6/R3K2R w KQ - 0 1");
+    assert_eq!(
+        app.find("editor-turn-around").label(),
+        Some("Picture was from Black's side")
+    );
+    app.click("editor-turn-around");
+    wait_for_fen(&mut app, "R2K3R/6P1/8/8/8/8/8/6k1 w - - 0 1");
+    assert_eq!(page(&mut app), [Square::G7]);
+    assert_eq!(
+        app.find("editor-turn-around").label(),
+        Some("Picture was from White's side")
+    );
+    app.click("editor-turn-around");
+    wait_for_fen(&mut app, "1k6/8/8/8/8/8/1P6/R3K2R w KQ - 0 1");
+    assert_eq!(page(&mut app), [Square::B2]);
+    app.click("start-position");
+    wait_for_fen(&mut app, START_FEN);
+    assert!(!app.shows("editor-turn-around"));
+}
+
 /// The import's Open file… reads a PGN file from disk, as if it were pasted.
 #[gpui_kit::test]
 fn the_import_opens_a_pgn_file(cx: &mut gpui_kit::TestAppContext) {
