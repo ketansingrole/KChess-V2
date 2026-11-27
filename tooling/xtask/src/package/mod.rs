@@ -30,7 +30,7 @@ use std::process::Command;
 
 use kchess_delta::{Asset, installed};
 
-use crate::util::{Result, root, run_with, say};
+use crate::util::{RELEASE_BUILD_QUIET, Result, root, run_quiet_for, say};
 
 /// The oldest macOS KChess runs on: the bundle's `LSMinimumSystemVersion`, and the target the
 /// programs built beside it (Fairy-Stockfish) are compiled for.
@@ -232,7 +232,7 @@ fn build(skip: bool) -> Result<Built> {
     let target = root().join("target/release");
     if !skip {
         say("Building the app, core service, command line and voice helper (release)…");
-        run_with(&mut compile(std::env::consts::OS))?;
+        run_quiet_for(&mut compile(std::env::consts::OS), RELEASE_BUILD_QUIET)?;
     }
     let voice = crate::voice::stage("release")?;
     let fairy = crate::fairy::build()?;
@@ -314,7 +314,7 @@ pub fn run(args: &[String]) -> Result {
     } = options(args);
     if build_only {
         say("Building the app, core service, command line and voice helper (release)…");
-        return run_with(&mut compile(std::env::consts::OS));
+        return run_quiet_for(&mut compile(std::env::consts::OS), RELEASE_BUILD_QUIET);
     }
     // KCHESS_PACKAGE_VERSION builds a test installer above every release (windows-upgrade.yml);
     // the app reads the same variable (apps/gpui/build.rs).

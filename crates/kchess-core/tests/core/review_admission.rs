@@ -20,6 +20,10 @@ async fn cancel_during_storage_admission_does_not_enqueue_later() {
     // must fail here, not hang CI until the job timeout).
     const LIMIT: Duration = Duration::from_secs(5);
     let store = ReviewDb::new();
+    // The file is created and migrated on its first use: here, so the limits below time
+    // admission and cancellation alone, not a fresh database on a loaded runner's disk (the
+    // Windows run that timed out here first opened the file inside the limit).
+    store.database.read(|_| Ok(())).expect("open the store");
     let recording = support::host();
     let context = support::context(
         &recording,

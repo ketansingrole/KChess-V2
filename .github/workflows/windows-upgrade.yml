@@ -27,7 +27,8 @@ jobs:
   # CI's Windows package, made here rather than twice.
   build:
     runs-on: windows-latest
-    timeout-minutes: 60
+    # Twice the slowest green run: a release commit's, 47 minutes (2026-11-27).
+    timeout-minutes: 95
     permissions:
       contents: read
       # The drop-caches action.

@@ -9,6 +9,8 @@ with nothing there.
 
 ## Unreleased
 
+## 2026.11.10 (2026-11-27)
+
 KChess is now a chess database too. Keep millions of games on your computer, from your own files, top events, engines, strong Lichess players or the opponent you are preparing for, and study them with no connection.
 
 ### Added
