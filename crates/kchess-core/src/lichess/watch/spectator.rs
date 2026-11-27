@@ -557,7 +557,7 @@ impl Inner {
                     // players, bots) shows standard chess until the export says otherwise.
                     variant: kchess_domain::variant::Variant::from_key(channel)
                         .unwrap_or_default()
-                        .key()
+                        .as_str()
                         .to_string(),
                     speed: None,
                     rated: None,
@@ -797,7 +797,7 @@ impl Inner {
                         true
                     }
                     Some(setup) => {
-                        current.variant = setup.variant.key().to_string();
+                        current.variant = setup.variant.as_str().to_string();
                         // Brought up to the feed as it is now, under the lock its moves take.
                         let moves = lined.map_or(TvMoves::Unknown, |lined| lined.caught_up(&track));
                         let (moves, behind) = match moves {
@@ -991,7 +991,7 @@ impl Inner {
                             variant: {
                                 let key = record.variant.0.and_then(|variant| variant.key.0);
                                 kchess_domain::variant::Variant::from_lichess(key.as_deref())
-                                    .map_or_else(|| key.unwrap_or_default(), |v| v.key().into())
+                                    .map_or_else(|| key.unwrap_or_default(), |v| v.as_str().into())
                             },
                             speed: details.speed,
                             rated: details.rated,

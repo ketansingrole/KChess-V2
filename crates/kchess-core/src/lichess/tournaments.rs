@@ -904,7 +904,7 @@ pub fn arena_form(arena: &NewArena) -> Vec<(&'static str, String)> {
     if let Some(date) = arena.start_date {
         form.push(("startDate", date.to_string()));
     }
-    form.push(("variant", arena.variant.key().to_string()));
+    form.push(("variant", arena.variant.as_str().to_string()));
     form.push(("rated", arena.rated.to_string()));
     if let Some(password) = arena.password.as_deref().filter(|value| !value.is_empty()) {
         form.push(("password", password.to_string()));

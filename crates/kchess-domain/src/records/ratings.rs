@@ -12,7 +12,7 @@ use crate::js;
 const DAY_MS: i64 = 86_400_000;
 
 const fn named(variant: Variant) -> (&'static str, &'static str) {
-    (variant.key(), variant.label())
+    (variant.as_str(), variant.label())
 }
 
 const fn speed(speed: Speed) -> (&'static str, &'static str) {

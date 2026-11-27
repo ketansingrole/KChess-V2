@@ -467,7 +467,7 @@ impl InsightsPage {
             .report
             .iter()
             .flat_map(|report| &report.variants)
-            .map(|variant| variant.key().to_string())
+            .map(|variant| variant.as_str().to_string())
             .chain((chosen != "standard" && chosen != "all").then_some(chosen.clone()))
         {
             if !keys.contains(&key) {

@@ -115,7 +115,7 @@ pub fn review_key<S: AsRef<str>>(fen: &str, moves: &[S], variant: Option<Variant
     let moves: Vec<&str> = moves.iter().map(AsRef::as_ref).collect();
     match variant {
         Some(variant) if !variant.standard_rules() => {
-            cyrb53(&format!("{}|{fen}", variant.key()), &moves.join(" "))
+            cyrb53(&format!("{}|{fen}", variant.as_str()), &moves.join(" "))
         }
         _ => cyrb53(fen, &moves.join(" ")),
     }

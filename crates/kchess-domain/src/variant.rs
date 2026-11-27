@@ -2,72 +2,26 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A variant KChess plays, by its Lichess key on the wire.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-#[serde(rename_all = "camelCase")]
-pub enum Variant {
-    #[default]
-    Standard,
-    Chess960,
-    KingOfTheHill,
-    ThreeCheck,
-    Antichess,
-    Atomic,
-    Horde,
-    RacingKings,
-    Crazyhouse,
-}
-
-/// The Lichess variant keys KChess plays, in `Variant::ALL`'s order: the one list every crate
-/// checks a variant against.
-pub const VARIANTS: &[&str] = &KEYS;
-
-const KEYS: [&str; 9] = {
-    let mut keys = [""; 9];
-    let mut i = 0;
-    while i < Variant::ALL.len() {
-        keys[i] = Variant::ALL[i].key();
-        i += 1;
+crate::wire_enum!(
+    /// A variant KChess plays, by its Lichess key on the wire. `ALL` lists them standard first, in
+    /// the order the variant pickers list them, and `VARIANTS` their keys: the one list every crate
+    /// checks a variant against.
+    #[derive(Default)]
+    Variant, VARIANTS {
+        #[default]
+        Standard = "standard",
+        Chess960 = "chess960",
+        KingOfTheHill = "kingOfTheHill",
+        ThreeCheck = "threeCheck",
+        Antichess = "antichess",
+        Atomic = "atomic",
+        Horde = "horde",
+        RacingKings = "racingKings",
+        Crazyhouse = "crazyhouse",
     }
-    keys
-};
+);
 
 impl Variant {
-    /// Every variant, standard first, in the order the variant pickers list them.
-    pub const ALL: [Variant; 9] = [
-        Variant::Standard,
-        Variant::Chess960,
-        Variant::KingOfTheHill,
-        Variant::ThreeCheck,
-        Variant::Antichess,
-        Variant::Atomic,
-        Variant::Horde,
-        Variant::RacingKings,
-        Variant::Crazyhouse,
-    ];
-
-    /// The Lichess key ("kingOfTheHill").
-    pub const fn key(self) -> &'static str {
-        match self {
-            Variant::Standard => "standard",
-            Variant::Chess960 => "chess960",
-            Variant::KingOfTheHill => "kingOfTheHill",
-            Variant::ThreeCheck => "threeCheck",
-            Variant::Antichess => "antichess",
-            Variant::Atomic => "atomic",
-            Variant::Horde => "horde",
-            Variant::RacingKings => "racingKings",
-            Variant::Crazyhouse => "crazyhouse",
-        }
-    }
-
-    /// The variant of a Lichess key.
-    pub fn from_key(key: &str) -> Option<Variant> {
-        Variant::ALL
-            .into_iter()
-            .find(|variant| variant.key() == key)
-    }
-
     /// The variant a Lichess game is played in: `fromPosition` (or none) is standard rules from
     /// another start; none for a variant KChess does not play.
     pub fn from_lichess(key: Option<&str>) -> Option<Variant> {
@@ -254,14 +208,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_variant_reads_back_from_its_key_name_and_wire_value() {
-        for variant in Variant::ALL {
-            assert_eq!(Variant::from_key(variant.key()), Some(variant));
+    fn each_variant_reads_back_from_its_pgn_name() {
+        for &variant in Variant::ALL {
             assert_eq!(Variant::from_pgn_name(Some(variant.label())), Some(variant));
-            assert_eq!(
-                serde_json::to_value(variant).unwrap(),
-                serde_json::json!(variant.key())
-            );
         }
         assert_eq!(VARIANTS[2], "kingOfTheHill");
         assert_eq!(Variant::from_pgn_name(None), Some(Variant::Standard));

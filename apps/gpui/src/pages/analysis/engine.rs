@@ -132,7 +132,7 @@ impl AnalysisPage {
             // Fairy-Stockfish analyses the other variants.
             variant: self
                 .fairy_variant()
-                .map(|variant| variant.key().to_string()),
+                .map(|variant| variant.as_str().to_string()),
         };
         // Every look searches again: the board asks only when what it shows changed, or to retry.
         self.search

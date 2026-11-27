@@ -126,7 +126,7 @@ fn clauses(query: &InsightsQuery, prefix: &str, now: f64) -> Result<(Vec<String>
     }
     // Lichess files a variant game under the variant (`perf`): standard chess, by default, leaves
     // them out, so their results and openings do not mix into it.
-    match query.variant.map(Variant::key) {
+    match query.variant.map(Variant::as_str) {
         Some(variant) if variant != "standard" => {
             clauses.push(format!("{prefix}perf = ?"));
             params.push(Sql::Text(variant.to_string()));

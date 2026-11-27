@@ -171,7 +171,7 @@ impl AnalysisPage {
                     moves: Moves(moves),
                     variant: self
                         .fairy_variant()
-                        .map(|variant| variant.key().to_string()),
+                        .map(|variant| variant.as_str().to_string()),
                 });
                 let store = store.clone();
                 cx.spawn(async move |this, cx| match found.await {
@@ -334,7 +334,7 @@ impl AnalysisPage {
             // Fairy-Stockfish reviews the other variants.
             variant: self
                 .fairy_variant()
-                .map(|variant| variant.key().to_string()),
+                .map(|variant| variant.as_str().to_string()),
             account: origin.game_id.as_ref().and(origin.account.clone()),
             game_id: origin.game_id,
         };

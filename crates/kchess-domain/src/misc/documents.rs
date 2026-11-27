@@ -56,7 +56,7 @@ fn variant_of(setup: Option<&J>) -> Option<Variant> {
 
 fn setup_object(variant: Variant, fen: &str) -> J {
     J::Obj(vec![
-        ("variant".into(), J::Str(variant.key().into())),
+        ("variant".into(), J::Str(variant.as_str().into())),
         ("fen".into(), J::Str(fen.into())),
     ])
 }

@@ -2,6 +2,7 @@
 
 use kchess_contracts::defaults::default_settings;
 use kchess_contracts::types::*;
+use kchess_domain::variant::{VARIANTS, Variant};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -54,6 +55,7 @@ fn every_wire_enum_round_trips_its_listed_values() {
         PuzzleTrainMode: PUZZLE_TRAIN_MODES,
         ReviewAuto: REVIEW_AUTO,
         RunKind: RUN_KINDS,
+        Variant: VARIANTS,
         VoiceOutcome: VOICE_OUTCOMES,
         VoiceSource: VOICE_SOURCES,
     );

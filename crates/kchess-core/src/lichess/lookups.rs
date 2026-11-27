@@ -537,7 +537,7 @@ impl PositionLookups {
             }
             match kind {
                 Kind::Opening => {
-                    query.append_pair("variant", options.variant.unwrap_or_default().key());
+                    query.append_pair("variant", options.variant.unwrap_or_default().as_str());
                     query.append_pair(
                         "speeds",
                         &speeds(options.speeds.as_deref().unwrap_or_default()),
@@ -561,7 +561,7 @@ impl PositionLookups {
                     let side = options.color.unwrap_or(Color::White);
                     query.append_pair("color", color::name(side));
                     if let Some(variant) = options.variant {
-                        query.append_pair("variant", variant.key());
+                        query.append_pair("variant", variant.as_str());
                     }
                     if let Some(listed) = options.speeds.as_ref().filter(|s| !s.is_empty()) {
                         query.append_pair("speeds", &speeds(listed));

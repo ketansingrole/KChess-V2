@@ -181,7 +181,7 @@ pub fn position_lookup(
         .as_ref()
         .and_then(|options| options.variant)
         .filter(|variant| *variant != Variant::Standard);
-    analysis_position(&fen.0, variant.map(Variant::key))
+    analysis_position(&fen.0, variant.map(Variant::as_str))
 }
 
 #[cfg(test)]

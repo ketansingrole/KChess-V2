@@ -72,7 +72,7 @@ impl From<&kchess_domain::games::computer::SearchOptions> for BestMoveOptions {
             fen: options.fen.clone(),
             movetime: options.movetime.map(|ms| ms as u64),
             chess960: options.chess960.then_some(true),
-            variant: options.variant.map(|variant| variant.key().to_string()),
+            variant: options.variant.map(|variant| variant.as_str().to_string()),
         }
     }
 }

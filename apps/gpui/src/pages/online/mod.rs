@@ -123,7 +123,7 @@ impl OnlinePage {
             SelectState::new(
                 Variant::ALL
                     .iter()
-                    .map(|variant| Choice::new(variant.key(), variant.label()))
+                    .map(|variant| Choice::new(variant.as_str(), variant.label()))
                     .collect(),
                 None,
                 window,
@@ -131,7 +131,7 @@ impl OnlinePage {
             )
         });
         variant_select.update(cx, |select, cx| {
-            select.set_selected_value(&SharedString::from(form.variant.key()), window, cx)
+            select.set_selected_value(&SharedString::from(form.variant.as_str()), window, cx)
         });
         let account_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let chat_input =

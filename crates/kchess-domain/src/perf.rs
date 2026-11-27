@@ -60,7 +60,7 @@ impl Perf {
     pub const fn key(self) -> &'static str {
         match self {
             Perf::Speed(speed) => speed.as_str(),
-            Perf::Variant(variant) => variant.key(),
+            Perf::Variant(variant) => variant.as_str(),
         }
     }
 
@@ -91,7 +91,8 @@ mod tests {
     #[test]
     fn the_perfs_are_the_speeds_and_the_other_variants() {
         let variants: Vec<Variant> = Variant::ALL
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|variant| *variant != Variant::Standard)
             .collect();
         let listed: Vec<Variant> = Perf::ALL

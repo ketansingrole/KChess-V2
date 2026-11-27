@@ -62,7 +62,7 @@ use kchess_domain::training::openings::{self, OpeningName};
 
 /// The opening a game set up as `setup` reached after `ply` of `moves`.
 pub fn opening_at<S: AsRef<str>>(setup: &Setup, moves: &[S], ply: usize) -> Option<OpeningName> {
-    openings::opening_at(setup.variant.key(), &setup.fen, moves, ply as f64)
+    openings::opening_at(setup.variant.as_str(), &setup.fen, moves, ply as f64)
 }
 
 /// A computer level's search profile; none for a level the ladder does not know.
