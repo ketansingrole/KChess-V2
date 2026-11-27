@@ -191,7 +191,7 @@ impl StudiesPage {
                     widgets::StudyCard {
                         id: id.clone(),
                         name,
-                        board,
+                        picture: board.map(widgets::CardPicture::Board),
                         location,
                         description: (!description.is_empty()).then_some(description),
                         edited: Some(study.updated_at_ms())

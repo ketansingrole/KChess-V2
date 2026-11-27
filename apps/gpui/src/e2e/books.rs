@@ -2,6 +2,7 @@
 //! on them, the next diagram over the page's end, and the book reopened where it was left.
 
 use super::Harness;
+use crate::pages::books::diagram_id;
 
 /// The export's picture of `fen` with cburnett pieces on the brown board: a book's diagram.
 fn diagram(fen: &str) -> image::RgbImage {
@@ -111,7 +112,8 @@ const BACK_RANK: &str = "6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1";
 /// A book opened from the Open dialog shows its first page with its diagrams outlined; a click
 /// sets one up on the board, where its moves are played and taken back; Next diagram goes on to
 /// the page's next and then over a page without diagrams to the next one's first, and back
-/// the same way; the side to move can be switched. Reopened, the page opens the book again where it was left.
+/// /// the same way; the side to move can be switched. Reopened, the page opens the book again where
+/// it was left.
 #[gpui_kit::test]
 fn a_book_s_diagrams_are_set_up_on_the_board(cx: &mut gpui_kit::TestAppContext) {
     let folder = tempfile::tempdir().expect("a folder");
@@ -128,10 +130,10 @@ fn a_book_s_diagrams_are_set_up_on_the_board(cx: &mut gpui_kit::TestAppContext) 
         .simulate_path_prompt_response(move |_| Some(vec![chosen]));
     app.wait_for("both diagrams outlined", |window, _| {
         use gpui_kit::test::TestQueryExt as _;
-        window.try_find_by_label("Diagram 2").is_some()
+        window.try_find_by_label("Diagram 2 on page 1").is_some()
     });
 
-    app.click(("book-diagram", 0usize));
+    app.click(diagram_id(0, 0));
     wait_for_fen(&mut app, ITALIAN);
     // Qxf7 is mate; taken back, the diagram is as it was.
     app.drag_square("h5", "f7", true);
@@ -175,12 +177,66 @@ fn a_book_s_diagrams_are_set_up_on_the_board(cx: &mut gpui_kit::TestAppContext) 
     app.open("Books");
     app.wait_for("the book reopened on its third page", |window, cx| {
         use gpui_kit::test::TestQueryExt as _;
-        window.try_find_by_label("Diagram 1").is_some()
+        window.try_find_by_label("Diagram 1 on page 3").is_some()
             && crate::shell::view::<crate::pages::books::BooksPage>(cx)
                 .is_some_and(|page| page.read(cx).page() == 2)
     });
-    app.click(("book-diagram", 0usize));
+    app.click(diagram_id(2, 0));
     wait_for_fen(&mut app, BACK_RANK);
+}
+
+fn page_read(app: &mut Harness) -> Option<usize> {
+    app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::books::BooksPage>(cx).map(|page| page.read(cx).page())
+    })
+}
+
+/// The book scrolls on from page to page as a printed one is leafed through: the page read
+/// follows the scroll, the pages come into view drawn with their diagrams outlined, and one
+/// scrolled to is set up with a click.
+#[gpui_kit::test]
+fn a_book_scrolls_from_page_to_page(cx: &mut gpui_kit::TestAppContext) {
+    let folder = tempfile::tempdir().expect("a folder");
+    let path = folder.path().join("Endings.pdf");
+    std::fs::write(
+        &path,
+        book(&[&[ITALIAN], &[], &[], &[ENDING], &[BACK_RANK]]),
+    )
+    .expect("the book written");
+
+    let mut app = Harness::start(cx);
+    app.open("Books");
+    app.click("books-open-empty");
+    app.wait_for_open_dialog();
+    app.cx
+        .simulate_path_prompt_response(move |_| Some(vec![path]));
+    app.wait_for("the first page drawn", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.try_find_by_label("Diagram 1 on page 1").is_some()
+    });
+    assert_eq!(page_read(&mut app), Some(0));
+
+    let over_book = app.with_window(|window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.find("book-pages").bounds().center()
+    });
+    for _ in 0..40 {
+        if page_read(&mut app) == Some(3) {
+            break;
+        }
+        app.scroll_point(over_book, gpui_kit::px(-120.));
+    }
+    assert_eq!(page_read(&mut app), Some(3));
+    app.wait_for("the fourth page drawn", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.try_find_by_label("Diagram 1 on page 4").is_some()
+    });
+    app.click(diagram_id(3, 0));
+    wait_for_fen(&mut app, ENDING);
+    // Next diagram goes on from there, and the counter with it.
+    app.click("books-next-diagram");
+    wait_for_fen(&mut app, BACK_RANK);
+    assert_eq!(page_read(&mut app), Some(4));
 }
 
 /// What is no PDF is refused with a line saying so, and the page stays ready to open another.
@@ -202,4 +258,134 @@ fn a_file_that_is_no_book_is_refused(cx: &mut gpui_kit::TestAppContext) {
     });
     assert!(app.shows("books-problem"));
     assert!(app.shows("books-open-empty"));
+}
+
+/// Edit position and Analyse take the board's position to the board editor and the analysis
+/// board. Each once aborted KChess: the switch hid the Books page while its own click was still
+/// updating it.
+#[gpui_kit::test]
+fn a_diagram_goes_on_to_the_editor_and_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
+    let folder = tempfile::tempdir().expect("a folder");
+    let path = folder.path().join("Tactics.pdf");
+    std::fs::write(&path, book(&[&[ITALIAN]])).expect("the book written");
+    let mut app = Harness::start(cx);
+    app.open("Books");
+    app.click("books-open-empty");
+    app.wait_for_open_dialog();
+    app.cx
+        .simulate_path_prompt_response(move |_| Some(vec![path]));
+    app.wait_for("the diagram outlined", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.try_find_by_label("Diagram 1 on page 1").is_some()
+    });
+    app.click(diagram_id(0, 0));
+    wait_for_fen(&mut app, ITALIAN);
+
+    app.click("books-edit");
+    app.wait_for_page(crate::pages::Page::Editor);
+    app.wait_for("the diagram in the editor", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .try_find_by_label("FEN")
+            .is_some_and(|fen| fen.value() == Some(ITALIAN))
+    });
+
+    app.open("Books");
+    wait_for_fen(&mut app, ITALIAN);
+    app.click("books-analyse");
+    app.wait_for_page(crate::pages::Page::Analysis);
+    app.wait_for("the diagram on the analysis board", |_, cx| {
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .is_some_and(|page| page.read(cx).shown_fen() == ITALIAN)
+    });
+}
+
+fn choose_file(app: &mut Harness, path: &std::path::Path) {
+    app.wait_for_open_dialog();
+    let chosen = path.to_path_buf();
+    app.cx
+        .simulate_path_prompt_response(move |_| Some(vec![chosen]));
+}
+
+fn wait_for_label(app: &mut Harness, label: &str) {
+    let named = label.to_string();
+    app.wait_for(&format!("{label:?} shown"), move |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.try_find_by_label(&named).is_some()
+    });
+}
+
+/// A closed book is listed with the others opened, each going on where it was left, its diagram
+/// on the board again; Open book offers the others; a book whose file moved is found again, and
+/// one is taken off the list. The list outlasts a restart.
+#[gpui_kit::test]
+fn closed_books_are_listed_to_go_on_with(cx: &mut gpui_kit::TestAppContext) {
+    let folder = tempfile::tempdir().expect("a folder");
+    let tactics = folder.path().join("Tactics.pdf");
+    let endings = folder.path().join("Endings.pdf");
+    std::fs::write(&tactics, book(&[&[ITALIAN]])).expect("the book written");
+    std::fs::write(&endings, book(&[&[], &[ENDING]])).expect("the book written");
+    let mut app = Harness::start(cx);
+    app.open("Books");
+    app.click("books-open-empty");
+    choose_file(&mut app, &tactics);
+    wait_for_label(&mut app, "Diagram 1 on page 1");
+    app.click(diagram_id(0, 0));
+    wait_for_fen(&mut app, ITALIAN);
+
+    // Another book, from the toolbar, which has no other to offer yet: its diagram on its
+    // second page.
+    app.click("books-open");
+    choose_file(&mut app, &endings);
+    wait_for_label(&mut app, "Diagram 1 on page 2");
+    app.click("books-next-diagram");
+    wait_for_fen(&mut app, ENDING);
+
+    // Closed, both are listed, the latest first.
+    app.click("books-close");
+    wait_for_label(&mut app, "Continue Endings");
+    wait_for_label(&mut app, "Continue Tactics");
+    let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    wait_for_fen(&mut app, start);
+    // Beside the books listed, Open book asks for a file alone.
+    app.click("books-open");
+    app.wait_for_open_dialog();
+    app.cx.simulate_path_prompt_response(|_| None);
+
+    // Each goes on with its diagram on the board.
+    app.click_label("Continue Tactics");
+    wait_for_fen(&mut app, ITALIAN);
+    app.click("books-open");
+    app.click_label("Endings");
+    wait_for_fen(&mut app, ENDING);
+    let page = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::books::BooksPage>(cx).map(|page| page.read(cx).page())
+    });
+    assert_eq!(page, Some(1));
+
+    // Its file moved: found again, it goes on where it was.
+    let moved = folder.path().join("Tactics, moved.pdf");
+    std::fs::rename(&tactics, &moved).expect("the file moved");
+    app.click("books-close");
+    wait_for_label(&mut app, "Locate Tactics");
+    app.click_label("Locate Tactics");
+    choose_file(&mut app, &moved);
+    wait_for_fen(&mut app, ITALIAN);
+
+    // Taken off the list, a book is gone from it; the rest outlast a restart.
+    app.click("books-close");
+    wait_for_label(&mut app, "Continue Endings");
+    app.click_label("Actions for Endings");
+    app.click_label("Remove from list");
+    app.wait_for("Endings taken off the list", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.try_find_by_label("Continue Endings").is_none()
+    });
+    let mut app = app.restart();
+    app.open("Books");
+    wait_for_label(&mut app, "Continue Tactics, moved");
+    assert!(app.with_window(|window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.try_find_by_label("Continue Endings").is_none()
+    }));
 }

@@ -5,9 +5,11 @@
 //! The two sides, and the board and the engine, are split by dividers that keep where they were
 //! dragged.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
     Disableable as _, ResizableState, Sizable as _, h_flex, h_resizable, resizable_panel, v_flex,
@@ -15,11 +17,12 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_board::book::{self, Book, DrawnPage};
+use kchess_board::book::{self, Book, Cover, DrawnPage};
 use kchess_board::picture::{Area, Recognised};
 use kchess_contracts::calls;
 use kchess_contracts::types::{AnalysisRequest, AnalysisUpdate};
 use kchess_domain::variant::{Setup, Variant};
+use serde::{Deserialize, Serialize};
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Color, Position as _, Square};
 
@@ -32,9 +35,20 @@ use crate::theme::{Palette, radii, tint};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 
-/// The book open last, and the page it was on.
+/// The book open now; none once it is closed.
 const BOOK_PATH: &str = "kchess:book-path";
+/// The page the book open last was on, before each book kept its own (`BOOKS`).
 const BOOK_PAGE: &str = "kchess:book-page";
+/// The books opened, the latest first, each with where it was left.
+const BOOKS: &str = "kchess:books";
+const KEPT_BOOKS: usize = 24;
+/// The books the Open menu offers besides choosing a file, and the longest name it shows
+/// whole: its items do not cut a longer one short, which would run out of the menu.
+const MENU_BOOKS: usize = 8;
+const MENU_NAME: usize = 56;
+/// A cover's width as drawn, and its card's.
+const COVER_WIDTH: u32 = 360;
+const CARD_WIDTH: Pixels = px(176.);
 /// Where the dividers were dragged: the book's and the board's sides, and the board and the
 /// engine.
 const SPLIT: &str = "kchess:book-split";
@@ -49,12 +63,83 @@ const BOARD_MARGIN: Pixels = px(16.);
 const BOOK_MIN: Pixels = px(240.);
 const SIDE_MIN: Pixels = px(280.);
 const ENGINE_MIN: Pixels = px(120.);
+/// The room around the book's pages, and between them.
+const BOOK_PADDING: Pixels = px(12.);
+/// Pages drawn either side of the one read: before it, and the further after it, which is where
+/// a reader goes.
+const DRAWN_BEFORE: usize = 1;
+const DRAWN_AFTER: usize = 2;
+/// Pages kept drawn further away, so scrolling back and forth does not draw them again.
+const KEPT_AROUND: usize = 4;
 
 /// What a click on the next or previous diagram goes to once its page is drawn.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Then {
     First,
     Last,
+}
+
+/// A book opened before, and where it was left.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Listed {
+    path: String,
+    /// The page read, and how many it has.
+    page: usize,
+    #[serde(default)]
+    pages: usize,
+    /// When it was last opened, in milliseconds since 1970.
+    #[serde(default)]
+    opened: f64,
+    /// The diagram last set up on the board: its page and its place there. Left out when there
+    /// is none: the core keeps no null in a preference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    diagram: Option<(usize, usize)>,
+}
+
+/// The books opened, the latest first. The book of an earlier release, which kept one alone,
+/// is the first.
+fn listed(cx: &App) -> Vec<Listed> {
+    let books = crate::prefs::get::<Vec<Listed>>(cx, BOOKS, Vec::new());
+    if !books.is_empty() {
+        return books;
+    }
+    let path = crate::prefs::get::<String>(cx, BOOK_PATH, String::new());
+    if path.is_empty() {
+        return books;
+    }
+    vec![Listed {
+        path,
+        page: crate::prefs::get::<usize>(cx, BOOK_PAGE, 0),
+        pages: 0,
+        opened: 0.,
+        diagram: None,
+    }]
+}
+
+fn keep_listed(cx: &mut App, mut books: Vec<Listed>) {
+    books.truncate(KEPT_BOOKS);
+    crate::prefs::keep(cx, BOOKS, books);
+}
+
+/// A book's name: its file's, without `.pdf`.
+fn title(path: &str) -> SharedString {
+    Path::new(path)
+        .file_stem()
+        .map_or_else(
+            || path.to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        )
+        .into()
+}
+
+/// `name`, cut short with "…" past `most` characters.
+fn shortened(name: &str, most: usize) -> SharedString {
+    if name.chars().count() <= most {
+        return SharedString::from(name.to_string());
+    }
+    let kept: String = name.chars().take(most - 1).collect();
+    format!("{}…", kept.trim_end()).into()
 }
 
 /// The position set up from a diagram, and the moves played from it.
@@ -85,15 +170,26 @@ impl Study {
 pub struct BooksPage {
     focus: FocusHandle,
     book: Option<(PathBuf, Book)>,
+    /// The page read: the one in the middle of the book's side.
     page: usize,
-    drawn: Option<DrawnPage>,
-    /// Opening a book, drawing a page and reading a diagram: each replaced by the next.
+    /// The book's pages, one after another, drawn as they come near.
+    list: ListState,
+    drawn: HashMap<usize, DrawnPage>,
+    drawing: HashMap<usize, Task<()>>,
+    /// Opening a book and reading a diagram: each replaced by the next.
     opening: Option<Task<()>>,
-    drawing: Option<Task<()>>,
     reading: Option<Task<()>>,
-    then: Option<Then>,
+    /// The diagram to set up once its page is drawn: that page's first or last, or on through
+    /// the book in that direction when it has none.
+    then: Option<(usize, Then)>,
     /// The diagram being read, while it is.
     reading_diagram: Option<(usize, usize)>,
+    /// The diagram that was on the board when the book was left, set up again once its page
+    /// is drawn.
+    restore: Option<(usize, usize)>,
+    /// The listed books' covers, or what became of their files; drawn one after another.
+    covers: HashMap<String, Cover>,
+    covering: Option<Task<()>>,
     study: Option<Study>,
     /// A diagram read as a position chess does not allow (no king, a pawn on the back rank):
     /// shown as read, to set right in the board editor.
@@ -139,6 +235,15 @@ impl BooksPage {
         });
         let split = cx.new(|_| ResizableState::default());
         let stack = cx.new(|_| ResizableState::default());
+        let list = ListState::new(0, ListAlignment::Top, px(400.));
+        let page = cx.entity().downgrade();
+        list.set_scroll_handler(move |_, window, cx| {
+            // After the scroll is applied: the list is borrowed while it tells of it.
+            page.update(cx, |_, cx| {
+                cx.defer_in(window, |this, window, cx| this.scrolled(window, cx))
+            })
+            .ok();
+        });
         let events = cx.global::<AppCore>().events.clone();
         let subscriptions = vec![
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
@@ -167,12 +272,16 @@ impl BooksPage {
             focus: cx.focus_handle(),
             book: None,
             page: 0,
-            drawn: None,
+            list,
+            drawn: HashMap::new(),
+            drawing: HashMap::new(),
             opening: None,
-            drawing: None,
             reading: None,
             then: None,
             reading_diagram: None,
+            restore: None,
+            covers: HashMap::new(),
+            covering: None,
             study: None,
             unreadable_fen: None,
             problem: None,
@@ -186,15 +295,16 @@ impl BooksPage {
         }
     }
 
-    /// The page is shown: the book open last reopens where it was left, and the engine's
-    /// readiness is asked for.
+    /// The page is shown: the book open when it was left reopens where it was, or the books
+    /// opened before are listed; and the engine's readiness is asked for.
     fn attach(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.shown = true;
         if self.book.is_none() && self.opening.is_none() {
             let path = crate::prefs::get::<String>(cx, BOOK_PATH, String::new());
-            if !path.is_empty() {
-                let page = crate::prefs::get::<usize>(cx, BOOK_PAGE, 0);
-                self.open(PathBuf::from(path), page, window, cx);
+            if path.is_empty() {
+                self.cover_books(window, cx);
+            } else {
+                self.open_listed(PathBuf::from(path), window, cx);
             }
         }
         let status = cx
@@ -219,7 +329,7 @@ impl BooksPage {
         self.engine.stop(false, cx);
     }
 
-    /// Ask for a PDF and open it at its first page.
+    /// Ask for a PDF and open it: where it was left when it was opened before.
     fn choose_book(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let chosen = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -234,14 +344,173 @@ impl BooksPage {
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
-            this.update_in(cx, |this, window, cx| this.open(path, 0, window, cx))
+            this.update_in(cx, |this, window, cx| this.open_listed(path, window, cx))
                 .ok();
         })
         .detach();
     }
 
-    /// Open the book at `path` on page `page` (its first, when it has fewer).
-    fn open(&mut self, path: PathBuf, page: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// Ask where the file of the listed book at `path` went, and open it from there.
+    fn locate(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Open".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = chosen.await else {
+                return;
+            };
+            let Some(found) = paths.into_iter().next() else {
+                return;
+            };
+            this.update_in(cx, |this, window, cx| {
+                let moved = found.to_string_lossy().into_owned();
+                let mut books = listed(cx);
+                books.retain(|book| book.path != moved);
+                if let Some(book) = books.iter_mut().find(|book| book.path == path) {
+                    book.path = moved;
+                }
+                keep_listed(cx, books);
+                this.forget_cover(&path, window, cx);
+                this.open_listed(found, window, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Open the book at `path` where it was left, or at its first page.
+    fn open_listed(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let key = path.to_string_lossy();
+        let left = listed(cx).into_iter().find(|book| book.path == key);
+        let (page, diagram) = left.map_or((0, None), |book| (book.page, book.diagram));
+        self.open(path, page, diagram, window, cx);
+    }
+
+    /// Close the book: the books opened are listed in its place.
+    fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::prefs::keep(cx, BOOK_PATH, "");
+        self.book = None;
+        self.page = 0;
+        self.list.reset(0);
+        self.release(|_| false, window, cx);
+        self.opening = None;
+        self.reading = None;
+        self.reading_diagram = None;
+        self.then = None;
+        self.restore = None;
+        self.study = None;
+        self.unreadable_fen = None;
+        self.problem = None;
+        let start = BoardState::of(
+            &VariantPosition::Chess(shakmaty::Chess::default()),
+            Color::White,
+            None,
+            None,
+        );
+        self.board
+            .update(cx, |board, cx| board.set_state(start, cx));
+        self.changed(cx);
+        self.cover_books(window, cx);
+    }
+
+    /// Take the book at `path` off the list.
+    fn forget(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let mut books = listed(cx);
+        books.retain(|book| book.path != path);
+        keep_listed(cx, books);
+        self.forget_cover(path, window, cx);
+        cx.notify();
+    }
+
+    fn forget_cover(&mut self, path: &str, window: &mut Window, cx: &mut App) {
+        if let Some(Cover::Drawn(image)) = self.covers.remove(path) {
+            cx.drop_image(image, Some(window));
+        }
+    }
+
+    /// Draw the covers of the listed books not drawn yet, one after another off the main
+    /// thread, while no book is open; and those drawn before whose files went, as gone.
+    fn cover_books(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.book.is_some() || self.covering.is_some() {
+            return;
+        }
+        let (drawn, wanted): (Vec<String>, Vec<String>) = listed(cx)
+            .into_iter()
+            .map(|book| book.path)
+            .partition(|path| matches!(self.covers.get(path), Some(Cover::Drawn(_))));
+        self.covering = Some(cx.spawn_in(window, async move |this, cx| {
+            let gone = cx
+                .background_spawn(async move {
+                    drawn
+                        .into_iter()
+                        .filter(|path| !Path::new(path).is_file())
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            let kept = this.update_in(cx, |this, window, cx| {
+                for path in gone {
+                    this.forget_cover(&path, window, cx);
+                    this.covers.insert(path, Cover::Missing);
+                }
+                cx.notify();
+            });
+            if kept.is_err() {
+                return;
+            }
+            for path in wanted {
+                let drawing = path.clone();
+                let cover = cx
+                    .background_spawn(async move { book::cover(Path::new(&drawing), COVER_WIDTH) })
+                    .await;
+                let kept = this.update_in(cx, |this, window, cx| {
+                    this.forget_cover(&path, window, cx);
+                    this.covers.insert(path, cover);
+                    cx.notify();
+                });
+                if kept.is_err() {
+                    return;
+                }
+            }
+            this.update_in(cx, |this, window, cx| {
+                this.covering = None;
+                // Books listed meanwhile.
+                let listed_since = listed(cx)
+                    .iter()
+                    .any(|book| !this.covers.contains_key(&book.path));
+                if listed_since {
+                    this.cover_books(window, cx);
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// The listed book open now changed where it was left.
+    fn left_at(&self, cx: &mut App, change: impl FnOnce(&mut Listed)) {
+        let Some((path, _)) = &self.book else {
+            return;
+        };
+        let path = path.to_string_lossy();
+        let mut books = listed(cx);
+        if let Some(book) = books.iter_mut().find(|book| book.path == path) {
+            change(book);
+            keep_listed(cx, books);
+        }
+    }
+
+    /// Open the book at `path` on page `page` (its first, when it has fewer), with `diagram` set
+    /// up on the board.
+    fn open(
+        &mut self,
+        path: PathBuf,
+        page: usize,
+        diagram: Option<(usize, usize)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let opened = cx.background_spawn({
             let path = path.clone();
             async move { book::open(&path) }
@@ -252,12 +521,43 @@ impl BooksPage {
                 this.opening = None;
                 match opened {
                     Ok(book) => {
-                        crate::prefs::keep(cx, BOOK_PATH, path.to_string_lossy());
-                        let page = if page < book.page_count() { page } else { 0 };
+                        let key = path.to_string_lossy().into_owned();
+                        crate::prefs::keep(cx, BOOK_PATH, &key);
+                        let count = book.page_count();
+                        let page = if page < count { page } else { 0 };
+                        let mut books = listed(cx);
+                        let left = books.iter().position(|book| book.path == key);
+                        let diagram = left
+                            .and_then(|at| books[at].diagram)
+                            .or(diagram)
+                            .filter(|(page, _)| *page < count);
+                        if let Some(at) = left {
+                            books.remove(at);
+                        }
+                        books.insert(
+                            0,
+                            Listed {
+                                path: key.clone(),
+                                page,
+                                pages: count,
+                                opened: kchess_games::now_ms(),
+                                diagram,
+                            },
+                        );
+                        keep_listed(cx, books);
+                        // A file found again draws its cover anew.
+                        if !matches!(this.covers.get(&key), Some(Cover::Drawn(_))) {
+                            this.covers.remove(&key);
+                        }
+                        this.covering = None;
+                        this.list.reset(count);
+                        this.release(|_| false, window, cx);
                         this.book = Some((path, book));
                         this.problem = None;
                         this.study = None;
+                        this.unreadable_fen = None;
                         this.then = None;
+                        this.restore = diagram;
                         this.go_to(page, window, cx);
                     }
                     Err(problem) => {
@@ -267,6 +567,12 @@ impl BooksPage {
                             &format!("a book was not opened: {problem}"),
                         );
                         this.problem = Some(problem.into());
+                        // What became of its file, on its card.
+                        if this.book.is_none() {
+                            crate::prefs::keep(cx, BOOK_PATH, "");
+                            this.forget_cover(&path.to_string_lossy(), window, cx);
+                            this.cover_books(window, cx);
+                        }
                     }
                 }
                 cx.notify();
@@ -296,65 +602,185 @@ impl BooksPage {
         self.book.as_ref().map_or(0, |(_, book)| book.page_count())
     }
 
-    /// Show page `page`, drawn off the main thread.
+    /// Scroll the book to page `page`.
     fn go_to(&mut self, page: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if page >= self.page_count() {
+            return;
+        }
+        self.list.scroll_to(ListOffset {
+            item_ix: page,
+            offset_in_item: px(0.),
+        });
+        self.read_on(page, window, cx);
+        self.arrived(page, window, cx);
+    }
+
+    /// The book was scrolled: the page read is the one across the middle of the book's side.
+    fn scrolled(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.page_count();
+        if count == 0 {
+            return;
+        }
+        let top = self.list.logical_scroll_top();
+        let middle = top.offset_in_item + self.list.viewport_bounds().size.height / 2.;
+        let mut page = top.item_ix.min(count - 1);
+        // A page's height from its last layout, which a scroll does not change.
+        if let Some(bounds) = self.list.bounds_for_item(page)
+            && middle > bounds.size.height
+            && page + 1 < count
+        {
+            page += 1;
+        }
+        self.read_on(page, window, cx);
+    }
+
+    /// Page `page` is the one read: it and those near it drawn, those far from it let go.
+    fn read_on(&mut self, page: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if page != self.page {
+            self.page = page;
+            self.left_at(cx, |book| book.page = page);
+            cx.notify();
+        }
+        let last = self.page_count().saturating_sub(1);
+        let wanted = page.saturating_sub(DRAWN_BEFORE)..=(page + DRAWN_AFTER).min(last);
+        // The pages a diagram waits for.
+        let targets: Vec<usize> = self
+            .then
+            .map(|(target, _)| target)
+            .into_iter()
+            .chain(self.restore.map(|(target, _)| target))
+            .collect();
+        let kept = page.saturating_sub(KEPT_AROUND)..=page + KEPT_AROUND;
+        self.release(|at| kept.contains(&at) || targets.contains(&at), window, cx);
+        for at in wanted.chain(targets) {
+            self.draw(at, window, cx);
+        }
+    }
+
+    /// Let go of the drawn pages, and those being drawn, that `keep` does not want.
+    fn release(&mut self, keep: impl Fn(usize) -> bool, window: &mut Window, cx: &mut App) {
+        self.drawing.retain(|&at, _| keep(at));
+        let gone: Vec<usize> = self.drawn.keys().copied().filter(|&at| !keep(at)).collect();
+        for at in gone {
+            if let Some(page) = self.drawn.remove(&at) {
+                cx.drop_image(page.image, Some(window));
+            }
+        }
+    }
+
+    /// Draw page `page` off the main thread, unless it is drawn or being drawn.
+    fn draw(&mut self, page: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.drawn.contains_key(&page) || self.drawing.contains_key(&page) {
+            return;
+        }
         let Some((_, book)) = &self.book else {
             return;
         };
-        if page >= book.page_count() {
-            return;
-        }
-        self.page = page;
-        crate::prefs::keep(cx, BOOK_PAGE, page);
         let book = book.clone();
         let drawn = cx.background_spawn(async move { book::draw_page(&book, page) });
-        self.drawing = Some(cx.spawn_in(window, async move |this, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             let drawn = drawn.await;
             this.update_in(cx, |this, window, cx| {
-                this.drawing = None;
-                if drawn.is_none() {
-                    this.problem = Some("This page could not be drawn".into());
-                }
-                if let Some(old) = std::mem::replace(&mut this.drawn, drawn) {
-                    cx.drop_image(old.image, Some(window));
-                }
-                let diagrams = this.drawn.as_ref().map_or(0, |drawn| drawn.diagrams.len());
-                match this.then.take() {
-                    Some(Then::First) if diagrams > 0 => this.choose(0, window, cx),
-                    Some(Then::Last) if diagrams > 0 => this.choose(diagrams - 1, window, cx),
-                    // A page of text alone: on through the book to the next diagram, in the
-                    // same direction.
-                    Some(then) if this.drawn.is_some() => {
-                        let next = match then {
-                            Then::First => Some(page + 1).filter(|&next| next < this.page_count()),
-                            Then::Last => page.checked_sub(1),
-                        };
-                        if let Some(next) = next {
-                            this.then = Some(then);
-                            this.go_to(next, window, cx);
+                this.drawing.remove(&page);
+                match drawn {
+                    Some(drawn) => {
+                        if let Some(old) = this.drawn.insert(page, drawn) {
+                            cx.drop_image(old.image, Some(window));
                         }
+                        this.arrived(page, window, cx);
                     }
-                    _ => {}
+                    None => {
+                        this.problem = Some(format!("Page {} could not be drawn", page + 1).into());
+                    }
                 }
                 cx.notify();
             })
             .ok();
-        }));
-        cx.notify();
+        });
+        self.drawing.insert(page, task);
     }
 
-    /// Set up the page's diagram `index` on the board, read off the main thread.
-    fn choose(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(drawn) = &self.drawn else {
+    /// Page `page` is drawn: the diagram waiting for it is set up, or, on a page of text alone,
+    /// the book is followed on to the next diagram.
+    fn arrived(&mut self, page: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((at, index)) = self.restore
+            && at == page
+            && let Some(drawn) = self.drawn.get(&page)
+        {
+            self.restore = None;
+            if index < drawn.diagrams.len() {
+                self.choose(page, index, window, cx);
+            }
+        }
+        let Some((target, then)) = self.then else {
+            return;
+        };
+        let Some(drawn) = self.drawn.get(&page).filter(|_| target == page) else {
+            return;
+        };
+        self.then = None;
+        let count = drawn.diagrams.len();
+        if count > 0 {
+            let index = match then {
+                Then::First => 0,
+                Then::Last => count - 1,
+            };
+            self.reveal(page, index);
+            return self.choose(page, index, window, cx);
+        }
+        let next = match then {
+            Then::First => Some(page + 1).filter(|&next| next < self.page_count()),
+            Then::Last => page.checked_sub(1),
+        };
+        if let Some(next) = next {
+            self.then = Some((next, then));
+            self.go_to(next, window, cx);
+        }
+    }
+
+    /// Scroll diagram `index` of page `page` into view, when it is not.
+    fn reveal(&self, page: usize, index: usize) {
+        let Some(drawn) = self.drawn.get(&page) else {
+            return;
+        };
+        let Some(area) = drawn.diagrams.get(index) else {
+            return;
+        };
+        let viewport = self.list.viewport_bounds();
+        let width = viewport.size.width - BOOK_PADDING * 2.;
+        if width <= px(0.) {
+            return;
+        }
+        let scale = width / px(drawn.width.max(1) as f32);
+        let top = px(area.y as f32) * scale;
+        let bottom = px((area.y + area.height) as f32) * scale;
+        if let Some(item) = self.list.bounds_for_item(page)
+            && item.top() + top >= viewport.top()
+            && item.top() + bottom <= viewport.bottom()
+        {
+            return;
+        }
+        self.list.scroll_to(ListOffset {
+            item_ix: page,
+            offset_in_item: (top - BOOK_PADDING * 2.).max(px(0.)),
+        });
+    }
+
+    /// Set up diagram `index` of page `page` on the board, read off the main thread.
+    fn choose(&mut self, page: usize, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((_, book)) = &self.book else {
+            return;
+        };
+        let Some(drawn) = self.drawn.get(&page) else {
             return;
         };
         let Some(&area) = drawn.diagrams.get(index) else {
             return;
         };
-        let pixels = drawn.pixels.clone();
-        let page = drawn.index;
+        let (book, drawn) = (book.clone(), drawn.clone());
+        self.restore = None;
         self.reading_diagram = Some((page, index));
-        let read = cx.background_spawn(async move { book::read_diagram(&pixels, area) });
+        let read = cx.background_spawn(async move { book::read_diagram(&book, &drawn, area) });
         self.reading = Some(cx.spawn_in(window, async move |this, cx| {
             let read = read.await;
             this.update(cx, |this, cx| {
@@ -398,6 +824,7 @@ impl BooksPage {
         };
         self.problem = None;
         self.unreadable_fen = None;
+        self.left_at(cx, |book| book.diagram = Some((page, diagram)));
         self.study = Some(Study {
             page,
             diagram,
@@ -409,18 +836,28 @@ impl BooksPage {
         self.changed(cx);
     }
 
-    /// The diagram after or before the one on the board, on this page or the next or last.
+    /// The diagram after or before the one on the board, on this page or the next or last: from
+    /// the page read, or from the diagram on the board while its page is in view.
     fn step_diagram(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(drawn) = &self.drawn else {
-            return;
-        };
-        let current = self
+        let viewport = self.list.viewport_bounds();
+        let on_board = self
             .study
             .as_ref()
-            .filter(|study| study.page == drawn.index)
-            .map(|study| study.diagram);
+            .map(|study| (study.page, study.diagram))
+            .filter(|&(page, _)| {
+                self.list
+                    .bounds_for_item(page)
+                    .is_some_and(|item| item.intersects(&viewport))
+            });
+        let page = on_board.map_or(self.page, |(page, _)| page);
+        let then = if forward { Then::First } else { Then::Last };
+        let Some(drawn) = self.drawn.get(&page) else {
+            // Not drawn yet: its first or last diagram once it is.
+            self.then = Some((page, then));
+            return self.read_on(page, window, cx);
+        };
         let count = drawn.diagrams.len();
-        let next = match (current, forward) {
+        let next = match (on_board.map(|(_, diagram)| diagram), forward) {
             (Some(at), true) if at + 1 < count => Some(at + 1),
             (Some(at), false) if at > 0 => Some(at - 1),
             (None, true) if count > 0 => Some(0),
@@ -428,16 +865,17 @@ impl BooksPage {
             _ => None,
         };
         if let Some(next) = next {
-            return self.choose(next, window, cx);
+            self.reveal(page, next);
+            return self.choose(page, next, window, cx);
         }
         // On to the next page with diagrams' first, or the last page's last.
         let page = if forward {
-            Some(drawn.index + 1).filter(|&page| page < self.page_count())
+            Some(page + 1).filter(|&page| page < self.page_count())
         } else {
-            drawn.index.checked_sub(1)
+            page.checked_sub(1)
         };
         if let Some(page) = page {
-            self.then = Some(if forward { Then::First } else { Then::Last });
+            self.then = Some((page, then));
             self.go_to(page, window, cx);
         }
     }
@@ -512,44 +950,31 @@ impl BooksPage {
         self.changed(cx);
     }
 
-    /// The position on the board, in the board editor: to set right what was misread.
-    fn edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// The position on the board, for the board editor: to set right what was misread.
+    fn to_edit(&self) -> Option<(Setup, Color)> {
         let (fen, orientation) = match (&self.study, &self.unreadable_fen) {
             (Some(study), _) => (
                 kchess_domain::rules::make_fen(study.position()),
                 study.orientation,
             ),
             (None, Some((fen, orientation, _))) => (fen.clone(), *orientation),
-            (None, None) => return,
+            (None, None) => return None,
         };
-        crate::pages::editor::edit_position(
-            Setup {
-                variant: Variant::Standard,
-                fen,
-            },
-            orientation,
-            window,
-            cx,
-        );
+        let setup = Setup {
+            variant: Variant::Standard,
+            fen,
+        };
+        Some((setup, orientation))
     }
 
-    /// The position on the board, with the moves played, on the analysis board.
-    fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(study) = &self.study else {
-            return;
+    /// The position on the board, with the moves played, for the analysis board.
+    fn to_analyse(&self) -> Option<(Setup, Color)> {
+        let study = self.study.as_ref()?;
+        let setup = Setup {
+            variant: Variant::Standard,
+            fen: kchess_domain::rules::make_fen(study.position()),
         };
-        let fen = kchess_domain::rules::make_fen(study.position());
-        kchess_board::analysis::open(
-            kchess_board::analysis::Open::Setup {
-                setup: Setup {
-                    variant: Variant::Standard,
-                    fen,
-                },
-                orientation: study.orientation,
-            },
-            window,
-            cx,
-        );
+        Some((setup, study.orientation))
     }
 
     fn engine_on(&self, cx: &App) -> bool {
@@ -685,6 +1110,11 @@ fn kept(laid_out: &[Pixels], saved: &[f32], otherwise: Pixels) -> Pixels {
         .unwrap_or(otherwise)
 }
 
+/// The outline of diagram `index` on page `page`.
+pub(crate) fn diagram_id(page: usize, index: usize) -> ElementId {
+    ElementId::NamedInteger("book-diagram".into(), (page * 1000 + index) as u64)
+}
+
 /// A resizable group's sizes, kept to restore.
 fn keep_sizes(key: &'static str, state: &Entity<ResizableState>, cx: &mut App) {
     let sizes: Vec<f32> = state
@@ -712,17 +1142,9 @@ impl BooksPage {
             .gap(px(8.))
             .border_b_1()
             .border_color(palette.border)
-            .child(
-                Button::new("books-open")
-                    .small()
-                    .outline()
-                    .icon(icon("folder-open"))
-                    .label("Open book")
-                    .on_click(cx.listener(|this, _, window, cx| this.choose_book(window, cx))),
-            )
+            .child(self.render_open(cx))
             .children(title.map(|title| {
                 div()
-                    .flex_1()
                     .min_w_0()
                     .truncate()
                     .text_size(px(14.))
@@ -730,7 +1152,17 @@ impl BooksPage {
                     .text_color(palette.highlighted)
                     .child(title)
             }))
-            .when(!has_book, |bar| bar.child(div().flex_1()))
+            .when(has_book, |bar| {
+                bar.child(
+                    Button::new("books-close")
+                        .small()
+                        .ghost()
+                        .icon(icon("x"))
+                        .accessibility_label("Close book")
+                        .on_click(cx.listener(|this, _, window, cx| this.close(window, cx))),
+                )
+            })
+            .child(div().flex_1())
             .when(has_book, |bar| {
                 bar.child(
                     Button::new("books-previous-page")
@@ -787,106 +1219,327 @@ impl BooksPage {
             })
     }
 
-    /// The book's page at `width`, its diagrams outlined to click; or a way to open a book.
-    fn render_book(&self, width: Pixels, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let Some(drawn) = &self.drawn else {
-            let busy = self.opening.is_some() || self.drawing.is_some();
+    /// Open book: a menu of the other books opened before and a file to choose; the file alone
+    /// when there are none, or while the books are listed beside it.
+    fn render_open(&self, cx: &mut Context<Self>) -> AnyElement {
+        let open = self
+            .book
+            .as_ref()
+            .map(|(path, _)| path.to_string_lossy().into_owned());
+        let others: Vec<String> = listed(cx)
+            .into_iter()
+            .map(|book| book.path)
+            .filter(|path| Some(path) != open.as_ref())
+            .take(MENU_BOOKS)
+            .collect();
+        if others.is_empty() || self.book.is_none() {
+            return Button::new("books-open")
+                .small()
+                .outline()
+                .icon(icon("folder-open"))
+                .label("Open book")
+                .on_click(cx.listener(|this, _, window, cx| this.choose_book(window, cx)))
+                .into_any_element();
+        }
+        let page = cx.entity().downgrade();
+        widgets::trailing_icon(
+            Button::new("books-open")
+                .small()
+                .outline()
+                .icon(icon("folder-open")),
+            "Open book",
+            "chevron-down",
+        )
+        .dropdown_menu(move |menu, _, _| {
+            let mut menu = menu;
+            for path in &others {
+                let (page, path) = (page.clone(), path.clone());
+                menu = menu.item(
+                    PopupMenuItem::new(shortened(&title(&path), MENU_NAME))
+                        .icon(icon("book-open"))
+                        .on_click(move |_, window, cx| {
+                            page.update(cx, |page, cx| {
+                                page.open_listed(PathBuf::from(&path), window, cx)
+                            })
+                            .ok();
+                        }),
+                );
+            }
+            let page = page.clone();
+            menu.separator().item(
+                PopupMenuItem::new("Open PDF…")
+                    .icon(icon("folder-open"))
+                    .on_click(move |_, window, cx| {
+                        page.update(cx, |page, cx| page.choose_book(window, cx))
+                            .ok();
+                    }),
+            )
+        })
+        .into_any_element()
+    }
+
+    /// The book's pages one after another, its diagrams outlined to click; or the books opened
+    /// before and a way to open another.
+    fn render_book(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        if self.book.is_none() {
+            return self.render_shelf(palette, cx);
+        }
+        let this = cx.entity().downgrade();
+        div()
+            .id("book-pages")
+            .test_support()
+            .size_full()
+            .bg(palette.bg)
+            .child(
+                list(self.list.clone(), move |page, _, cx| {
+                    this.upgrade().map_or_else(
+                        || div().into_any_element(),
+                        |view| view.read(cx).render_page(page, this.clone(), cx),
+                    )
+                })
+                .size_full()
+                .p(BOOK_PADDING),
+            )
+            .into_any_element()
+    }
+
+    /// The books opened before, each a card to go on with; or, before any, a way to open one.
+    fn render_shelf(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        // Before any book is listed: the toolbar's Open book is beside the books once they are.
+        let open = Button::new("books-open-empty")
+            .primary()
+            .icon(icon("folder-open"))
+            .label("Open PDF")
+            .on_click(cx.listener(|this, _, window, cx| this.choose_book(window, cx)));
+        if self.opening.is_some() {
+            return v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .child(widgets::hint("Opening…", palette))
+                .into_any_element();
+        }
+        let books = listed(cx);
+        if books.is_empty() {
             return v_flex()
                 .size_full()
                 .items_center()
                 .justify_center()
                 .gap(px(12.))
                 .p(px(24.))
-                .when(busy, |empty| {
-                    empty.child(widgets::hint("Opening…", palette))
-                })
-                .when(!busy, |empty| {
-                    empty
-                        .child(widgets::empty_state(
-                            icon("book-open"),
-                            "Open a chess book",
-                            None,
-                            palette,
-                        ))
-                        .child(
-                            Button::new("books-open-empty")
-                                .primary()
-                                .icon(icon("folder-open"))
-                                .label("Open PDF")
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.choose_book(window, cx)),
-                                ),
-                        )
-                })
+                .child(widgets::empty_state(
+                    icon("book-open"),
+                    "Open a chess book",
+                    None,
+                    palette,
+                ))
+                .child(open)
                 .into_any_element();
+        }
+        let now = kchess_games::now_ms();
+        let cards: Vec<AnyElement> = books
+            .into_iter()
+            .enumerate()
+            .map(|(index, listed)| self.render_card(index, listed, now, cx))
+            .collect();
+        v_flex()
+            .id("books-shelf")
+            .size_full()
+            .overflow_y_scroll()
+            .p(px(24.))
+            .gap(px(16.))
+            .child(widgets::heading("Your books", palette))
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .items_start()
+                    .gap(px(12.))
+                    .children(cards),
+            )
+            .into_any_element()
+    }
+
+    /// A book opened before: its cover, where it was left, and the way back to it, or to its
+    /// file when that moved.
+    fn render_card(
+        &self,
+        index: usize,
+        listed: Listed,
+        now: f64,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let name = title(&listed.path);
+        let cover = self.covers.get(&listed.path);
+        let lost = matches!(cover, Some(Cover::Missing | Cover::Unreadable));
+        let location = match cover {
+            Some(Cover::Missing) => "File not found".to_string(),
+            Some(Cover::Unreadable) => "Could not be read".to_string(),
+            _ if listed.pages > 0 => format!("Page {} of {}", listed.page + 1, listed.pages),
+            _ => format!("Page {}", listed.page + 1),
         };
-        let width = (width - px(24.)).max(px(120.));
-        let scale = width.as_f32() / drawn.width() as f32;
-        let height = px(drawn.height() as f32 * scale);
+        let page = cx.entity().downgrade();
+        let path = listed.path.clone();
+        let action = if lost {
+            let (page, path) = (page.clone(), path.clone());
+            Button::new(("books-locate", index))
+                .outline()
+                .small()
+                .w_full()
+                .icon(icon("search"))
+                .label("Locate…")
+                .accessibility_label(format!("Locate {name}"))
+                .on_click(move |_, window, cx| {
+                    page.update(cx, |page, cx| page.locate(path.clone(), window, cx))
+                        .ok();
+                })
+        } else {
+            let (page, path) = (page.clone(), path.clone());
+            Button::new(("books-continue", index))
+                .outline()
+                .small()
+                .w_full()
+                .icon(icon("book-open"))
+                .label("Continue")
+                .accessibility_label(format!("Continue {name}"))
+                .on_click(move |_, window, cx| {
+                    page.update(cx, |page, cx| {
+                        page.open_listed(PathBuf::from(&path), window, cx)
+                    })
+                    .ok();
+                })
+        };
+        let menu = {
+            let (page, path) = (page.clone(), path.clone());
+            Button::new(("books-card-menu", index))
+                .ghost()
+                .small()
+                .icon(icon("ellipsis-vertical"))
+                .accessibility_label(format!("Actions for {name}"))
+                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                    let (page, path) = (page.clone(), path.clone());
+                    menu.item(
+                        PopupMenuItem::new("Remove from list")
+                            .icon(icon("x"))
+                            .on_click(move |_, window, cx| {
+                                page.update(cx, |page, cx| page.forget(&path, window, cx))
+                                    .ok();
+                            }),
+                    )
+                })
+        };
+        widgets::StudyCard {
+            id: format!("book-{index}"),
+            name: name.to_string(),
+            picture: match cover {
+                Some(Cover::Drawn(image)) => Some(widgets::CardPicture::Image(image.clone())),
+                _ => None,
+            },
+            location,
+            description: (listed.opened > 0.)
+                .then(|| format!("Opened {}", widgets::time_ago(listed.opened, now))),
+            edited: None,
+            rows: 2,
+            menu: Some(menu.into_any_element()),
+            action: action.into_any_element(),
+            width: CARD_WIDTH,
+            on_open: std::rc::Rc::new(move |window, cx| {
+                page.update(cx, |page, cx| {
+                    page.open_listed(PathBuf::from(&path), window, cx)
+                })
+                .ok();
+            }),
+            found: Vec::new(),
+        }
+        .into_any_element()
+    }
+
+    /// Page `page` as printed, its own shape before it is drawn; its diagrams outlined.
+    fn render_page(&self, page: usize, this: WeakEntity<Self>, cx: &App) -> AnyElement {
+        let palette = *cx.global::<Palette>();
+        let (width, height) = self
+            .book
+            .as_ref()
+            .and_then(|(_, book)| book.page_size(page))
+            .filter(|(width, height)| *width > 0. && *height > 0.)
+            .unwrap_or((1., 1.4));
         let on_board = self
             .study
             .as_ref()
-            .filter(|study| study.page == drawn.index)
+            .filter(|study| study.page == page)
             .map(|study| study.diagram);
         let reading = self
             .reading_diagram
-            .filter(|(page, _)| *page == drawn.index)
+            .filter(|(at, _)| *at == page)
             .map(|(_, diagram)| diagram);
-        let outline = |index: usize, area: Area| {
-            let at = |value: u32| px(value as f32 * scale);
+        let drawn = self.drawn.get(&page);
+        let outline = |drawn: &DrawnPage, index: usize, area: Area| {
+            let part = |value: u32, of: u32| relative(value as f32 / of.max(1) as f32);
             let chosen = on_board == Some(index);
+            let this = this.clone();
+            // The diagram's place on the page, and its outline a little outside it.
             div()
-                .id(("book-diagram", index))
-                .test_support()
-                .role(Role::Button)
-                .keyboard_focus(palette.primary)
                 .absolute()
-                .left(at(area.x) - px(3.))
-                .top(at(area.y) - px(3.))
-                .w(at(area.width) + px(6.))
-                .h(at(area.height) + px(6.))
-                .rounded(radii::SMALL)
-                .border_2()
-                .border_color(if chosen {
-                    palette.primary
-                } else {
-                    // Seen against the page's paper, which is white whatever the theme.
-                    tint(palette.primary, 60.)
-                })
-                .when(reading == Some(index), |outline| {
-                    outline.bg(tint(palette.primary, 15.))
-                })
-                .cursor_pointer()
-                .hover(|style| {
-                    style
-                        .border_color(palette.primary)
-                        .bg(tint(palette.primary, 10.))
-                })
-                .aria_label(SharedString::from(format!("Diagram {}", index + 1)))
-                .on_click(cx.listener(move |this, _, window, cx| this.choose(index, window, cx)))
+                .left(part(area.x, drawn.width))
+                .top(part(area.y, drawn.height))
+                .w(part(area.width, drawn.width))
+                .h(part(area.height, drawn.height))
+                .child(
+                    div()
+                        .id(diagram_id(page, index))
+                        .test_support()
+                        .role(Role::Button)
+                        .keyboard_focus(palette.primary)
+                        .absolute()
+                        .inset(px(-3.))
+                        .rounded(radii::SMALL)
+                        .border_2()
+                        .border_color(if chosen {
+                            palette.primary
+                        } else {
+                            // Seen against the page's paper, which is white whatever the theme.
+                            tint(palette.primary, 60.)
+                        })
+                        .when(reading == Some(index), |outline| {
+                            outline.bg(tint(palette.primary, 15.))
+                        })
+                        .cursor_pointer()
+                        .hover(|style| {
+                            style
+                                .border_color(palette.primary)
+                                .bg(tint(palette.primary, 10.))
+                        })
+                        .aria_label(SharedString::from(format!(
+                            "Diagram {} on page {}",
+                            index + 1,
+                            page + 1
+                        )))
+                        .on_click(move |_, window, cx| {
+                            this.update(cx, |this, cx| this.choose(page, index, window, cx))
+                                .ok();
+                        }),
+                )
         };
         div()
-            .id("book-page")
-            .test_support()
-            .size_full()
-            .overflow_y_scroll()
-            .p(px(12.))
-            .bg(palette.bg)
+            .pb(BOOK_PADDING)
             .child(
                 div()
+                    .id(("book-page", page))
+                    .test_support()
                     .relative()
-                    .w(width)
-                    .h(height)
+                    .w_full()
+                    .aspect_ratio(width / height)
+                    .bg(white())
                     .border_1()
                     .border_color(palette.border)
-                    .child(img(drawn.image.clone()).w(width).h(height))
-                    .children(
-                        drawn
-                            .diagrams
-                            .iter()
-                            .enumerate()
-                            .map(|(index, &area)| outline(index, area)),
-                    ),
+                    .when_some(drawn, |sheet, drawn| {
+                        sheet.child(img(drawn.image.clone()).size_full()).children(
+                            drawn
+                                .diagrams
+                                .iter()
+                                .enumerate()
+                                .map(|(index, &area)| outline(drawn, index, area)),
+                        )
+                    }),
             )
             .into_any_element()
     }
@@ -996,6 +1649,19 @@ impl BooksPage {
             .as_ref()
             .filter(|study| !study.moves.is_empty())
             .map(|study| numbered(&study.start, &study.moves));
+        // Leaving for another page takes what it needs first: the switch hides this page,
+        // which stops its engine, and must not happen inside an update of this page.
+        let page = cx.entity().downgrade();
+        let leave = |take: fn(&Self) -> Option<(Setup, Color)>,
+                     run: fn((Setup, Color), &mut Window, &mut App)| {
+            let page = page.clone();
+            move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                let taken = page.upgrade().and_then(|page| take(page.read(cx)));
+                if let Some(taken) = taken {
+                    run(taken, window, cx);
+                }
+            }
+        };
         let position_row = h_flex()
             .flex_wrap()
             .gap(px(8.))
@@ -1029,7 +1695,9 @@ impl BooksPage {
                     .icon(icon("pencil-ruler"))
                     .label("Edit position")
                     .disabled(!has_position && self.unreadable_fen.is_none())
-                    .on_click(cx.listener(|this, _, window, cx| this.edit(window, cx))),
+                    .on_click(leave(Self::to_edit, |(setup, orientation), window, cx| {
+                        crate::pages::editor::edit_position(setup, orientation, window, cx)
+                    })),
             )
             .child(
                 Button::new("books-analyse")
@@ -1038,7 +1706,16 @@ impl BooksPage {
                     .icon(icon("microscope"))
                     .label("Analyse")
                     .disabled(!has_position)
-                    .on_click(cx.listener(|this, _, window, cx| this.analyse(window, cx))),
+                    .on_click(leave(
+                        Self::to_analyse,
+                        |(setup, orientation), window, cx| {
+                            kchess_board::analysis::open(
+                                kchess_board::analysis::Open::Setup { setup, orientation },
+                                window,
+                                cx,
+                            )
+                        },
+                    )),
             );
         let doubtful = self
             .study
@@ -1118,7 +1795,6 @@ impl Render for BooksPage {
             (area.width * 0.45).min(area.width - BOOK_MIN),
         )
         .max(SIDE_MIN);
-        let book_width = (area.width - side_width).max(BOOK_MIN);
         let body = (area.height - TOOLBAR).max(px(0.));
         let engine_height = kept(
             self.stack.read(cx).sizes(),
@@ -1141,7 +1817,7 @@ impl Render for BooksPage {
             );
         let book_panel = resizable_panel()
             .size_range(BOOK_MIN..Pixels::MAX)
-            .child(self.render_book(book_width, &palette, cx));
+            .child(self.render_book(&palette, cx));
         let board_panel = resizable_panel()
             .size_range(SIDE_MIN..Pixels::MAX)
             .child(board);
@@ -1205,5 +1881,44 @@ impl crate::pages::PageView for BooksPage {
 
     fn hidden(this: &Entity<Self>, _window: &mut Window, cx: &mut App) {
         this.update(cx, |page, cx| page.detach(cx));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Listed, shortened};
+
+    /// A long name is cut short with "…", never past the limit; a short one is left whole.
+    #[test]
+    fn a_long_name_is_cut_short() {
+        assert_eq!(shortened("Endings", 56), "Endings");
+        let long = "1001 Chess Exercises for Beginners The tactics workbook that explains the basic concepts";
+        let short = shortened(long, 56);
+        assert_eq!(short.chars().count(), 56);
+        assert!(short.starts_with("1001 Chess Exercises for Beginners The tactics workbook"));
+        assert!(short.ends_with('…'));
+        assert_eq!(shortened("Tactics book", 9), "Tactics…");
+    }
+
+    /// A book with no diagram set up yet is kept with no `diagram` at all: the core refuses a
+    /// preference holding null, which once lost the whole list.
+    #[test]
+    fn a_book_without_a_diagram_is_kept_without_null() {
+        let book = Listed {
+            path: "/books/Tactics.pdf".into(),
+            page: 3,
+            pages: 120,
+            opened: 1.,
+            diagram: None,
+        };
+        let kept = serde_json::to_value(vec![book.clone()]).expect("serialised");
+        assert_eq!(
+            kept,
+            serde_json::json!([{"path": "/books/Tactics.pdf", "page": 3, "pages": 120, "opened": 1.0}])
+        );
+        assert_eq!(
+            serde_json::from_value::<Vec<Listed>>(kept).expect("read back"),
+            vec![book]
+        );
     }
 }
