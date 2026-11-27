@@ -589,7 +589,7 @@ fn a_downloaded_player_plays_their_own_openings(cx: &mut gpui_kit::TestAppContex
     };
     let mut app = Harness::start(cx);
     app.open("Game database");
-    app.click("database-player");
+    super::database::add_games(&mut app, "Player's games…");
     app.fill_in_dialog("Username", SCOUTED);
     app.click("player-download");
     app.wait_for_app("their games", |cx| {

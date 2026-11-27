@@ -97,12 +97,9 @@ const MOST_MOVES: u32 = 600;
 /// The broadcast games: Lichess's broadcast archive, some 770 MB to download in all (2026-11).
 const MASTERS_LABEL: &str = "Broadcast games · 770 MB";
 const MASTERS_BYTES: u64 = 770 * 1024 * 1024;
-const MASTERS_TIP: &str = "Games of the top over-the-board events Lichess has broadcast since 2020";
 /// TCEC's engine games: its compact release, some 27 MB to download (2026-06).
 const TCEC_LABEL: &str = "Engine games · 27 MB";
 const TCEC_BYTES: u64 = 27 * 1024 * 1024;
-const TCEC_TIP: &str = "Every game of the Top Chess Engine Championship's competitions";
-const LICHESS_TIP: &str = "A month of rated games between strong Lichess players";
 /// Below this width the table keeps the players and the result.
 const NARROW: Pixels = px(720.);
 
@@ -1389,55 +1386,53 @@ impl Render for DatabasePage {
                     )
                 })
         });
+        // Import is the page's main action; the downloads share one menu beside it, their sizes
+        // in their names, so the row keeps three weights rather than five equal buttons.
         let downloads = h_flex()
             .gap(px(12.))
             .flex_wrap()
+            .child(game_db::import_card(cx, true, &palette))
             .when(!busy, |row| {
                 row.child(
-                    Button::new("database-player")
-                        .outline()
-                        .small()
-                        .icon(icon("user"))
-                        .label("Player's games…")
-                        .on_click(|_, window, cx| player::open(None, window, cx)),
-                )
-                .child(
-                    Button::new("database-lichess")
+                    Button::new("database-add")
                         .outline()
                         .small()
                         .icon(icon("download"))
-                        .label("Lichess games…")
-                        .tooltip(LICHESS_TIP)
-                        .on_click(|_, window, cx| lichess::open(None, window, cx)),
-                )
-                .child(
-                    Button::new("database-masters")
-                        .outline()
-                        .small()
-                        .icon(icon("download"))
-                        .label(if masters {
-                            SharedString::new_static("Update broadcast games")
-                        } else {
-                            SharedString::new_static(MASTERS_LABEL)
-                        })
-                        .tooltip(MASTERS_TIP)
-                        .on_click(|_, window, cx| install_masters(window, cx)),
-                )
-                .child(
-                    Button::new("database-tcec")
-                        .outline()
-                        .small()
-                        .icon(icon("download"))
-                        .label(if engines {
-                            SharedString::new_static("Update engine games")
-                        } else {
-                            SharedString::new_static(TCEC_LABEL)
-                        })
-                        .tooltip(TCEC_TIP)
-                        .on_click(|_, window, cx| install_tcec(window, cx)),
+                        .label("Add games")
+                        .dropdown_caret(true)
+                        .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, _, _| {
+                            menu.item(
+                                PopupMenuItem::new("Player's games…")
+                                    .icon(icon("user"))
+                                    .on_click(|_, window, cx| player::open(None, window, cx)),
+                            )
+                            .item(
+                                PopupMenuItem::new("Lichess games…")
+                                    .icon(icon("download"))
+                                    .on_click(|_, window, cx| lichess::open(None, window, cx)),
+                            )
+                            .separator()
+                            .item(
+                                PopupMenuItem::new(if masters {
+                                    SharedString::new_static("Update broadcast games")
+                                } else {
+                                    SharedString::new_static(MASTERS_LABEL)
+                                })
+                                .icon(icon("download"))
+                                .on_click(|_, window, cx| install_masters(window, cx)),
+                            )
+                            .item(
+                                PopupMenuItem::new(if engines {
+                                    SharedString::new_static("Update engine games")
+                                } else {
+                                    SharedString::new_static(TCEC_LABEL)
+                                })
+                                .icon(icon("download"))
+                                .on_click(|_, window, cx| install_tcec(window, cx)),
+                            )
+                        }),
                 )
             })
-            .child(game_db::import_card(cx, &palette))
             // Always there, so what the databases take is found before the first download.
             .child(div().flex_1())
             .child(
@@ -1451,12 +1446,20 @@ impl Render for DatabasePage {
             );
         let header = v_flex().gap(px(12.)).child(downloads).children(chosen);
         let body = if databases == 0 {
-            widgets::card(&palette)
+            // Drawn as the place a file goes, which is what it asks for.
+            v_flex()
+                .id("database-empty")
+                .test_support()
                 .py(px(30.))
+                .px(px(20.))
+                .rounded(radii::BOX)
+                .border_2()
+                .border_dashed()
+                .border_color(palette.border)
                 .child(widgets::empty_state(
                     icon("database"),
                     "No game databases",
-                    Some("Import a PGN file, or drop one here".into()),
+                    Some("Drop a PGN file here".into()),
                     &palette,
                 ))
                 .into_any_element()

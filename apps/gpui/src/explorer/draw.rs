@@ -308,7 +308,7 @@ impl PositionExplorer {
                 )
             })
             .when(count == 0 || importing, |column| {
-                column.child(game_db::import_card(cx, palette))
+                column.child(game_db::import_card(cx, false, palette))
             })
     }
 

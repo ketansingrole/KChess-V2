@@ -286,13 +286,7 @@ fn a_bzip2_pgn_file_dropped_on_the_page_is_imported(cx: &mut gpui_kit::TestAppCo
 #[gpui_kit::test]
 fn the_downloads_hold_still_when_a_database_is_listed(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::{px, size};
-    const ACTIONS: [&str; 5] = [
-        "database-player",
-        "database-lichess",
-        "database-masters",
-        "database-tcec",
-        "gamedb-import",
-    ];
+    const ACTIONS: [&str; 2] = ["gamedb-import", "database-add"];
     fn places(app: &mut Harness) -> Vec<gpui_kit::Point<gpui_kit::Pixels>> {
         ACTIONS
             .iter()
@@ -376,7 +370,7 @@ fn a_players_games_are_downloaded_to_prepare_against_them(cx: &mut gpui_kit::Tes
     use super::fake_lichess::SCOUTED;
     let mut app = Harness::start(cx);
     app.open("Game database");
-    app.click("database-player");
+    add_games(&mut app, "Player's games…");
     app.fill_in_dialog("Username", "Nobody_Here");
     app.click("player-download");
     app.wait_for_app("the refusal", |cx| {
@@ -387,7 +381,7 @@ fn a_players_games_are_downloaded_to_prepare_against_them(cx: &mut gpui_kit::Tes
             .is_some_and(|error| error.contains("No Lichess player is called Nobody_Here"))
     });
 
-    app.click("database-player");
+    add_games(&mut app, "Player's games…");
     app.fill_in_dialog("Username", SCOUTED);
     app.click("player-download");
     wait_for_listed(
@@ -430,7 +424,7 @@ fn the_player_download_offers_names_to_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.online();
     app.open("Game database");
-    app.click("database-player");
+    add_games(&mut app, "Player's games…");
     app.fill_in_dialog("Username", "mag");
     assert_eq!(
         app.find(("player-match", 0usize)).label(),
@@ -462,7 +456,7 @@ fn the_player_download_offers_names_to_pick(cx: &mut gpui_kit::TestAppContext) {
             == 1
     });
     // Their name is offered next time on Lichess, not on Chess.com.
-    app.click("database-player");
+    add_games(&mut app, "Player's games…");
     assert_eq!(app.find(("player-recent", 0usize)).label(), Some(SCOUTED));
     app.click(("player-site", 1usize));
     app.wait_for("no Lichess name on Chess.com", |window, _| {
@@ -470,18 +464,14 @@ fn the_player_download_offers_names_to_pick(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
-/// The broadcast games button downloads Lichess's broadcast archive (here the stand-in's one month)
-/// into a database of their own, whose games are listed with the archive's attribution; the
-/// button then offers to bring in newer months.
+/// Broadcast games, in the Add games menu, downloads Lichess's broadcast archive (here the
+/// stand-in's one month) into a database of their own, whose games are listed with the archive's
+/// attribution; the menu then offers to bring in newer months.
 #[gpui_kit::test]
 fn the_broadcast_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.open("Game database");
-    assert_eq!(
-        app.find("database-masters").label(),
-        Some("Broadcast games · 770 MB")
-    );
-    app.click("database-masters");
+    add_games(&mut app, "Broadcast games · 770 MB");
     wait_for_listed(
         &mut app,
         "the broadcast games, newest first",
@@ -503,7 +493,8 @@ fn the_broadcast_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppConte
                     .is_some_and(|text| text.contains("CC BY-SA"))
         })
     });
-    app.wait_for("the button to update them", |window, _| {
+    app.click("database-add");
+    app.wait_for("the menu to update them", |window, _| {
         use gpui_kit::test::TestQueryExt as _;
         window
             .elements()
@@ -522,7 +513,7 @@ fn a_download_asks_first_when_the_disk_is_almost_full(cx: &mut gpui_kit::TestApp
     // The disk then reads as having 1 GB free.
     app.cx
         .update(|cx| cx.set_global(kchess_board::room::PinnedFreeSpace(1024 * 1024 * 1024)));
-    app.click("database-tcec");
+    add_games(&mut app, "Engine games · 27 MB");
     app.wait_for("the warning", |window, _| {
         window.try_find_by_label("Download anyway").is_some()
     });
@@ -539,7 +530,7 @@ fn a_download_asks_first_when_the_disk_is_almost_full(cx: &mut gpui_kit::TestApp
         "nothing downloads"
     );
 
-    app.click("database-tcec");
+    add_games(&mut app, "Engine games · 27 MB");
     app.click_label("Download anyway");
     app.wait_for_app("the engine games in", |cx| {
         cx.global::<kchess_board::game_db::GameDbHandle>()
@@ -551,18 +542,14 @@ fn a_download_asks_first_when_the_disk_is_almost_full(cx: &mut gpui_kit::TestApp
     });
 }
 
-/// The engine games button downloads TCEC's latest release into a database of its own: its
-/// standard competition games alone, listed with the release's attribution; the button then
+/// Engine games, in the Add games menu, downloads TCEC's latest release into a database of its
+/// own: its standard competition games alone, listed with the release's attribution; the menu then
 /// offers to update them.
 #[gpui_kit::test]
 fn the_engine_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.open("Game database");
-    assert_eq!(
-        app.find("database-tcec").label(),
-        Some("Engine games · 27 MB")
-    );
-    app.click("database-tcec");
+    add_games(&mut app, "Engine games · 27 MB");
     wait_for_listed(
         &mut app,
         "the competition game alone",
@@ -582,7 +569,8 @@ fn the_engine_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext)
                     .is_some_and(|text| text.contains("CC BY-SA 3.0"))
         })
     });
-    app.wait_for("the button to update them", |window, _| {
+    app.click("database-add");
+    app.wait_for("the menu to update them", |window, _| {
         use gpui_kit::test::TestQueryExt as _;
         window
             .elements()
@@ -598,7 +586,7 @@ fn the_engine_games_are_downloaded_and_listed(cx: &mut gpui_kit::TestAppContext)
 fn a_month_of_strong_lichess_games_is_downloaded(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.open("Game database");
-    app.click("database-lichess");
+    add_games(&mut app, "Lichess games…");
     app.wait_for("the newest month and its size", |window, _| {
         use gpui_kit::test::TestWindowExt as _;
         window
@@ -1454,7 +1442,7 @@ fn a_repertoire_is_checked_against_an_opponent(cx: &mut gpui_kit::TestAppContext
     use super::fake_lichess::SCOUTED;
     let mut app = Harness::start(cx);
     app.open("Game database");
-    app.click("database-player");
+    add_games(&mut app, "Player's games…");
     app.fill_in_dialog("Username", SCOUTED);
     app.click("player-download");
     wait_for_listed(
@@ -1652,7 +1640,7 @@ fn insights_show_a_downloaded_players_games(cx: &mut gpui_kit::TestAppContext) {
     let own = app.cx.update(|cx| page.read(cx).report_total());
 
     app.open("Game database");
-    app.click("database-player");
+    add_games(&mut app, "Player's games…");
     app.fill_in_dialog("Username", SCOUTED);
     app.click("player-download");
     wait_for_listed(
@@ -1693,4 +1681,10 @@ fn insights_show_a_downloaded_players_games(cx: &mut gpui_kit::TestAppContext) {
         settled(cx, "Showcase")
     });
     assert_eq!(app.cx.update(|cx| page.read(cx).report_total()), own);
+}
+
+/// Choose `label` from the Database page's Add games menu.
+pub(super) fn add_games(app: &mut Harness, label: &str) {
+    app.click("database-add");
+    app.click_label(label);
 }
