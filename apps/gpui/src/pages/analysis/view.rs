@@ -590,9 +590,11 @@ impl Render for AnalysisPage {
                             ),
                         ))
                     })
-                    .when(!show_bar, |row| row.pl(EVAL_BAR))
+                    // The bar's place and the gap after it, so the board holds still as the
+                    // engine turns on and off.
+                    .when(!show_bar, |row| row.pl(EVAL_BAR + EVAL_GAP))
                     .child(
-                        crate::game::surface::wheel(div().id("analysis-board"), cx)
+                        crate::game::surface::wheel(div().id("analysis-board").test_support(), cx)
                             .w(board_size)
                             // The board takes the keys back from the move box, as a click
                             // outside a text field does in the browser.

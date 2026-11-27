@@ -533,12 +533,23 @@ fn the_tool_under_the_engine_is_chosen_and_remembered(cx: &mut gpui_kit::TestApp
     assert_eq!(app.find("Review").selected(), Some(true));
 }
 
+/// The board and the engine's status hold still as the engine turns off and on. Regression: the
+/// board moved 8 px left when the evaluation bar went, its place kept without the gap after it,
+/// and the status 16 px left when the spinner's place went with the engine.
 #[gpui_kit::test]
 fn the_engine_can_be_switched_off_and_on(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
     assert_eq!(app.find("engine-on").checked(), Some(true));
+    let at = |app: &mut Harness| {
+        (
+            app.find("analysis-board").bounds().origin,
+            app.find("engine-status").bounds().origin.x,
+        )
+    };
+    let on = at(&mut app);
     app.click("engine-on");
     assert_eq!(app.find("engine-on").checked(), Some(false));
+    assert_eq!(at(&mut app), on, "the board and the status hold still");
     app.click("engine-on");
     assert_eq!(app.find("engine-on").checked(), Some(true));
 }

@@ -622,7 +622,7 @@ impl AnalysisPage {
                             .text_size(px(12.))
                             .font_weight(FontWeight::MEDIUM)
                             // In line with the status under it, past the spinner's place.
-                            .when(engine_on, |name| name.pl(SPINNER_SLOT + SPINNER_GAP))
+                            .pl(SPINNER_SLOT + SPINNER_GAP)
                             .truncate()
                             .child("Stockfish"),
                     )
@@ -636,18 +636,16 @@ impl AnalysisPage {
                             } else {
                                 palette.text_muted
                             })
-                            // The spinner's place is kept while the engine is on, so the
-                            // depth beside it holds still as each search starts and ends.
-                            .when(engine_on, |row| {
-                                row.child(
-                                    div()
-                                        .flex_none()
-                                        .size(SPINNER_SLOT)
-                                        .when(self.search.busy, |slot| {
-                                            slot.child(crate::widgets::spinner(SPINNER_SLOT))
-                                        }),
-                                )
-                            })
+                            // The spinner's place is always kept, so the status beside it holds
+                            // still as each search starts and ends and the engine turns on and off.
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .size(SPINNER_SLOT)
+                                    .when(engine_on && self.search.busy, |slot| {
+                                        slot.child(crate::widgets::spinner(SPINNER_SLOT))
+                                    }),
+                            )
                             .child(
                                 div()
                                     .id("engine-status")
