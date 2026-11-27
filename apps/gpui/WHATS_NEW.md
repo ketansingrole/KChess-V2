@@ -9,17 +9,21 @@ with nothing there.
 
 ## Unreleased
 
-KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving. The Practice and Puzzles panels, the engine lines and the Database page are tidier.
+KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving. The engine lines, the Watch page, move lists and the panels beside the board are cleaner and easier to read.
 
 ### Changed
 
-- The choices beside the board in Practice and Puzzles each fit on one row, and their switches sit at the end of the row, as in Settings.
-- While the engine works out its other lines, their rows show placeholders that the lines fill as they arrive.
+- The choices beside the board in Practice and Puzzles each fit on one row. Their switches, and those in the engine settings, sit at the end of the row, as in Settings.
+- While the engine works out its other lines, their rows show placeholders that the lines fill as they arrive. Pointing at a move in a line shows its position at once, under the lines, and the board follows you from move to move.
 - On the Database page, Import PGN comes first and the downloads share one Add games menu. With no databases yet, the page shows where to drop a PGN file.
+- On the Watch page, a TV game shows the players' head-to-head as a table: this match and all time, the leader in green.
+- Move lists are more compact, with every other row shaded.
 
 ### Fixed
 
 - Challenges and new Lichess games keep arriving when KChess has been open for many hours. A quiet connection used to stop for good after a few network drops, until you restarted KChess.
+- The analysis board no longer shifts sideways when you turn the engine off.
+- Many smaller fixes.
 
 ## 2026.11.10 (2026-11-27)
 
