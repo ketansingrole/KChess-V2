@@ -183,6 +183,18 @@ fn a_book_s_diagrams_are_set_up_on_the_board(cx: &mut gpui_kit::TestAppContext) 
     });
     app.click(diagram_id(2, 0));
     wait_for_fen(&mut app, BACK_RANK);
+
+    // The moves played from it are listed as the game pages list them, and a click on one goes
+    // back to it.
+    app.drag_square("g1", "f1", true);
+    let after_king = "6k1/5ppp/8/8/8/8/5PPP/3R1K2 b - - 1 1";
+    wait_for_fen(&mut app, after_king);
+    app.drag_square("g8", "f8", true);
+    wait_for_fen(&mut app, "5k2/5ppp/8/8/8/8/5PPP/3R1K2 w - - 2 2");
+    assert_eq!(app.find(("move", 1usize)).selected(), Some(true));
+    app.click(("move", 0usize));
+    wait_for_fen(&mut app, after_king);
+    assert!(!app.shows(("move", 1usize)));
 }
 
 fn page_read(app: &mut Harness) -> Option<usize> {

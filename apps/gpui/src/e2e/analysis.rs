@@ -54,6 +54,47 @@ fn clipboard(app: &mut Harness) -> Option<String> {
     app.cx.read_from_clipboard().and_then(|item| item.text())
 }
 
+/// The main line's first move as the sheet draws it: the row's height, and where the number
+/// column starts in the sheet, how wide it is and where the move follows it.
+fn sheet_geometry(
+    app: &mut Harness,
+    sheet: &'static str,
+    number: impl Into<gpui_kit::ElementId>,
+    first: impl Into<gpui_kit::ElementId>,
+) -> [gpui_kit::Pixels; 4] {
+    let sheet = app.find(sheet).bounds();
+    let number = app.find(number).bounds();
+    let first = app.find(first).bounds();
+    [
+        first.size.height,
+        number.origin.x - sheet.origin.x,
+        number.size.width,
+        first.origin.x - number.origin.x,
+    ]
+}
+
+/// The analysis board flowed its main line as a paragraph of moves while every game page listed
+/// them on a scoresheet, so one game looked different on each page: its rows are now as high and
+/// its numbers in the same column as on a game page's sheet.
+#[gpui_kit::test]
+fn the_main_line_is_the_game_pages_scoresheet(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    let analysis = sheet_geometry(&mut app, "analysis-sheet", "tree-number-e2e4", "tree-e2e4");
+
+    app.open("Over the board");
+    super::local::wait_resumed(&mut app);
+    super::local::type_moves(&mut app, &["e4"]);
+    let played = sheet_geometry(
+        &mut app,
+        "local-moves",
+        ("move-number", 0usize),
+        ("move", 0usize),
+    );
+    assert_eq!(analysis, played);
+}
+
 /// The move list names the opening the moves up to the shown one reached, as the game pages do,
 /// and not once Settings hide opening names.
 #[gpui_kit::test]

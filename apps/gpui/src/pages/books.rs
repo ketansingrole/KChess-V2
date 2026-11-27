@@ -891,6 +891,18 @@ impl BooksPage {
         self.changed(cx);
     }
 
+    /// Back to the position after the `ply`th move from the diagram, the moves after it taken back.
+    fn back_to(&mut self, ply: usize, cx: &mut Context<Self>) {
+        let Some(study) = &mut self.study else {
+            return;
+        };
+        if ply >= study.moves.len() {
+            return;
+        }
+        study.moves.truncate(ply);
+        self.changed(cx);
+    }
+
     fn restart(&mut self, cx: &mut Context<Self>) {
         if let Some(study) = &mut self.study {
             study.moves.clear();
@@ -1065,23 +1077,12 @@ impl BooksPage {
     }
 }
 
-/// Each move's SAN, numbered from the position the moves start in.
-fn numbered(start: &VariantPosition, moves: &[(String, String, VariantPosition)]) -> String {
-    let mut number = start.fullmoves().get();
-    let mut turn = start.turn();
-    let mut out = Vec::new();
-    for (k, (_, san, _)) in moves.iter().enumerate() {
-        match turn {
-            Color::White => out.push(format!("{number}. {san}")),
-            Color::Black if k == 0 => out.push(format!("{number}… {san}")),
-            Color::Black => out.push(san.clone()),
-        }
-        if turn == Color::Black {
-            number += 1;
-        }
-        turn = !turn;
+/// Where the moves from a diagram start, to number them as the book does.
+fn first_move(start: &VariantPosition) -> widgets::FirstMove {
+    widgets::FirstMove {
+        number: usize::try_from(start.fullmoves().get()).unwrap_or(1),
+        black: start.turn() == Color::Black,
     }
-    out.join(" ")
 }
 
 /// The first size saved for a panel, else none: the group shares the room evenly.
@@ -1562,11 +1563,29 @@ impl BooksPage {
             .study
             .as_ref()
             .is_some_and(|study| study.moves.is_empty());
+        // The moves played from the diagram, as the game pages list them; a click goes back to one.
         let moves = self
             .study
             .as_ref()
             .filter(|study| !study.moves.is_empty())
-            .map(|study| numbered(&study.start, &study.moves));
+            .map(|study| {
+                let sans: Vec<String> = study.moves.iter().map(|(_, san, _)| san.clone()).collect();
+                let page = cx.entity().downgrade();
+                widgets::moves_list(
+                    "books-moves",
+                    widgets::MoveSheet {
+                        sans: &sans,
+                        shown: sans.len(),
+                        first: first_move(&study.start),
+                    },
+                    SharedString::new_static(""),
+                    move |ply, _, cx| {
+                        page.update(cx, |page, cx| page.back_to(ply, cx)).ok();
+                    },
+                    crate::notation::figurine(cx),
+                    palette,
+                )
+            });
         // Leaving for another page takes what it needs first: the switch hides this page,
         // which stops its engine, and must not happen inside an update of this page.
         let page = cx.entity().downgrade();
@@ -1659,7 +1678,7 @@ impl BooksPage {
                 panel.child(
                     v_flex()
                         .gap(px(8.))
-                        .child(div().text_size(px(14.)).child(moves))
+                        .child(div().w_full().child(moves))
                         .child(
                             h_flex()
                                 .gap(px(8.))

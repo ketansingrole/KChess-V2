@@ -23,10 +23,11 @@ use shakmaty::Color;
 
 use crate::core::AppCore;
 use crate::game::STANDARD_FEN;
-use crate::game::tree::{TreeNode, move_number};
+use crate::game::tree::TreeNode;
 use crate::loading::Loading;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Pressable as _};
+use kchess_domain::tree::numbered_line;
 
 /// Moves from a tree's start, each its ply, SAN and UCI.
 type Line = Vec<(u32, String, String)>;
@@ -99,23 +100,6 @@ fn collect(roots: &[TreeNode], keep: impl Fn(&TreeNode) -> bool) -> Vec<Step> {
         }
     }
     steps
-}
-
-/// "1. e4 c5 2. Nf3": a line of `(ply, SAN)` moves, numbered.
-pub fn line_text<'a>(moves: impl IntoIterator<Item = (u32, &'a str)>) -> String {
-    let mut text = String::new();
-    for (index, (ply, san)) in moves.into_iter().enumerate() {
-        if !text.is_empty() {
-            text.push(' ');
-        }
-        let number = move_number(ply, index == 0);
-        if !number.is_empty() {
-            text.push_str(&number);
-            text.push(' ');
-        }
-        text.push_str(san);
-    }
-    text
 }
 
 fn counts(played: &GameDbRepertoireMove) -> Counts {
@@ -403,9 +387,9 @@ pub fn line_row(
         .map(|(ply, san, _)| (*ply, san.as_str()))
         .collect();
     let whole: Vec<(u32, &str)> = before.iter().copied().chain([(step.ply, san)]).collect();
-    let line = line_text(whole.iter().copied());
+    let line = numbered_line(whole.iter().copied());
     // The move stands out from the moves that lead to it.
-    let lead = line_text(before.iter().copied());
+    let lead = numbered_line(before.iter().copied());
     let played = line
         .strip_prefix(lead.as_str())
         .unwrap_or(line.as_str())
@@ -511,7 +495,7 @@ impl Render for RepertoireCheck {
 
 #[cfg(test)]
 mod tests {
-    use super::{Target, TreeNode, every_step, line_text, steps};
+    use super::{Target, TreeNode, every_step, numbered_line, steps};
     use crate::repertoire::study_roots;
     use kchess_contracts::types::StudyChapter;
     use shakmaty::Color;
@@ -528,10 +512,10 @@ mod tests {
     #[test]
     fn a_line_reads_numbered() {
         assert_eq!(
-            line_text([(0, "e4"), (1, "c5"), (2, "Nf3")]),
+            numbered_line([(0, "e4"), (1, "c5"), (2, "Nf3")]),
             "1. e4 c5 2. Nf3"
         );
-        assert_eq!(line_text([(1, "c5"), (2, "Nf3")]), "1… c5 2. Nf3");
+        assert_eq!(numbered_line([(1, "c5"), (2, "Nf3")]), "1… c5 2. Nf3");
     }
 
     #[test]
@@ -544,7 +528,7 @@ mod tests {
             .iter()
             .map(|step| {
                 (
-                    line_text(step.line.iter().map(|(ply, san, _)| (*ply, san.as_str()))),
+                    numbered_line(step.line.iter().map(|(ply, san, _)| (*ply, san.as_str()))),
                     step.moves.iter().map(|(_, san, _)| san.clone()).collect(),
                 )
             })
@@ -573,7 +557,7 @@ mod tests {
             .iter()
             .map(|step| {
                 (
-                    line_text(step.line.iter().map(|(ply, san, _)| (*ply, san.as_str()))),
+                    numbered_line(step.line.iter().map(|(ply, san, _)| (*ply, san.as_str()))),
                     step.moves.iter().map(|(_, san, _)| san.clone()).collect(),
                 )
             })
@@ -638,7 +622,7 @@ mod tests {
     fn steps_for_black(root: &TreeNode) -> Vec<String> {
         steps(std::slice::from_ref(root), Color::Black)
             .iter()
-            .map(|step| line_text(step.line.iter().map(|(ply, san, _)| (*ply, san.as_str()))))
+            .map(|step| numbered_line(step.line.iter().map(|(ply, san, _)| (*ply, san.as_str()))))
             .collect()
     }
 }

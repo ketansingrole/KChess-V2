@@ -79,8 +79,6 @@ impl AnalysisPage {
             scroll: self.moves_scroll.clone(),
             figurine: crate::notation::figurine(cx),
         };
-        let mut pieces = Vec::new();
-        view.line(&self.root, "", None, 0, &mut pieces);
         v_flex()
             // The opening's line is kept, blank at the start or out of book, and one line high:
             // shown only once named, it pushed the moves under the pointer down a line as you
@@ -91,7 +89,10 @@ impl AnalysisPage {
                     div()
                         .id("analysis-opening")
                         .test_support()
-                        .px(px(4.))
+                        .px(px(8.))
+                        .py(px(4.))
+                        .border_b_1()
+                        .border_color(palette.border)
                         .text_size(px(12.))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(palette.text_muted)
@@ -103,7 +104,7 @@ impl AnalysisPage {
                         }),
                 )
             })
-            .child(flow(pieces).text_size(px(13.)).line_height(relative(1.9)))
+            .child(view.sheet(&self.root))
             .into_any_element()
     }
 
@@ -382,7 +383,6 @@ impl AnalysisPage {
                         })
                         .overflow_y_scroll()
                         .track_scroll(&self.moves_scroll)
-                        .p(px(8.))
                         .border_1()
                         .border_color(palette.border)
                         .rounded(radii::BOX)

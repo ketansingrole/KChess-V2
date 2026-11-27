@@ -21,7 +21,7 @@ The board editor sets up well-known openings and endgames in one click, and KChe
 - While the engine works out its other lines, their rows show placeholders that the lines fill as they arrive. Pointing at a move in a line shows its position at once, under the lines, and the board follows you from move to move.
 - On the Database page, Import PGN comes first and the downloads share one Add games menu. With no databases yet, the page shows where to drop a PGN file.
 - On the Watch page, a TV game shows the players' head-to-head as a table: this match and all time, the leader in green.
-- Move lists are more compact, with every other row shaded.
+- Moves are listed the same way on every page: the Analysis board and Books show numbered rows like the game pages, with variations and comments under the move they branch from. Move lists are more compact, with every other row shaded.
 - Searching for a player on Players, Following, Guess the move and the database's player download lists matching Lichess players under the field as you type; pick one with the arrows or the pointer. Players has a way back to the leaderboard.
 - On the Books page, your books end with a card to open another, an open book has a way back to them, and its page buttons float at the foot of its pages. The diagram buttons sit under the board.
 - Filters, search fields and buttons that share a row are the same height.
@@ -32,6 +32,7 @@ The board editor sets up well-known openings and endgames in one click, and KChe
 
 ### Fixed
 
+- In a long game the move list keeps the move on the board in view, the newest as it is played, instead of staying at the first moves until you scroll.
 - Challenges and new Lichess games keep arriving when KChess has been open for many hours. A quiet connection used to stop for good after a few network drops, until you restarted KChess.
 - The analysis board no longer shifts sideways when you turn the engine off.
 - Looking up a Lichess player who doesn't exist names them, instead of saying "Lichess has no such thing."

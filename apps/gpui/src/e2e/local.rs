@@ -831,3 +831,50 @@ fn a_dialog_opened_by_a_key_appears_at_once(cx: &mut gpui_kit::TestAppContext) {
         "settles a few pixels down: {opened:?} to {rest:?}"
     );
 }
+
+/// The Opera Game: 33 moves, more than the move list has room for.
+const OPERA: &str = "e2e4 e7e5 g1f3 d7d6 d2d4 c8g4 d4e5 g4f3 d1f3 d6e5 f1c4 g8f6 f3b3 d8e7 b1c3 c7c6 \
+                     c1g5 b7b5 c3b5 c6b5 c4b5 b8d7 e1c1 a8d8 d1d7 d8d7 h1d1 e7e6 b5d7 f6d7 b3b8 \
+                     d7b8 d1d8";
+
+/// Whether the move list shows the move at `index` whole, inside its visible bounds.
+fn move_in_view(window: &mut gpui_kit::Window, index: usize) -> bool {
+    use gpui_kit::test::TestWindowExt as _;
+    let (Some(list), Some(cell)) = (
+        window.try_find("local-moves"),
+        window.try_find(("move", index)),
+    ) else {
+        return false;
+    };
+    let (list, cell) = (list.bounds(), cell.bounds());
+    list.top() <= cell.top() && cell.bottom() <= list.bottom()
+}
+
+/// The move list stayed scrolled at move 1 as a long game went on, the board at the last move
+/// and the list showing the first ones until scrolled by hand (2026.11.10): it keeps the move on
+/// the board in view, the newest as it is played.
+#[gpui_kit::test]
+fn a_long_games_move_list_keeps_the_newest_move_in_view(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::local::LocalPage;
+    let mut app = board(cx);
+    let moves: Vec<&str> = OPERA.split_whitespace().collect();
+    app.with_window(|_, cx| {
+        let local = crate::shell::view::<LocalPage>(cx).expect("the page");
+        local.update(cx, |local, cx| {
+            for uci in &moves {
+                local.play(uci, cx);
+            }
+        });
+    });
+    let last = moves.len() - 1;
+    app.wait_for("the last move in view", |window, _| {
+        move_in_view(window, last)
+    });
+    // The list is shorter than the game: the first move has scrolled out of it.
+    assert!(app.with_window(|window, _| !move_in_view(window, 0)));
+    // Back at the start, the list follows it there.
+    app.click("skip-back");
+    app.wait_for("the first move in view", |window, _| {
+        move_in_view(window, 0)
+    });
+}
