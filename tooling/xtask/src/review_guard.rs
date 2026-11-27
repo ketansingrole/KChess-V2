@@ -137,7 +137,11 @@ mod tests {
 
     #[test]
     fn a_version_waiting_for_or_in_review_is_with_apple() {
-        for state in ["WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_DEVELOPER_RELEASE"] {
+        for state in [
+            "WAITING_FOR_REVIEW",
+            "IN_REVIEW",
+            "PENDING_DEVELOPER_RELEASE",
+        ] {
             assert_eq!(
                 with_apple(
                     &versions(&[("2026.11.4", state), ("2026.11.3", "READY_FOR_SALE")]),
@@ -173,10 +177,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let versions_file = dir.path().join("versions.json");
         let submissions_file = dir.path().join("submissions.json");
-        std::fs::write(&versions_file, versions(&[("2026.11.3", "REJECTED")]).to_string())
-            .unwrap();
-        std::fs::write(&submissions_file, submissions(&["UNRESOLVED_ISSUES"]).to_string())
-            .unwrap();
+        std::fs::write(
+            &versions_file,
+            versions(&[("2026.11.3", "REJECTED")]).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            &submissions_file,
+            submissions(&["UNRESOLVED_ISSUES"]).to_string(),
+        )
+        .unwrap();
         let args = [versions_file, submissions_file].map(|path| path.display().to_string());
         run(&args).unwrap();
         assert!(run(&args[..1]).is_err());
