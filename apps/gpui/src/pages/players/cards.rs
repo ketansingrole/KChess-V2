@@ -539,76 +539,76 @@ impl PlayersPage {
                 .font_features(widgets::tabular())
         };
         card.child(
-            v_flex()
-                .id("players-board")
-                .max_h(px(512.))
-                .overflow_y_scroll()
-                .text_size(px(13.))
-                .children(shown.into_iter().map(|(index, entry)| {
-                    let name = entry.username.clone();
-                    let progress = entry.progress;
-                    // Rank, title, name, rating and change, each in its own column, so the
-                    // names and the digits line up down the board.
-                    h_flex()
-                        .id(("players-board-row", index))
-                        .test_support()
-                        .gap(px(12.))
-                        .py(px(4.))
-                        .border_t_1()
-                        .border_color(palette.border)
-                        .child(
-                            numeric(28.)
-                                .text_color(palette.text_muted)
-                                .child((index + 1).to_string()),
-                        )
-                        .child(
-                            div()
-                                .id(("players-board-title", index))
-                                .test_support()
-                                .w(px(32.))
-                                .flex_none()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(palette.warning)
-                                .children(entry.title.clone()),
-                        )
-                        .child(
-                            div()
-                                .id(("players-board-player", index))
-                                .test_support()
-                                .flex_1()
-                                .min_w_0()
-                                .child(player_link(
-                                    ("players-board-name", index),
-                                    name,
-                                    palette.primary,
-                                )),
-                        )
-                        .child(numeric(48.).child(entry.rating.round().to_string()))
-                        .child(
-                            numeric(40.)
-                                .id(("players-board-change", index))
-                                // Lichess's progress counts games, not days.
-                                .tooltip(|window, cx| {
-                                    gpui_kit::component::tooltip::Tooltip::new(
-                                        "Rating change over the last 12 games",
-                                    )
-                                    .build(window, cx)
-                                })
-                                .text_size(px(12.))
-                                .text_color(if progress > 0. {
-                                    palette.success
-                                } else if progress < 0. {
-                                    palette.error
-                                } else {
-                                    palette.text_muted
-                                })
-                                .child(match progress {
-                                    p if p > 0. => format!("+{p}"),
-                                    p if p < 0. => p.to_string(),
-                                    _ => String::new(),
-                                }),
-                        )
-                })),
+            widgets::nested_scroll(
+                v_flex().id("players-board").max_h(px(512.)),
+                &self.list_scroll,
+            )
+            .text_size(px(13.))
+            .children(shown.into_iter().map(|(index, entry)| {
+                let name = entry.username.clone();
+                let progress = entry.progress;
+                // Rank, title, name, rating and change, each in its own column, so the
+                // names and the digits line up down the board.
+                h_flex()
+                    .id(("players-board-row", index))
+                    .test_support()
+                    .gap(px(12.))
+                    .py(px(4.))
+                    .border_t_1()
+                    .border_color(palette.border)
+                    .child(
+                        numeric(28.)
+                            .text_color(palette.text_muted)
+                            .child((index + 1).to_string()),
+                    )
+                    .child(
+                        div()
+                            .id(("players-board-title", index))
+                            .test_support()
+                            .w(px(32.))
+                            .flex_none()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(palette.warning)
+                            .children(entry.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .id(("players-board-player", index))
+                            .test_support()
+                            .flex_1()
+                            .min_w_0()
+                            .child(player_link(
+                                ("players-board-name", index),
+                                name,
+                                palette.primary,
+                            )),
+                    )
+                    .child(numeric(48.).child(entry.rating.round().to_string()))
+                    .child(
+                        numeric(40.)
+                            .id(("players-board-change", index))
+                            // Lichess's progress counts games, not days.
+                            .tooltip(|window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(
+                                    "Rating change over the last 12 games",
+                                )
+                                .build(window, cx)
+                            })
+                            .text_size(px(12.))
+                            .text_color(if progress > 0. {
+                                palette.success
+                            } else if progress < 0. {
+                                palette.error
+                            } else {
+                                palette.text_muted
+                            })
+                            .child(match progress {
+                                p if p > 0. => format!("+{p}"),
+                                p if p < 0. => p.to_string(),
+                                _ => String::new(),
+                            }),
+                    )
+            })),
         )
     }
 

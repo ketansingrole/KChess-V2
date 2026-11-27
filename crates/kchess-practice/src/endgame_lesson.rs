@@ -135,6 +135,8 @@ pub enum LessonAction {
 }
 
 pub struct EndgameLesson {
+    /// The scroll of the list inside it, kept to the list (`widgets::nested_scroll`).
+    list_scroll: ScrollHandle,
     course: Course,
     summary: Option<RunSummary>,
     chapter: usize,
@@ -196,6 +198,7 @@ impl EndgameLesson {
             .position(|chapter| !finished(summary.as_ref(), &chapter.id))
             .unwrap_or(0);
         let mut lesson = EndgameLesson {
+            list_scroll: ScrollHandle::new(),
             course,
             summary,
             chapter,
@@ -972,13 +975,13 @@ impl Render for EndgameLesson {
                 .items_start()
                 .flex_none()
                 .gap(LAYOUT_GAP)
-                .child(
+                .child(widgets::nested_scroll(
                     chapters
                         .w(CHAPTERS_WIDTH)
                         .max_h(board_size)
-                        .id("lesson-chapters")
-                        .overflow_y_scroll(),
-                )
+                        .id("lesson-chapters"),
+                    &self.list_scroll,
+                ))
                 .child(board)
                 .into_any_element()
         };
