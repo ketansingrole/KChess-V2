@@ -740,14 +740,7 @@ impl WatchPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let epoch = self.epoch.start();
-        self.early.clear();
-        self.session = None;
-        self.round_session = None;
-        self.phase = None;
-        self.error = None;
         self.target = None;
-        self.live.clear();
         let broadcasts = &mut self.broadcasts;
         broadcasts.round = round.clone();
         broadcasts.games.clear();
@@ -760,48 +753,21 @@ impl WatchPage {
         broadcasts.round_select.update(cx, |select, cx| {
             select.set_selected_value(&shown, window, cx)
         });
-        self.pending = Some(Pending::Round);
-        cx.notify();
-        let (before, started) = self.next_feed();
-        cx.spawn(async move |this, cx| {
-            if let Some(before) = before {
-                before.await;
-            }
-            let Ok(call) = this.update(cx, |_, cx| {
-                cx.global::<AppCore>().request(calls::WatchBroadcast {
+        self.start_feed(
+            Pending::Round,
+            move |core| {
+                core.request(calls::WatchBroadcast {
                     round_id: LichessId(round),
                 })
-            }) else {
-                return;
-            };
-            let answer = call.await;
-            drop(started);
-            this.update(cx, |this, cx| {
-                if !this.epoch.is_current(epoch) {
-                    // The page moved on while the core started it: that feed ends now.
-                    // gpui-lints: allow(dropped_failure) a superseded start's failure is nobody's
-                    if let Ok(session) = answer {
-                        super::stop_watching(Some(session), cx);
-                    }
-                    return;
-                }
-                match answer {
-                    Ok(session) => {
-                        this.round_session = Some(session);
-                        this.replay_early(cx);
-                        this.broadcasts.redraw(cx);
-                    }
-                    Err(cause) => {
-                        this.pending = None;
-                        this.early.clear();
-                        this.error = Some(kchess_app::loading::failure("watch", &cause).into());
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+            },
+            |this, session, cx| {
+                this.round_session = Some(session);
+                this.replay_early(cx);
+                this.broadcasts.redraw(cx);
+            },
+            |_| {},
+            cx,
+        );
     }
 
     pub(super) fn leave_tour(&mut self, cx: &mut Context<Self>) {
