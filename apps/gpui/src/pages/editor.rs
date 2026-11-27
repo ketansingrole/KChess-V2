@@ -159,6 +159,9 @@ pub struct EditorPage {
     /// Squares of a position read from a picture that it was unsure of, ringed until a piece is
     /// put on or taken off each, or another position is set up.
     marked: Vec<shakmaty::Square>,
+    /// Whether the position was read from a picture, which may have been drawn from the other
+    /// side than it was read: until another position is set up, it can be turned around.
+    from_picture: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -270,6 +273,7 @@ impl EditorPage {
             undone: Vec::new(),
             shown: (Variant::Standard, String::new()),
             marked: Vec::new(),
+            from_picture: false,
             _subscriptions: subscriptions,
         };
         page.shown = page.snapshot();
@@ -293,6 +297,7 @@ impl EditorPage {
         self.variant = variant;
         self.orientation = orientation;
         self.marked.clear();
+        self.from_picture = false;
         self.changed(cx);
     }
 
@@ -308,6 +313,7 @@ impl EditorPage {
     ) {
         self.set_position(Variant::Standard, fen, orientation, window, cx);
         self.marked = marked;
+        self.from_picture = true;
         self.redraw(cx);
     }
 
@@ -478,6 +484,7 @@ impl EditorPage {
         }
         if self.read_fen(&text) {
             self.marked.clear();
+            self.from_picture = false;
             self.changed(cx);
         } else {
             self.fen_error = Some("That is not a valid FEN".into());
@@ -556,11 +563,13 @@ impl EditorPage {
         }
         self.variant = variant;
         self.marked.clear();
+        self.from_picture = false;
         self.changed(cx);
     }
 
     fn clear_board(&mut self, cx: &mut Context<Self>) {
         self.marked.clear();
+        self.from_picture = false;
         self.setup.board = EMPTY_BOARD.into();
         self.setup.ep.clear();
         self.changed(cx);
@@ -569,6 +578,17 @@ impl EditorPage {
     fn flip(&mut self, cx: &mut Context<Self>) {
         self.orientation = !self.orientation;
         self.redraw(cx);
+    }
+
+    /// A picture read from one side was drawn from the other: each piece goes to the opposite
+    /// square and the board turns with it, so it still looks as the picture did.
+    fn turn_around(&mut self, cx: &mut Context<Self>) {
+        self.setup = self.setup.turned_around();
+        self.orientation = !self.orientation;
+        for square in &mut self.marked {
+            *square = square.flip_vertical().flip_horizontal();
+        }
+        self.changed(cx);
     }
 
     fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -972,6 +992,18 @@ impl Render for EditorPage {
                         .text_size(px(12.))
                         .text_color(palette.text_muted)
                         .child(SharedString::new_static("Check the marked squares")),
+                )
+            })
+            // Read from the wrong side, a picture's pieces are all on the opposite squares.
+            .when(self.from_picture, |panel| {
+                panel.child(
+                    widgets::text_button("editor-turn-around")
+                        .label(if self.orientation == Color::White {
+                            "Picture was from Black's side"
+                        } else {
+                            "Picture was from White's side"
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| this.turn_around(cx))),
                 )
             })
             .child(
