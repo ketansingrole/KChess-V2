@@ -7,7 +7,7 @@
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Bitboard, Board, Color, File, Position, Rank, Role, Square};
 
-pub use crate::perf::Speed;
+use crate::perf::Speed;
 
 /// The plies a balance or a structure must last.
 pub const HOLD: usize = 4;

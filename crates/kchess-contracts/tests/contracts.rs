@@ -44,7 +44,7 @@ fn every_wire_enum_round_trips_its_listed_values() {
         CoordinateMode: COORDINATE_MODES,
         DeclineReason: DECLINE_REASONS,
         EngineLevel: ENGINE_LEVELS,
-        ExplorerSpeed: EXPLORER_SPEEDS,
+        Speed: SPEEDS,
         OnlineAction: ONLINE_ACTIONS,
         PerfType: PERF_TYPES,
         PieceAnimation: PIECE_ANIMATIONS,

@@ -96,23 +96,26 @@ impl PositionExplorer {
                     PositionLookupKind::Masters | PositionLookupKind::Database
                 ),
                 |filters| {
-                    filters.child(h_flex().flex_wrap().gap(px(4.)).children(
-                        ExplorerSpeed::ALL.iter().map(|&speed| {
-                            toggle(
-                                SharedString::from(format!("speed-{}", speed.as_str())),
-                                widgets::speed_label(speed).into(),
-                                prefs.speeds.contains(&speed),
-                            )
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    this.update_prefs(cx, |prefs| {
-                                        prefs.speeds = toggled(&prefs.speeds, &speed)
-                                    });
-                                    this.filters_changed(cx);
-                                },
-                            ))
-                        }),
-                    ))
+                    filters.child(
+                        h_flex()
+                            .flex_wrap()
+                            .gap(px(4.))
+                            .children(Speed::ALL.iter().map(|&speed| {
+                                toggle(
+                                    SharedString::from(format!("speed-{}", speed.as_str())),
+                                    widgets::speed_label(speed).into(),
+                                    prefs.speeds.contains(&speed),
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.update_prefs(cx, |prefs| {
+                                            prefs.speeds = toggled(&prefs.speeds, &speed)
+                                        });
+                                        this.filters_changed(cx);
+                                    },
+                                ))
+                            })),
+                    )
                 },
             )
             .when(prefs.kind == PositionLookupKind::Database, |filters| {

@@ -10,7 +10,7 @@ use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{DatabaseId, Fen, GameDbGameId, GameId};
 use kchess_contracts::types::{
-    ExplorerGame, ExplorerSpeed, LookupMove, LookupOptions, PositionLookup, PositionLookupKind,
+    ExplorerGame, LookupMove, LookupOptions, PositionLookup, PositionLookupKind, Speed,
 };
 use std::time::Duration;
 

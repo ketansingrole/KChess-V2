@@ -15,11 +15,10 @@ use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::DatabaseId;
 use kchess_contracts::types::{
-    Blunders, DatabaseSource, EndgameRecord, EndgameReport, ExplorerSpeed, GameRecord,
-    InsightsFilters, InsightsQuery, InsightsReport, OpeningRecord, StructureRecord,
-    StructureReport, TimeUseReport,
+    Blunders, DatabaseSource, EndgameRecord, EndgameReport, GameRecord, InsightsFilters,
+    InsightsQuery, InsightsReport, OpeningRecord, Speed, StructureRecord, StructureReport,
+    TimeUseReport,
 };
-use kchess_domain::perf::Speed;
 use kchess_domain::variant::Variant;
 
 use crate::assets::icon;
@@ -408,7 +407,7 @@ impl InsightsPage {
     fn filters(&self, cx: &App) -> InsightsFilters {
         let speed = Self::chosen(&self.speed, cx);
         InsightsFilters {
-            speed: ExplorerSpeed::ALL
+            speed: Speed::ALL
                 .iter()
                 .copied()
                 .find(|choice| choice.as_str() == speed),

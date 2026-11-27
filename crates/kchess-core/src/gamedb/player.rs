@@ -21,19 +21,19 @@ use super::{GameDbService, Reporter, import, schema};
 use kchess_contracts::check::PgnPacking;
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
-    DatabaseSource, ExplorerSpeed, GameDbImported, GameDbPhase as Phase, GameSite, PlayerGames,
+    DatabaseSource, GameDbImported, GameDbPhase as Phase, GameSite, PlayerGames, Speed,
 };
 use kchess_domain::calendar::{civil_from_days, days_from_civil};
 
 /// The speeds of a standard game on Lichess: asked for when the request names none, so that
 /// variants' games are not downloaded only to be skipped.
-const LICHESS_SPEEDS: [ExplorerSpeed; 6] = [
-    ExplorerSpeed::UltraBullet,
-    ExplorerSpeed::Bullet,
-    ExplorerSpeed::Blitz,
-    ExplorerSpeed::Rapid,
-    ExplorerSpeed::Classical,
-    ExplorerSpeed::Correspondence,
+const LICHESS_SPEEDS: [Speed; 6] = [
+    Speed::UltraBullet,
+    Speed::Bullet,
+    Speed::Blitz,
+    Speed::Rapid,
+    Speed::Classical,
+    Speed::Correspondence,
 ];
 
 /// The database of `username`'s games on `site`: the site, then a digest of the name as the site
@@ -108,11 +108,11 @@ pub fn chesscom_keeps(request: &PlayerGames, game: &Value) -> bool {
     let Some(speeds) = &request.speeds else {
         return true;
     };
-    let matching: &[ExplorerSpeed] = match text("time_class") {
-        Some("bullet") => &[ExplorerSpeed::UltraBullet, ExplorerSpeed::Bullet],
-        Some("blitz") => &[ExplorerSpeed::Blitz],
-        Some("rapid") => &[ExplorerSpeed::Rapid, ExplorerSpeed::Classical],
-        Some("daily") => &[ExplorerSpeed::Correspondence],
+    let matching: &[Speed] = match text("time_class") {
+        Some("bullet") => &[Speed::UltraBullet, Speed::Bullet],
+        Some("blitz") => &[Speed::Blitz],
+        Some("rapid") => &[Speed::Rapid, Speed::Classical],
+        Some("daily") => &[Speed::Correspondence],
         _ => &[],
     };
     matching.iter().any(|speed| speeds.contains(speed))
@@ -304,11 +304,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn request(
-        months: Option<u32>,
-        speeds: Option<Vec<ExplorerSpeed>>,
-        rated: bool,
-    ) -> PlayerGames {
+    fn request(months: Option<u32>, speeds: Option<Vec<Speed>>, rated: bool) -> PlayerGames {
         PlayerGames {
             site: GameSite::Lichess,
             username: "Some_Player".to_string(),
@@ -373,7 +369,7 @@ mod tests {
 
         let some = query(&request(
             Some(12),
-            Some(vec![ExplorerSpeed::Blitz, ExplorerSpeed::Rapid]),
+            Some(vec![Speed::Blitz, Speed::Rapid]),
             true,
         ));
         assert_eq!(get(&some, "perfType").as_deref(), Some("blitz,rapid"));
@@ -394,10 +390,7 @@ mod tests {
         ));
         let slow = request(
             None,
-            Some(vec![
-                ExplorerSpeed::Classical,
-                ExplorerSpeed::Correspondence,
-            ]),
+            Some(vec![Speed::Classical, Speed::Correspondence]),
             true,
         );
         assert!(chesscom_keeps(&slow, &game("chess", "rapid", true)));

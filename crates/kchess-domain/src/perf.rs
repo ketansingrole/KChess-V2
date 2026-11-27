@@ -3,45 +3,16 @@
 
 use crate::variant::Variant;
 
-/// How fast a game is played, as Lichess groups ratings and explorer games.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Speed {
-    UltraBullet,
-    Bullet,
-    Blitz,
-    Rapid,
-    Classical,
-    Correspondence,
-}
+crate::wire_enum!(#[doc = "How fast a game is played, as Lichess groups ratings and explorer games; fastest first."] Speed, SPEEDS {
+    UltraBullet = "ultraBullet",
+    Bullet = "bullet",
+    Blitz = "blitz",
+    Rapid = "rapid",
+    Classical = "classical",
+    Correspondence = "correspondence",
+});
 
 impl Speed {
-    /// Fastest first.
-    pub const ALL: [Speed; 6] = [
-        Speed::UltraBullet,
-        Speed::Bullet,
-        Speed::Blitz,
-        Speed::Rapid,
-        Speed::Classical,
-        Speed::Correspondence,
-    ];
-
-    /// The key Lichess names it by: `ultraBullet`, `blitz`.
-    pub const fn key(self) -> &'static str {
-        match self {
-            Speed::UltraBullet => "ultraBullet",
-            Speed::Bullet => "bullet",
-            Speed::Blitz => "blitz",
-            Speed::Rapid => "rapid",
-            Speed::Classical => "classical",
-            Speed::Correspondence => "correspondence",
-        }
-    }
-
-    /// The speed of a Lichess key; none for one that names no speed.
-    pub fn from_key(key: &str) -> Option<Speed> {
-        Speed::ALL.into_iter().find(|speed| speed.key() == key)
-    }
-
     pub const fn label(self) -> &'static str {
         match self {
             Speed::UltraBullet => "UltraBullet",
@@ -88,7 +59,7 @@ impl Perf {
 
     pub const fn key(self) -> &'static str {
         match self {
-            Perf::Speed(speed) => speed.key(),
+            Perf::Speed(speed) => speed.as_str(),
             Perf::Variant(variant) => variant.key(),
         }
     }
@@ -100,17 +71,6 @@ impl Perf {
         }
     }
 }
-
-/// The speeds' keys, fastest first.
-pub const SPEED_KEYS: [&str; 6] = {
-    let mut keys = [""; 6];
-    let mut i = 0;
-    while i < keys.len() {
-        keys[i] = Speed::ALL[i].key();
-        i += 1;
-    }
-    keys
-};
 
 /// Every perf's key, in `Perf::ALL`'s order.
 pub const PERF_KEYS: [&str; 14] = {
@@ -146,10 +106,7 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), PERF_KEYS.len());
-        assert_eq!(&PERF_KEYS[..6], &SPEED_KEYS);
-        for speed in Speed::ALL {
-            assert_eq!(Speed::from_key(speed.key()), Some(speed));
-        }
+        assert_eq!(&PERF_KEYS[..6], SPEEDS);
         assert_eq!(Speed::from_key("chess960"), None);
     }
 

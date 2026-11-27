@@ -24,7 +24,7 @@ pub use setting_rows::*;
 
 /// A speed's name on its filter button (`toggle_button`): correspondence is shortened to fit
 /// the row.
-pub fn speed_label(speed: kchess_contracts::types::ExplorerSpeed) -> &'static str {
+pub fn speed_label(speed: kchess_contracts::types::Speed) -> &'static str {
     use kchess_domain::perf::Speed;
     match Speed::from_key(speed.as_str()) {
         Some(Speed::Correspondence) => "Corr",

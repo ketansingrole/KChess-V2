@@ -37,8 +37,8 @@ use kchess_board::game::played::{DatabaseGame, GameOrigin};
 use kchess_contracts::calls;
 use kchess_contracts::check::{DatabaseId, GameDbGameId, PgnSavePath};
 use kchess_contracts::types::{
-    DatabaseInfo, DatabaseSource, ExplorerSpeed, GameDbQuery, GameDbResult, GameDbRow, GameDbSide,
-    GameDbSort, GameDbStructure,
+    DatabaseInfo, DatabaseSource, GameDbQuery, GameDbResult, GameDbRow, GameDbSide, GameDbSort,
+    GameDbStructure, Speed,
 };
 use kchess_domain::gamedb::patterns::{Material, Placement};
 use kchess_nav::page::{ActionInfo, Page, PageAction, PageView};
@@ -151,7 +151,7 @@ pub struct DatabasePage {
     material_input: Entity<InputState>,
     pieces_input: Entity<InputState>,
     structure_select: Entity<SelectState<Vec<Choice>>>,
-    speed: Option<ExplorerSpeed>,
+    speed: Option<Speed>,
     structure: Option<GameDbStructure>,
     sort_select: Entity<SelectState<Vec<Choice>>>,
     size_select: Entity<SelectState<Vec<Choice>>>,
@@ -195,14 +195,14 @@ fn sort_key(sort: GameDbSort) -> &'static str {
     }
 }
 
-fn speed_of(key: &str) -> Option<ExplorerSpeed> {
+fn speed_of(key: &str) -> Option<Speed> {
     Some(match key {
-        "ultraBullet" => ExplorerSpeed::UltraBullet,
-        "bullet" => ExplorerSpeed::Bullet,
-        "blitz" => ExplorerSpeed::Blitz,
-        "rapid" => ExplorerSpeed::Rapid,
-        "classical" => ExplorerSpeed::Classical,
-        "correspondence" => ExplorerSpeed::Correspondence,
+        "ultraBullet" => Speed::UltraBullet,
+        "bullet" => Speed::Bullet,
+        "blitz" => Speed::Blitz,
+        "rapid" => Speed::Rapid,
+        "classical" => Speed::Classical,
+        "correspondence" => Speed::Correspondence,
         _ => return None,
     })
 }

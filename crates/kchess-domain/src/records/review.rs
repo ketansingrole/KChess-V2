@@ -107,7 +107,7 @@ pub struct ReviewSummary {
 }
 
 /// Lichess speeds of standard chess; variants are not reviewed.
-const STANDARD_PERFS: &[&str] = &crate::perf::SPEED_KEYS;
+const STANDARD_PERFS: &[&str] = crate::perf::SPEEDS;
 
 /// The key a review of `moves` (UCI) from `fen` is stored under. A game of a variant not played
 /// by standard rules has a key that names it: the same moves are another game in Atomic.

@@ -72,7 +72,7 @@ impl GameRef {
     }
 
     pub fn correspondence(&self) -> bool {
-        self.speed.as_deref() == Some(crate::perf::Speed::Correspondence.key())
+        self.speed.as_deref() == Some(crate::perf::Speed::Correspondence.as_str())
     }
 
     /// Whether the Board API can play it; a game started on another device may not be.

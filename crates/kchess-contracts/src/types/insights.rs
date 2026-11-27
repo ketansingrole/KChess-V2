@@ -8,7 +8,7 @@ use super::*;
 pub struct InsightsQuery {
     pub account: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub speed: Option<ExplorerSpeed>,
+    pub speed: Option<Speed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rated: Option<bool>,
     /// Only games from the last this-many days.
@@ -25,7 +25,7 @@ pub struct InsightsQuery {
 #[serde(rename_all = "camelCase")]
 pub struct InsightsFilters {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub speed: Option<ExplorerSpeed>,
+    pub speed: Option<Speed>,
     /// Games whose rating the database cannot tell are left out when this is set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rated: Option<bool>,

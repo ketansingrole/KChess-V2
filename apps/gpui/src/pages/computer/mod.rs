@@ -8,7 +8,7 @@ use kchess_app::log::ResultExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{Bounded, Fen, Moves};
 use kchess_contracts::types::{
-    EngineLevel, ExplorerSpeed, LookupOptions, PositionLookup, PositionLookupKind,
+    EngineLevel, LookupOptions, PositionLookup, PositionLookupKind, Speed,
 };
 use kchess_domain::games::archive::Snapshot;
 use kchess_domain::training::clock::format_clock;
@@ -450,11 +450,7 @@ impl ComputerPage {
             kind: PositionLookupKind::Opening,
             fen: self.search_fen(&request),
             options: Some(LookupOptions {
-                speeds: Some(vec![
-                    ExplorerSpeed::Blitz,
-                    ExplorerSpeed::Rapid,
-                    ExplorerSpeed::Classical,
-                ]),
+                speeds: Some(vec![Speed::Blitz, Speed::Rapid, Speed::Classical]),
                 ratings: Some(vec![band]),
                 ..LookupOptions::default()
             }),

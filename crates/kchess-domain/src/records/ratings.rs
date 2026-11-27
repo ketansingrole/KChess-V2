@@ -16,7 +16,7 @@ const fn named(variant: Variant) -> (&'static str, &'static str) {
 }
 
 const fn speed(speed: Speed) -> (&'static str, &'static str) {
-    (speed.key(), speed.label())
+    (speed.as_str(), speed.label())
 }
 
 /// The label for each rating-history key.

@@ -1,7 +1,7 @@
 use super::{Layout, PositionExplorer, Prefs, category, speed_label, toggled};
 use crate::e2e::Harness;
 use gpui_kit::AppContext as _;
-use kchess_contracts::types::{ExplorerSpeed, PositionLookupKind};
+use kchess_contracts::types::{PositionLookupKind, Speed};
 use shakmaty::Color;
 
 /// Choosing the player database with no name yet left a lookup for the other database
@@ -148,10 +148,7 @@ fn stored_preferences_still_load() {
     });
     let prefs: Prefs = serde_json::from_value(stored.clone()).unwrap();
     assert_eq!(prefs.kind, PositionLookupKind::Player);
-    assert_eq!(
-        prefs.speeds,
-        [ExplorerSpeed::Bullet, ExplorerSpeed::Correspondence]
-    );
+    assert_eq!(prefs.speeds, [Speed::Bullet, Speed::Correspondence]);
     assert_eq!(prefs.color, Color::Black);
     // Saved back with the settings added since, at their defaults.
     let mut saved = stored.clone();
@@ -171,12 +168,12 @@ fn stored_preferences_still_load() {
     }))
     .unwrap();
     assert_eq!(odd.kind, PositionLookupKind::Opening);
-    assert_eq!(odd.speeds, [ExplorerSpeed::Blitz]);
+    assert_eq!(odd.speeds, [Speed::Blitz]);
     assert_eq!(odd.color, Color::White);
     let empty: Prefs = serde_json::from_value(json!({ "speeds": "fast" })).unwrap();
-    assert_eq!(empty.speeds, Vec::<ExplorerSpeed>::new());
-    assert_eq!(speed_label(ExplorerSpeed::Correspondence), "Corr");
-    assert_eq!(speed_label(ExplorerSpeed::UltraBullet), "UltraBullet");
+    assert_eq!(empty.speeds, Vec::<Speed>::new());
+    assert_eq!(speed_label(Speed::Correspondence), "Corr");
+    assert_eq!(speed_label(Speed::UltraBullet), "UltraBullet");
 }
 
 #[test]

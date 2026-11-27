@@ -12,7 +12,7 @@ use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex
 use gpui_kit::*;
 use kchess_board::player_search::{self, NameGroup, NameMatches};
 use kchess_board::widgets;
-use kchess_contracts::types::{ExplorerSpeed, GameSite, PlayerGames};
+use kchess_contracts::types::{GameSite, PlayerGames, Speed};
 
 use crate::game_db::GameDbHandle;
 use crate::theme::Palette;
@@ -29,11 +29,11 @@ const PERIODS: [(&str, &str); 5] = [
 ];
 const PERIOD: &str = "12";
 /// Chess.com's speeds, as its games name them: bullet, blitz, rapid and daily.
-const CHESSCOM_SPEEDS: [ExplorerSpeed; 4] = [
-    ExplorerSpeed::Bullet,
-    ExplorerSpeed::Blitz,
-    ExplorerSpeed::Rapid,
-    ExplorerSpeed::Correspondence,
+const CHESSCOM_SPEEDS: [Speed; 4] = [
+    Speed::Bullet,
+    Speed::Blitz,
+    Speed::Rapid,
+    Speed::Correspondence,
 ];
 
 fn site_label(site: GameSite) -> &'static str {
@@ -44,16 +44,16 @@ fn site_label(site: GameSite) -> &'static str {
 }
 
 /// The speeds `site` offers.
-fn speeds(site: GameSite) -> &'static [ExplorerSpeed] {
+fn speeds(site: GameSite) -> &'static [Speed] {
     match site {
-        GameSite::Lichess => ExplorerSpeed::ALL,
+        GameSite::Lichess => Speed::ALL,
         GameSite::Chesscom => &CHESSCOM_SPEEDS,
     }
 }
 
-fn speed_label(site: GameSite, speed: ExplorerSpeed) -> &'static str {
+fn speed_label(site: GameSite, speed: Speed) -> &'static str {
     match (site, speed) {
-        (GameSite::Chesscom, ExplorerSpeed::Correspondence) => "Daily",
+        (GameSite::Chesscom, Speed::Correspondence) => "Daily",
         _ => widgets::speed_label(speed),
     }
 }
@@ -85,7 +85,7 @@ pub struct PlayerDialog {
     period_select: Entity<SelectState<Vec<Choice>>>,
     months: Option<u32>,
     /// None chosen: every speed.
-    speeds: Vec<ExplorerSpeed>,
+    speeds: Vec<Speed>,
     rated: bool,
     /// Lichess players whose names start with what is typed.
     names: NameMatches,
@@ -247,7 +247,7 @@ impl PlayerDialog {
             .collect()
     }
 
-    fn toggle_speed(&mut self, speed: ExplorerSpeed, cx: &mut Context<Self>) {
+    fn toggle_speed(&mut self, speed: Speed, cx: &mut Context<Self>) {
         if let Some(at) = self.speeds.iter().position(|chosen| *chosen == speed) {
             self.speeds.remove(at);
         } else {

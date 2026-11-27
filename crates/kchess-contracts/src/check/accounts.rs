@@ -9,10 +9,9 @@ use kchess_domain::variant::VARIANTS;
 
 use super::*;
 use crate::types::{
-    APPEARANCES, CLOSE_ACTIONS, COORDINATE_MODES, CoreSettings, ENGINE_LEVELS, EXPLORER_SPEEDS,
-    FrontendPreferences, GamePageQuery, InsightsFilters, InsightsQuery, PERF_TYPES,
-    PIECE_ANIMATIONS, PROMOTION_MODES, PerfType, RELATION_ACTIONS, REVIEW_AUTO, RelationAction,
-    Settings,
+    APPEARANCES, CLOSE_ACTIONS, COORDINATE_MODES, CoreSettings, ENGINE_LEVELS, FrontendPreferences,
+    GamePageQuery, InsightsFilters, InsightsQuery, PERF_TYPES, PIECE_ANIMATIONS, PROMOTION_MODES,
+    PerfType, RELATION_ACTIONS, REVIEW_AUTO, RelationAction, SPEEDS, Settings,
 };
 
 /* ── Names and ids ── */
@@ -465,7 +464,7 @@ fn insights_filters(
 ) -> Result<InsightsFilters, Refusal> {
     let speed = match speed {
         Some(speed) => {
-            one_of(&speed, EXPLORER_SPEEDS, None, "speed")?;
+            one_of(&speed, SPEEDS, None, "speed")?;
             Some(chosen(speed)?)
         }
         None => None,

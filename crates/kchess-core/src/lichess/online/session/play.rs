@@ -103,7 +103,7 @@ impl OnlineSession {
         // Lichess closes the game stream when the game ends; don't reconnect then.
         let status = match ServerEvent::read(&event) {
             ServerEvent::GameFull(full) => {
-                let correspondence = full.speed.as_deref() == Some(Speed::Correspondence.key());
+                let correspondence = full.speed.as_deref() == Some(Speed::Correspondence.as_str());
                 let mut st = self.st();
                 // A replaced game's last event must not describe the game opened since.
                 if let Some(game) = st.live.as_mut().filter(|game| game.id == game_id) {

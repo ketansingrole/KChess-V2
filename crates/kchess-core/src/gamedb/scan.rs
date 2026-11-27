@@ -13,9 +13,10 @@ use super::explore::Reached;
 use super::{schema, search};
 use crate::store::sql::Sql as _;
 use kchess_contracts::error::{CoreError, Result};
-use kchess_contracts::types::{ExplorerSpeed, GameDbQuery};
-use kchess_domain::gamedb::patterns::{self, Material, Placement, Speed, Structure};
+use kchess_contracts::types::GameDbQuery;
+use kchess_domain::gamedb::patterns::{self, Material, Placement, Structure};
 use kchess_domain::gamedb::{self};
+use kchess_domain::perf::Speed;
 
 const STOPPED: &str = "The search stopped.";
 /// The games a worker reads between looks at whether to stop.
@@ -31,7 +32,7 @@ pub fn deep(query: &GameDbQuery) -> bool {
 
 /// What a deep search looks for.
 struct Wanted {
-    speed: Option<ExplorerSpeed>,
+    speed: Option<Speed>,
     material: Option<Material>,
     structure: Option<Structure>,
     pieces: Option<Placement>,
@@ -66,7 +67,7 @@ impl Wanted {
             let played = gamedb::header_of(extra, "TimeControl")
                 .as_deref()
                 .and_then(patterns::speed);
-            if played != Some(speed_of(speed)) {
+            if played != Some(speed) {
                 return false;
             }
         }
@@ -97,17 +98,6 @@ impl Wanted {
             return false;
         }
         true
-    }
-}
-
-fn speed_of(speed: ExplorerSpeed) -> Speed {
-    match speed {
-        ExplorerSpeed::UltraBullet => Speed::UltraBullet,
-        ExplorerSpeed::Bullet => Speed::Bullet,
-        ExplorerSpeed::Blitz => Speed::Blitz,
-        ExplorerSpeed::Rapid => Speed::Rapid,
-        ExplorerSpeed::Classical => Speed::Classical,
-        ExplorerSpeed::Correspondence => Speed::Correspondence,
     }
 }
 
