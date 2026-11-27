@@ -497,7 +497,8 @@ impl FriendsPage {
                 })
                 .child(widgets::badge("New", Look::Primary, palette))
         });
-        let cell = |width: f32| div().w(px(width)).text_right();
+        // Centred under their headings, a rating as its dash for none.
+        let cell = |width: f32| div().w(px(width)).text_center();
         let syncing = accounts.syncing();
         let (sync_name, clear_name, remove_name, games_name, challenge_name) = (
             name.clone(),
@@ -574,13 +575,7 @@ impl FriendsPage {
                     .text_color(palette.text_muted)
                     .child(rating("classical")),
             )
-            // A record, not a number: centred under its heading, as is the dash for none.
-            .child(
-                div()
-                    .w(px(100.))
-                    .text_center()
-                    .child(versus.unwrap_or_else(|| "—".into())),
-            )
+            .child(cell(100.).child(versus.unwrap_or_else(|| "—".into())))
             .child(
                 v_flex()
                     .w(px(130.))
@@ -845,7 +840,7 @@ impl Render for FriendsPage {
                     .into_any_element()
             } else {
                 let head_cell =
-                    |text: &'static str, width: f32| div().w(px(width)).text_right().child(text);
+                    |text: &'static str, width: f32| div().w(px(width)).text_center().child(text);
                 v_flex()
                 .gap(px(8.))
                 .child(
@@ -880,7 +875,7 @@ impl Render for FriendsPage {
                                 .child(head_cell("Blitz", 60.))
                                 .child(head_cell("Rapid", 60.))
                                 .child(head_cell("Classical", 70.))
-                                .child(div().w(px(100.)).text_center().child("You vs them"))
+                                .child(head_cell("You vs them", 100.))
                                 .child(div().w(px(130.)).child("Synced"))
                                 .child(div().w(px(190.))),
                         )

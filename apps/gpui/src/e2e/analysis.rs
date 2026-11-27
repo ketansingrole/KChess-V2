@@ -888,7 +888,11 @@ fn set_the_board_sets_up_an_opening_and_an_endgame(cx: &mut gpui_kit::TestAppCon
         "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 0 1",
     );
     assert_eq!(app.find(("editor-turn", 1usize)).selected(), Some(true));
-    assert_eq!(app.status(), "Ready to analyse");
+    assert!(
+        !app.shows("status-banner"),
+        "a legal position has no banner"
+    );
+    assert!(app.enabled("analyse-position"));
 
     const LUCENA: &str = "1K1k4/1P6/8/8/8/8/r7/2R5 w - - 0 1";
     set_board(&mut app, "Lucena");
