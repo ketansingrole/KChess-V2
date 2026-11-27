@@ -35,8 +35,8 @@ pub struct MoveSheet<'a> {
     pub first: FirstMove,
 }
 
-/// The game's moves as a scoresheet, ruled numbered pairs on the panel itself, the
-/// one on the board highlighted. `select` is called with the ply to show (1 for the first move).
+/// The game's moves as a scoresheet: numbered pairs on compact rows, every other one lightly
+/// striped rather than ruled, the move on the board highlighted. `select` is called with the ply to show (1 for the first move).
 pub fn moves_list(
     id: impl Into<ElementId>,
     sheet: MoveSheet<'_>,
@@ -52,8 +52,7 @@ pub fn moves_list(
     } = sheet;
     let number_cell = |text: String| {
         div()
-            .px(px(8.))
-            .py(px(4.))
+            .pr(px(8.))
             .text_right()
             .text_color(palette.dimmed)
             .child(text)
@@ -72,8 +71,6 @@ pub fn moves_list(
                     div()
                         .flex_1()
                         .px(px(8.))
-                        .py(px(4.))
-                        .text_center()
                         .text_color(palette.text_muted)
                         .child("…")
                         .into_any_element(),
@@ -93,8 +90,7 @@ pub fn moves_list(
                 .flex_1()
                 .min_w_0()
                 .px(px(8.))
-                .py(px(4.))
-                .text_center()
+                .py(px(2.))
                 .rounded(radii::SMALL)
                 .cursor_pointer()
                 .when(active, |cell| {
@@ -127,18 +123,19 @@ pub fn moves_list(
                     .child(empty),
             )
         })
-        .when(!sans.is_empty(), |list| {
-            list.border_t_1().border_color(palette.border)
-        })
-        .children(rows.into_iter().map(|cells| {
+        .children(rows.into_iter().enumerate().map(|(number, cells)| {
             let filled = cells.len();
             h_flex()
-                .border_b_1()
-                .border_color(palette.border)
+                .h(ROW)
+                .gap(px(2.))
+                .rounded(radii::SMALL)
+                .when(number % 2 == 1, |row| {
+                    row.bg(palette.accented.opacity(0.45))
+                })
                 .children(cells.into_iter().enumerate().map(|(i, cell)| {
-                    // The number column is 44px wide; the moves share the rest.
+                    // The number column is 36px wide; the moves share the rest.
                     if i == 0 {
-                        div().w(px(44.)).flex_none().child(cell).into_any_element()
+                        div().w(px(36.)).flex_none().child(cell).into_any_element()
                     } else {
                         cell
                     }
@@ -146,6 +143,9 @@ pub fn moves_list(
                 .when(filled == 2, |row| row.child(div().flex_1().px(px(8.))))
         }))
 }
+
+/// A pair's row in the scoresheet.
+const ROW: Pixels = px(26.);
 
 /// The button after the move controls: Flip board, whose key (F) its tooltip names, or another
 /// turn of the board the page names (Switch sides).
