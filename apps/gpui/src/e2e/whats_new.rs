@@ -107,13 +107,26 @@ fn the_notes_scroll_in_a_short_window(cx: &mut gpui_kit::TestAppContext) {
         .max_by_key(|(_, release)| release.items.len())
         .map(|(index, _)| index)
         .expect("there are notes");
-    let first = app.find(("whats-new-release", longest)).bounds();
+    // Drawn, if below the window's bottom edge while the notes before it are long: measured
+    // without waiting for it to be in view.
+    let release = |app: &mut Harness| {
+        use gpui_kit::test::TestWindowExt as _;
+        let mut bounds = None;
+        app.wait_for("the longest release drawn", |window, _| {
+            bounds = window
+                .try_find(("whats-new-release", longest))
+                .map(|release| release.bounds());
+            bounds.is_some()
+        });
+        bounds.expect("drawn")
+    };
+    let first = release(&mut app);
     assert!(
         first.size.height > list.size.height,
         "the longest release {first:?} keeps its height past the list {list:?}, to scroll to"
     );
     app.scroll_point(list.center(), px(-300.));
-    let scrolled = app.find(("whats-new-release", longest)).bounds();
+    let scrolled = release(&mut app);
     assert!(
         scrolled.top() < first.top(),
         "the wheel scrolls the notes: {first:?} then {scrolled:?}"

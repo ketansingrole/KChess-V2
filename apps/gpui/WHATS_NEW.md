@@ -9,10 +9,15 @@ with nothing there.
 
 ## Unreleased
 
-KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving.
+KChess stays connected to Lichess when it is left open for a long time, so challenges keep arriving. Moves are listed the same way on every page.
+
+### Changed
+
+- The Analysis board and Books list moves in numbered rows like every game page, with variations and comments under the move they branch from.
 
 ### Fixed
 
+- In a long game the move list keeps the move on the board in view, the newest as it is played, instead of staying at the first moves until you scroll.
 - Challenges and new Lichess games keep arriving when KChess has been open for many hours. A quiet connection used to stop for good after a few network drops, until you restarted KChess.
 
 ## 2026.11.10 (2026-11-27)

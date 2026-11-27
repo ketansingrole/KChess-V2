@@ -145,36 +145,18 @@ impl Round {
     /// The moves with their numbers, as a scoresheet writes them: each White move and a first
     /// Black move carry one ("12." or "12…").
     pub fn numbered(&self) -> Vec<(Option<String>, &str)> {
-        let first = self.start.fullmoves().get() as usize;
-        let black = usize::from(self.start.turn() == Color::Black);
-        self.sans
-            .iter()
-            .enumerate()
-            .map(|(index, san)| {
-                let ply = index + black;
-                let number = first + ply / 2;
-                let label = if ply % 2 == 0 {
-                    Some(format!("{number}."))
-                } else if index == 0 {
-                    Some(format!("{number}…"))
-                } else {
-                    None
-                };
-                (label, san.as_str())
-            })
-            .collect()
+        crate::tree::numbered(self.plies())
     }
 
     /// The moves as one line of text ("12… Nc6 13. Bb5 a6").
     pub fn moves_text(&self) -> String {
-        self.numbered()
-            .into_iter()
-            .map(|(number, san)| match number {
-                Some(number) => format!("{number} {san}"),
-                None => san.to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
+        crate::tree::numbered_line(self.plies())
+    }
+
+    /// Each move with the half-moves before it.
+    fn plies(&self) -> impl Iterator<Item = (u32, &str)> {
+        let first = crate::rules::ply_of(&self.start);
+        (first..).zip(self.sans.iter().map(String::as_str))
     }
 }
 

@@ -35,8 +35,129 @@ pub struct MoveSheet<'a> {
     pub first: FirstMove,
 }
 
+/// The number column of every move sheet, the analysis board's main line too.
+pub const SHEET_NUMBER_WIDTH: Pixels = px(44.);
+
+/// A sheet's text: 13 px on 20 px lines, in figures of one width so the moves line up.
+pub fn sheet_text<E: Styled>(sheet: E) -> E {
+    sheet
+        .text_size(px(13.))
+        .line_height(px(20.))
+        .font_features(tabular())
+}
+
+/// A row's move number, right-aligned in the number column.
+pub fn sheet_number(
+    id: impl Into<ElementId>,
+    number: usize,
+    palette: &Palette,
+) -> gpui_kit::base::ObservedElement<Stateful<Div>> {
+    div()
+        .id(id)
+        .test_support()
+        .w(SHEET_NUMBER_WIDTH)
+        .flex_none()
+        .px(px(8.))
+        .py(px(4.))
+        .text_right()
+        .text_color(palette.dimmed)
+        .child(number.to_string())
+}
+
+/// "…" in a row's move cell that has no move: Black's first in a game Black starts, or
+/// White's line broken by a comment or a variation before Black's reply.
+pub fn sheet_gap(palette: &Palette) -> Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .px(px(8.))
+        .py(px(4.))
+        .text_center()
+        .text_color(palette.text_muted)
+        .child("…")
+}
+
+/// A move as a button, named for the move and tinted while it is on the board: a sheet's cell
+/// (`sheet_move`), or a move in an analysis variation. The page adds what a click does and what
+/// it shows.
+pub fn move_button(
+    id: impl Into<ElementId>,
+    label: SharedString,
+    active: bool,
+    palette: &Palette,
+) -> gpui_kit::base::ObservedElement<Stateful<Div>> {
+    h_flex()
+        .id(id)
+        .test_support()
+        .role(Role::Button)
+        .keyboard_focus(palette.primary)
+        .aria_label(label)
+        .aria_selected(active)
+        .rounded(radii::SMALL)
+        .cursor_pointer()
+        .when(active, |cell| {
+            cell.bg(tint(palette.primary, 26.))
+                .font_weight(FontWeight::MEDIUM)
+        })
+        .when(!active, |cell| cell.pressable(palette))
+}
+
+/// A move's cell in a sheet's row, sharing the row with the other side's move.
+pub fn sheet_move(
+    id: impl Into<ElementId>,
+    label: SharedString,
+    active: bool,
+    palette: &Palette,
+) -> gpui_kit::base::ObservedElement<Stateful<Div>> {
+    move_button(id, label, active, palette)
+        .flex_1()
+        .min_w_0()
+        .justify_center()
+        .px(px(8.))
+        .py(px(4.))
+}
+
+/// A numbered row of a sheet, ruled below: its number and up to two moves, an empty cell
+/// keeping White's move as wide alone as beside Black's.
+pub fn sheet_row(cells: Vec<AnyElement>, palette: &Palette) -> Div {
+    let filled = cells.len();
+    h_flex()
+        .border_b_1()
+        .border_color(palette.border)
+        .children(cells)
+        .when(filled == 2, |row| row.child(div().flex_1().px(px(8.))))
+}
+
+/// Drawn over the move on the board: once `due` says it was just shown, scrolls `scroll` the
+/// least that brings the move into view with an 8 px margin (`block: 'nearest'`).
+pub fn reveal(scroll: ScrollHandle, due: impl FnOnce() -> bool + 'static) -> impl IntoElement {
+    canvas(
+        move |bounds, window, _| {
+            if !due() {
+                return;
+            }
+            let view = scroll.bounds();
+            let mut offset = scroll.offset();
+            let margin = px(8.);
+            if bounds.bottom() + margin > view.bottom() {
+                offset.y -= bounds.bottom() + margin - view.bottom();
+            } else if bounds.top() - margin < view.top() {
+                offset.y += view.top() - (bounds.top() - margin);
+            } else {
+                return;
+            }
+            scroll.set_offset(offset);
+            window.refresh();
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
+
 /// The game's moves as a scoresheet, ruled numbered pairs on the panel itself, the
-/// one on the board highlighted. `select` is called with the ply to show (1 for the first move).
+/// one on the board highlighted and kept in view as it changes, the newest as it is played.
+/// `select` is called with the ply to show (1 for the first move).
 pub fn moves_list(
     id: impl Into<ElementId>,
     sheet: MoveSheet<'_>,
@@ -44,79 +165,107 @@ pub fn moves_list(
     select: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
     figurine: crate::notation::Figurine,
     palette: &Palette,
-) -> impl IntoElement {
-    let MoveSheet {
-        sans,
-        shown: ply,
-        first,
-    } = sheet;
-    let number_cell = |text: String| {
-        div()
-            .px(px(8.))
-            .py(px(4.))
-            .text_right()
-            .text_color(palette.dimmed)
-            .child(text)
-    };
-    let mut rows = Vec::new();
-    let mut row: Vec<AnyElement> = Vec::new();
-    for (index, san) in sans.iter().enumerate() {
-        let at = move_at(index, first);
-        if !at.black || index == 0 {
-            if !row.is_empty() {
-                rows.push(std::mem::take(&mut row));
-            }
-            row.push(number_cell(at.number.to_string()).into_any_element());
-            if at.black {
-                row.push(
-                    div()
-                        .flex_1()
-                        .px(px(8.))
-                        .py(px(4.))
-                        .text_center()
-                        .text_color(palette.text_muted)
-                        .child("…")
-                        .into_any_element(),
-                );
-            }
-        }
-        let active = ply == index + 1;
-        let select = select.clone();
-        row.push(
-            div()
-                .id(("move", index))
-                .test_support()
-                .role(Role::Button)
-                .keyboard_focus(palette.primary)
-                .aria_label(san.clone())
-                .aria_selected(active)
-                .flex_1()
-                .min_w_0()
-                .px(px(8.))
-                .py(px(4.))
-                .text_center()
-                .rounded(radii::SMALL)
-                .cursor_pointer()
-                .when(active, |cell| {
-                    cell.bg(tint(palette.primary, 26.))
-                        .font_weight(FontWeight::MEDIUM)
-                })
-                .pressable(palette)
-                .on_click(move |_, window, cx| select(index + 1, window, cx))
-                .child(crate::notation::shown(san, &figurine))
-                .into_any_element(),
+) -> MovesList {
+    MovesList {
+        id: id.into(),
+        sans: sheet.sans.to_vec(),
+        shown: sheet.shown,
+        first: sheet.first,
+        empty,
+        select: std::rc::Rc::new(select),
+        figurine,
+        palette: *palette,
+    }
+}
+
+/// What a list keeps from frame to frame: its scroll, and the ply it last brought into view.
+#[derive(Default)]
+struct Follow {
+    scroll: ScrollHandle,
+    revealed: std::rc::Rc<std::cell::Cell<Option<usize>>>,
+}
+
+/// What choosing a move does: called with the ply to show.
+type SelectPly = std::rc::Rc<dyn Fn(usize, &mut Window, &mut App)>;
+
+/// A move list (`moves_list`), owning what it shows.
+#[derive(IntoElement)]
+pub struct MovesList {
+    id: ElementId,
+    sans: Vec<String>,
+    shown: usize,
+    first: FirstMove,
+    empty: SharedString,
+    select: SelectPly,
+    figurine: crate::notation::Figurine,
+    palette: Palette,
+}
+
+impl RenderOnce for MovesList {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let MovesList {
+            id,
+            sans,
+            shown: ply,
+            first,
+            empty,
+            select,
+            figurine,
+            palette,
+        } = self;
+        let palette = &palette;
+        let follow = window.use_keyed_state(
+            ElementId::NamedChild(std::sync::Arc::new(id.clone()), "follow".into()),
+            cx,
+            |_, _| Follow::default(),
         );
-    }
-    if !row.is_empty() {
-        rows.push(row);
-    }
-    div()
-        .id(id)
-        .size_full()
-        .overflow_y_scroll()
-        .text_size(px(13.))
-        .line_height(px(20.))
-        .font_features(tabular())
+        let (scroll, revealed) = {
+            let follow = follow.read(cx);
+            (follow.scroll.clone(), follow.revealed.clone())
+        };
+        let mut rows = Vec::new();
+        let mut row: Vec<AnyElement> = Vec::new();
+        for (index, san) in sans.iter().enumerate() {
+            let at = move_at(index, first);
+            if !at.black || index == 0 {
+                if !row.is_empty() {
+                    rows.push(std::mem::take(&mut row));
+                }
+                row.push(
+                    sheet_number(("move-number", index), at.number, palette).into_any_element(),
+                );
+                if at.black {
+                    row.push(sheet_gap(palette).into_any_element());
+                }
+            }
+            let active = ply == index + 1;
+            // At the start, the first move is brought into view: the top of the list.
+            let revealing = ply.max(1) == index + 1;
+            let select = select.clone();
+            row.push(
+                sheet_move(("move", index), san.clone().into(), active, palette)
+                    .on_click(move |_, window, cx| select(index + 1, window, cx))
+                    .child(crate::notation::shown(san, &figurine))
+                    .when(revealing, |cell| {
+                        let (scroll, revealed) = (scroll.clone(), revealed.clone());
+                        cell.relative().child(reveal(scroll, move || {
+                            revealed.replace(Some(ply)) != Some(ply)
+                        }))
+                    })
+                    .into_any_element(),
+            );
+        }
+        if !row.is_empty() {
+            rows.push(row);
+        }
+        sheet_text(
+            div()
+                .id(id)
+                .test_support()
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&scroll),
+        )
         .when(sans.is_empty(), |list| {
             list.child(
                 div()
@@ -130,21 +279,8 @@ pub fn moves_list(
         .when(!sans.is_empty(), |list| {
             list.border_t_1().border_color(palette.border)
         })
-        .children(rows.into_iter().map(|cells| {
-            let filled = cells.len();
-            h_flex()
-                .border_b_1()
-                .border_color(palette.border)
-                .children(cells.into_iter().enumerate().map(|(i, cell)| {
-                    // The number column is 44px wide; the moves share the rest.
-                    if i == 0 {
-                        div().w(px(44.)).flex_none().child(cell).into_any_element()
-                    } else {
-                        cell
-                    }
-                }))
-                .when(filled == 2, |row| row.child(div().flex_1().px(px(8.))))
-        }))
+        .children(rows.into_iter().map(|cells| sheet_row(cells, palette)))
+    }
 }
 
 /// The button after the move controls: Flip board, whose key (F) its tooltip names, or another

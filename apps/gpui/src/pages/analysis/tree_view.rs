@@ -1,14 +1,8 @@
-//! The move list: the tree as moves, comments and variations, and the menu on each move.
+//! The move list: the main line as the game pages' scoresheet, its comments and variations in
+//! blocks under the row they branch from, as Lichess's analysis board shows them, and the menu on
+//! each move.
 
 use super::*;
-use crate::widgets::Pressable as _;
-
-/// One piece of the move list: moves and inline comments flow; main-line comments and the
-/// variations of the main line stand on their own lines.
-pub(super) enum Piece {
-    Inline(AnyElement),
-    Block(AnyElement),
-}
 
 /// What a move's menu needs to know of it.
 #[derive(Clone)]
@@ -124,8 +118,15 @@ pub(super) struct TreeView<'a> {
 }
 
 impl TreeView<'_> {
-    fn move_chip(&self, node: &TreeNode, path: &str, number: String, main: bool) -> AnyElement {
-        let active = path == self.current;
+    /// A move's click, menu, reveal and what it shows after its SAN, on the shell a main-line
+    /// cell or a variation's move gives it.
+    fn dress(
+        &self,
+        shell: gpui_kit::base::ObservedElement<Stateful<Div>>,
+        node: &TreeNode,
+        path: &str,
+        active: bool,
+    ) -> AnyElement {
         let palette = &self.palette;
         let (page, target) = (self.page.clone(), path.to_string());
         let glyph = move_glyph(node);
@@ -147,33 +148,8 @@ impl TreeView<'_> {
             fen: node.fen.clone(),
         };
         let (menu_page, menu_path) = (page.clone(), path.to_string());
-        let novelty = self
-            .novelty
-            .as_ref()
-            .filter(|(at, _)| at == path)
-            .map(|(_, said)| said.clone());
-        h_flex()
-            .id(SharedString::from(format!("tree-{path}")))
-            .test_support()
-            .role(Role::Button)
-            .keyboard_focus(palette.primary)
-            .aria_label(match novelty {
-                Some(_) => SharedString::from(format!("{}, novelty", node.san)),
-                None => node.san.clone().into(),
-            })
-            .aria_selected(active)
-            .px(px(4.))
-            .py(px(2.))
-            .mx(px(1.))
-            .rounded(radii::SMALL)
-            .cursor_pointer()
-            .text_color(if main { palette.text } else { palette.toned })
-            .when(main, |chip| chip.font_weight(FontWeight::MEDIUM))
-            .when(active, |chip| {
-                chip.bg(tint(palette.primary, 30.))
-                    .text_color(palette.highlighted)
-            })
-            .when(!active, |chip| chip.pressable(palette))
+        let novelty = self.novelty_at(path);
+        shell
             .on_click({
                 let (page, target) = (page.clone(), target.clone());
                 move |_, _, cx| {
@@ -188,40 +164,11 @@ impl TreeView<'_> {
                 }
             })
             .when(active, |chip| {
-                let (reveal, scroll) = (self.reveal.clone(), self.scroll.clone());
-                chip.relative().child(
-                    canvas(
-                        move |bounds, window, _| {
-                            if !reveal.replace(false) {
-                                return;
-                            }
-                            let view = scroll.bounds();
-                            let mut offset = scroll.offset();
-                            let margin = px(8.);
-                            if bounds.bottom() + margin > view.bottom() {
-                                offset.y -= bounds.bottom() + margin - view.bottom();
-                            } else if bounds.top() - margin < view.top() {
-                                offset.y += view.top() - (bounds.top() - margin);
-                            } else {
-                                return;
-                            }
-                            scroll.set_offset(offset);
-                            window.refresh();
-                        },
-                        |_, _, _, _| {},
-                    )
-                    .absolute()
-                    .size_full(),
-                )
-            })
-            .when(!number.is_empty(), |chip| {
-                chip.child(
-                    div()
-                        .mr(px(2.))
-                        .font_weight(FontWeight::NORMAL)
-                        .text_color(palette.dimmed)
-                        .child(number),
-                )
+                let reveal = self.reveal.clone();
+                chip.relative()
+                    .child(widgets::reveal(self.scroll.clone(), move || {
+                        reveal.replace(false)
+                    }))
             })
             .child(crate::notation::shown(&node.san, &self.figurine))
             .children(glyph.map(|(glyph, _)| {
@@ -278,6 +225,59 @@ impl TreeView<'_> {
             .into_any_element()
     }
 
+    /// What the novelty's N says, on the novelty's move.
+    fn novelty_at(&self, path: &str) -> Option<SharedString> {
+        self.novelty
+            .as_ref()
+            .filter(|(at, _)| at == path)
+            .map(|(_, said)| said.clone())
+    }
+
+    /// The move's name: its SAN, and whether it is the novelty.
+    fn label(&self, node: &TreeNode, path: &str) -> SharedString {
+        match self.novelty_at(path) {
+            Some(_) => format!("{}, novelty", node.san).into(),
+            None => node.san.clone().into(),
+        }
+    }
+
+    fn id(path: &str) -> SharedString {
+        format!("tree-{path}").into()
+    }
+
+    /// A main-line move: its cell in the sheet's row.
+    fn sheet_move(&self, node: &TreeNode, path: &str) -> AnyElement {
+        let active = path == self.current;
+        let shell = widgets::sheet_move(
+            Self::id(path),
+            self.label(node, path),
+            active,
+            &self.palette,
+        );
+        self.dress(shell, node, path, active)
+    }
+
+    /// A variation's move, after its number when it opens the line or follows a branch.
+    fn variation_move(&self, node: &TreeNode, path: &str, number: String) -> AnyElement {
+        let palette = &self.palette;
+        let active = path == self.current;
+        let shell = widgets::move_button(Self::id(path), self.label(node, path), active, palette)
+            .px(px(4.))
+            .py(px(2.))
+            .mx(px(1.))
+            .when(!active, |chip| chip.text_color(palette.toned))
+            .when(!number.is_empty(), |chip| {
+                chip.child(
+                    div()
+                        .mr(px(2.))
+                        .font_weight(FontWeight::NORMAL)
+                        .text_color(palette.dimmed)
+                        .child(number),
+                )
+            });
+        self.dress(shell, node, path, active)
+    }
+
     fn comment(&self, text: String, path: &str, block: bool) -> AnyElement {
         let (page, target) = (self.page.clone(), path.to_string());
         let palette = &self.palette;
@@ -297,7 +297,6 @@ impl TreeView<'_> {
             .when(block, |comment| {
                 comment
                     .w_full()
-                    .my(px(2.))
                     .px(px(8.))
                     .py(px(4.))
                     .border_l_2()
@@ -317,43 +316,131 @@ impl TreeView<'_> {
             .into_any_element()
     }
 
-    /// A line's moves run on, the alternatives to a move follow it in
-    /// brackets before the line resumes. Off the main line everything stays inline.
-    pub(super) fn line(
+    /// The comments on a move, joined.
+    fn comment_of(node: &TreeNode) -> String {
+        node.comments
+            .iter()
+            .flatten()
+            .map(|text| comment_text(text))
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// The main line from `root` as the game pages' scoresheet: numbered rows of White's and
+    /// Black's moves. A move's comment and the alternatives to it break the line after it, in a
+    /// block under its row; the line resumes on a row of its own, "…" holding White's place.
+    pub(super) fn sheet(&self, root: &TreeNode) -> impl IntoElement + use<> {
+        let palette = &self.palette;
+        let mut out: Vec<AnyElement> = Vec::new();
+        let mut row: Vec<AnyElement> = Vec::new();
+        let (mut parent, mut parent_path) = (root, String::new());
+        let mut node = root.children.first();
+        while let Some(current) = node {
+            let path = child_path(&parent_path, &current.uci);
+            let black = parent.ply % 2 == 1;
+            if !black || row.is_empty() {
+                if !row.is_empty() {
+                    out.push(
+                        widgets::sheet_row(std::mem::take(&mut row), palette).into_any_element(),
+                    );
+                }
+                let number = parent.ply as usize / 2 + 1;
+                row.push(
+                    widgets::sheet_number(
+                        SharedString::from(format!("tree-number-{path}")),
+                        number,
+                        palette,
+                    )
+                    .into_any_element(),
+                );
+                if black {
+                    row.push(widgets::sheet_gap(palette).into_any_element());
+                }
+            }
+            row.push(self.sheet_move(current, &path));
+            let comment = Self::comment_of(current);
+            let alternatives = &parent.children[1..];
+            if !comment.is_empty() || !alternatives.is_empty() {
+                if !black {
+                    row.push(widgets::sheet_gap(palette).into_any_element());
+                }
+                out.push(widgets::sheet_row(std::mem::take(&mut row), palette).into_any_element());
+                out.push(self.interruption(parent, &parent_path, comment, &path, alternatives));
+            }
+            parent = current;
+            parent_path = path;
+            node = current.children.first();
+        }
+        if !row.is_empty() {
+            out.push(widgets::sheet_row(row, palette).into_any_element());
+        }
+        widgets::sheet_text(div().id("analysis-sheet").test_support().w_full()).children(out)
+    }
+
+    /// Under a main-line move's row: its comment, then each alternative to it as a line of its
+    /// own, indented under the row.
+    fn interruption(
         &self,
         parent: &TreeNode,
         parent_path: &str,
-        first: Option<&TreeNode>,
-        depth: usize,
-        out: &mut Vec<Piece>,
+        comment: String,
+        path: &str,
+        alternatives: &[TreeNode],
+    ) -> AnyElement {
+        let palette = &self.palette;
+        let lines: Vec<AnyElement> = alternatives
+            .iter()
+            .map(|alternative| {
+                let mut inline = vec![self.paren("(")];
+                self.line(parent, parent_path, alternative, &mut inline);
+                inline.push(self.paren(")"));
+                h_flex().flex_wrap().children(inline).into_any_element()
+            })
+            .collect();
+        v_flex()
+            .w_full()
+            .gap(px(4.))
+            .px(px(8.))
+            .py(px(4.))
+            .border_b_1()
+            .border_color(palette.border)
+            .bg(palette.elevated)
+            .when(!comment.is_empty(), |block| {
+                block.child(self.comment(comment, path, true))
+            })
+            .when(!lines.is_empty(), |block| {
+                block.child(
+                    v_flex()
+                        .ml(px(8.))
+                        .pl(px(8.))
+                        .border_l_2()
+                        .border_color(palette.border)
+                        .children(lines),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// A variation from `first`, an alternative to the main move from `parent`: its moves run
+    /// on, a comment in their flow, the alternatives to a move in brackets after it.
+    fn line(
+        &self,
+        parent: &TreeNode,
+        parent_path: &str,
+        first: &TreeNode,
+        out: &mut Vec<AnyElement>,
     ) {
         let mut parent = parent;
         let mut parent_path = parent_path.to_string();
-        let mut node = first.or_else(|| parent.children.first());
+        let mut node = Some(first);
         let mut numbered = true;
         while let Some(current) = node {
             let path = child_path(&parent_path, &current.uci);
-            out.push(Piece::Inline(self.move_chip(
-                current,
-                &path,
-                move_number(parent.ply, numbered),
-                depth == 0,
-            )));
-            let comment = current
-                .comments
-                .iter()
-                .flatten()
-                .map(|text| comment_text(text))
-                .filter(|text| !text.is_empty())
-                .collect::<Vec<_>>()
-                .join(" ");
+            out.push(self.variation_move(current, &path, move_number(parent.ply, numbered)));
+            let comment = Self::comment_of(current);
             if !comment.is_empty() {
-                let element = self.comment(comment, &path, depth == 0);
-                out.push(if depth == 0 {
-                    Piece::Block(element)
-                } else {
-                    Piece::Inline(element)
-                });
+                out.push(self.comment(comment, &path, false));
             }
             numbered = false;
             // The node itself, not its move: a tree with two siblings of one move drew the second
@@ -363,34 +450,10 @@ impl TreeView<'_> {
                 .first()
                 .is_some_and(|main| std::ptr::eq(main, current));
             if is_main && parent.children.len() > 1 {
-                if depth == 0 {
-                    let rows: Vec<AnyElement> = parent.children[1..]
-                        .iter()
-                        .map(|alternative| {
-                            let mut inline = vec![Piece::Inline(self.paren("("))];
-                            self.line(parent, &parent_path, Some(alternative), 1, &mut inline);
-                            inline.push(Piece::Inline(self.paren(")")));
-                            flow(inline).into_any_element()
-                        })
-                        .collect();
-                    out.push(Piece::Block(
-                        v_flex()
-                            .w_full()
-                            .my(px(2.))
-                            .ml(px(8.))
-                            .pl(px(8.))
-                            .border_l_2()
-                            .border_color(self.palette.border)
-                            .text_size(px(13.))
-                            .children(rows)
-                            .into_any_element(),
-                    ));
-                } else {
-                    for alternative in &parent.children[1..] {
-                        out.push(Piece::Inline(self.paren("(")));
-                        self.line(parent, &parent_path, Some(alternative), depth + 1, out);
-                        out.push(Piece::Inline(self.paren(")")));
-                    }
+                for alternative in &parent.children[1..] {
+                    out.push(self.paren("("));
+                    self.line(parent, &parent_path, alternative, out);
+                    out.push(self.paren(")"));
                 }
                 numbered = true;
             }
@@ -399,25 +462,4 @@ impl TreeView<'_> {
             node = current.children.first();
         }
     }
-}
-
-/// Moves and inline comments in wrapping rows, broken by the pieces that stand alone.
-pub(super) fn flow(pieces: Vec<Piece>) -> Div {
-    let mut column = v_flex().w_full();
-    let mut row: Vec<AnyElement> = Vec::new();
-    for piece in pieces {
-        match piece {
-            Piece::Inline(element) => row.push(element),
-            Piece::Block(element) => {
-                if !row.is_empty() {
-                    column = column.child(h_flex().flex_wrap().children(std::mem::take(&mut row)));
-                }
-                column = column.child(element);
-            }
-        }
-    }
-    if !row.is_empty() {
-        column = column.child(h_flex().flex_wrap().children(row));
-    }
-    column
 }
