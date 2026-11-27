@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn a_takeback_goes_back_to_your_previous_turn() {
         let moves: Vec<String> = ["e2e4", "e7e5", "g1f3", "b8c6"].map(String::from).to_vec();
-        let yours = |kept: &[String]| kept.len() % 2 == 0;
+        let yours = |kept: &[String]| kept.len().is_multiple_of(2);
         assert_eq!(taken_back(&moves, yours), ["e2e4", "e7e5"]);
         assert_eq!(taken_back(&moves[..3], yours), ["e2e4", "e7e5"]);
         assert!(taken_back(&moves[..1], yours).is_empty());
