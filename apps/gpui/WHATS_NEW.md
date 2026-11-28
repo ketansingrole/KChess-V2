@@ -9,7 +9,7 @@ with nothing there.
 
 ## Unreleased
 
-The board editor sets up well-known openings and endgames in one click, and Guess the move has 22 famous games and takes games from your databases. Settings → Storage shows what KChess keeps and helps you free up space, KChess stays connected to Lichess when left open, and many pages are cleaner.
+The board editor sets up well-known openings and endgames in one click, and Guess the move has 22 famous games and takes games from your databases. Settings → Storage shows what KChess keeps and helps you free up space, KChess stays connected to Lichess when left open, the board plays as Lichess's does, and many pages are cleaner.
 
 ### Added
 
@@ -39,7 +39,7 @@ The board editor sets up well-known openings and endgames in one click, and Gues
 - Settings → Storage shows what KChess keeps on your computer in a bar and a list, largest first, each in its own colour, with Update or Delete beside what you downloaded. Your disk's free space is shown with what you can still download.
 - A mark you give a move on the Analysis board, such as ?? or !?, shows on the board beside the move, ahead of the review's own.
 - The board handles as it does on Lichess: your move lands the moment you make it, so you can premove straight away; a clicked move slides while a dragged one drops in place, castling moves the rook at once, and a piece taken fades as its taker arrives.
-- The promotion picker opens on the pawn's file, queen first, as on Lichess, and a premove that promotes asks which piece as you make it. Premoves are offered only where the move could still be legal on your turn.
+- The promotion picker opens on the pawn's file, queen first, as on Lichess. Hold Ctrl to choose the piece instead of an automatic queen, even for a premove, and premoves are offered only where the move could still be legal on your turn.
 
 ### Fixed
 

@@ -239,7 +239,11 @@ impl ChessBoard {
                 .bg(dim)
                 .on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(|this, _, _, cx| this.cancel_promotion(cx)),
+                    // Closing the picker presses nothing under it.
+                    cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.cancel_promotion(cx)
+                    }),
                 )
                 .on_mouse_down(
                     MouseButton::Right,
@@ -260,7 +264,7 @@ impl ChessBoard {
                             |(index, (role, label))| {
                                 let row = if from_top { index } else { 7 - index };
                                 let lit = focused && index == marked;
-                                let group = SharedString::from(format!("promotion-{label}"));
+                                let group = SharedString::new_static(PROMOTION_GROUPS[index]);
                                 div()
                                     .id(label)
                                     .test_support()
@@ -905,3 +909,11 @@ mod description_tests {
         assert_eq!(describe(&state), "White to move · Solution e2–e4, d2–d4");
     }
 }
+
+/// Each promotion choice's hover group, in `keyboard::PROMOTION`'s order.
+const PROMOTION_GROUPS: [&str; 4] = [
+    "promotion-Queen",
+    "promotion-Knight",
+    "promotion-Rook",
+    "promotion-Bishop",
+];

@@ -505,13 +505,15 @@ impl ChessBoard {
     ) {
         let mut next = self.pieces.clone();
         apply_move(&mut next, from, to, promotion);
+        // A slide still running (the opponent's move a premove answers) gives way to this one,
+        // as Chessground replaces its plan.
+        self.animation = None;
         if slide {
             self.animate(&next, self.state.orientation, cx);
-        } else {
-            self.animation = None;
         }
         self.pieces = next;
         self.moved(from, to);
+        self.landed = Some((from, to));
     }
 
     /// The turn passes after the player's move (Chessground's `baseUserMove`): the move is the
@@ -529,6 +531,8 @@ impl ChessBoard {
     /// A promotion premove just queued: it becomes a queen at once where Settings say so
     /// (unless Ctrl was held), or the picker asks now, while there is time.
     fn ask_pre_promotion(&mut self, cx: &mut Context<Self>) {
+        // A piece chosen for an earlier premove is not this one's.
+        self.pre_promotion = None;
         let Some((from, to)) = self.queued else {
             return;
         };
@@ -635,7 +639,16 @@ impl ChessBoard {
 
     /// A key on the board; whether it was taken.
     fn keyboard(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
-        if self.promotion.is_some() {
+        if let Some((_, to)) = self.promotion {
+            // Up and Down follow the column, which hangs from the bottom edge for the side at
+            // the top.
+            let white = to.rank() == Rank::Eighth;
+            let from_top = (self.state.orientation == Color::White) == white;
+            let key = match key {
+                "up" if !from_top => "down",
+                "down" if !from_top => "up",
+                key => key,
+            };
             match keyboard::promotion_key(self.promotion_choice, key) {
                 Some(keyboard::PromotionKey::Highlight(choice)) => {
                     self.promotion_choice = choice;
@@ -671,6 +684,8 @@ impl ChessBoard {
         }
         let busy = self.selected.is_some() || self.selected_drop.is_some() || self.queued.is_some();
         cx.emit(BoardEvent::Select(square));
+        // The keyboard holds no Ctrl.
+        self.ctrl = false;
         let press = self.press_key(square);
         match press {
             Press::Drop(role) => self.drop_piece(role, square, cx),
@@ -678,6 +693,7 @@ impl ChessBoard {
                 self.dragged = false;
                 self.play_move(from, square, false, true, cx);
             }
+            Press::Queued if self.queued.is_some() => self.ask_pre_promotion(cx),
             Press::Pick { .. } | Press::Queued | Press::Clear => {}
         }
         cx.notify();
@@ -1245,6 +1261,147 @@ mod pointer_tests {
                 "blindfold {blindfold}, highlight {highlight}"
             );
         }
+    }
+
+    /// The page drew the position again with new marks (the Analysis board does on every engine
+    /// update) before answering the move: the move stayed, and the picker with it. The same
+    /// position with the turn changed is a refusal, and the move went back without sliding on.
+    #[gpui_kit::test]
+    fn a_redraw_keeps_the_move_and_a_refusal_takes_it_back(cx: &mut TestAppContext) {
+        use shakmaty::Role;
+        let fen = "4k3/P7/8/8/8/8/8/4K3 w - - 0 1";
+        let (board, _) = board(cx, fen);
+        click(&board, Square::A7, cx);
+        click(&board, Square::A8, cx);
+        board.update(cx, |board, cx| {
+            let mut marked = board.given.clone();
+            marked
+                .arrows
+                .push(crate::board::Arrow::hint(Square::E1, Square::E2));
+            board.set_state(marked, cx);
+            assert_eq!(
+                board.promotion,
+                Some((Square::A7, Square::A8)),
+                "the picker stays"
+            );
+            assert_eq!(
+                board.pieces.piece_at(Square::A8).map(|p| p.role),
+                Some(Role::Pawn)
+            );
+            assert_eq!(board.state.movable, None);
+            assert_eq!(board.state.arrows.len(), 1, "the new marks show");
+            let mut refused = board.given.clone();
+            refused.movable = None;
+            refused.dests.clear();
+            board.set_state(refused, cx);
+            assert_eq!(board.pieces.piece_at(Square::A8), None);
+            assert_eq!(
+                board.pieces.piece_at(Square::A7).map(|p| p.role),
+                Some(Role::Pawn)
+            );
+        });
+        let (board, _) = self::board(cx, START);
+        click(&board, Square::E2, cx);
+        click(&board, Square::E4, cx);
+        board.update(cx, |board, cx| {
+            assert!(board.animation.is_some());
+            board.undo_move(cx);
+            assert!(
+                board.animation.is_none(),
+                "no slide over the piece put back"
+            );
+        });
+    }
+
+    /// A premove played as the opponent's move slid in, and slid itself (Chessground's plan is
+    /// replaced), where the running slide used to stop both.
+    #[gpui_kit::test]
+    fn a_premove_slides_when_it_plays(cx: &mut TestAppContext) {
+        let (board, moves) = board(cx, START);
+        for square in [Square::E2, Square::E4, Square::G1, Square::F3] {
+            click(&board, square, cx);
+        }
+        // The player's own slide is over before the opponent answers.
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        cx.run_until_parked();
+        board.update(cx, |board, cx| {
+            let position = kchess_domain::rules::setup_start(
+                kchess_domain::variant::Variant::Standard,
+                "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+            )
+            .expect("a position");
+            board.set_state(
+                BoardState::of(&position, Color::White, Some(Color::White), None),
+                cx,
+            );
+            let sliding = board
+                .animation
+                .as_ref()
+                .map(|a| a.moves.iter().map(|m| (m.1, m.2)).collect::<Vec<_>>());
+            assert_eq!(sliding, Some(vec![(Square::G1, Square::F3)]));
+        });
+        assert_eq!(*moves.borrow(), ["e2e4", "g1f3"]);
+    }
+
+    /// The piece chosen for a promotion premove went with it: taken back and queued again, the
+    /// picker asks afresh, with no knight left waiting from before.
+    #[gpui_kit::test]
+    fn a_premove_taken_back_forgets_its_piece(cx: &mut TestAppContext) {
+        use shakmaty::Role;
+        let fen = "4k3/P7/8/8/8/8/8/4K3 w - - 0 1";
+        let (board, _) = board(cx, fen);
+        click(&board, Square::E1, cx);
+        click(&board, Square::E2, cx);
+        click(&board, Square::A7, cx);
+        board.update(cx, |board, cx| {
+            let event = MouseDownEvent {
+                position: at(Square::A8),
+                modifiers: gpui_kit::Modifiers {
+                    control: true,
+                    ..Default::default()
+                },
+                click_count: 1,
+                ..MouseDownEvent::default()
+            };
+            board.press(&event, cx);
+            board.release(at(Square::A8), cx);
+            board.promote(Role::Knight, cx);
+            assert!(board.let_go(cx), "Escape takes the premove back");
+        });
+        click(&board, Square::A7, cx);
+        board.update(cx, |board, cx| {
+            let event = MouseDownEvent {
+                position: at(Square::A8),
+                modifiers: gpui_kit::Modifiers {
+                    control: true,
+                    ..Default::default()
+                },
+                click_count: 1,
+                ..MouseDownEvent::default()
+            };
+            board.press(&event, cx);
+            board.release(at(Square::A8), cx);
+            assert!(board.promotion_pre, "the picker asks again");
+            assert_eq!(board.pre_promotion, None);
+        });
+    }
+
+    /// With Black at the bottom, White's picker hangs from the bottom edge, queen lowest: Up
+    /// goes to the knight above it.
+    #[gpui_kit::test]
+    fn the_pickers_arrows_follow_its_column(cx: &mut TestAppContext) {
+        let (board, _) = board(cx, "4k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+        board.update(cx, |board, cx| {
+            board.promotion = Some((Square::A7, Square::A8));
+            board.state.orientation = Color::Black;
+            assert!(board.keyboard("up", cx));
+            assert_eq!(board.promotion_choice, 1, "the knight");
+            board.state.orientation = Color::White;
+            board.promotion_choice = 0;
+            assert!(board.keyboard("down", cx));
+            assert_eq!(board.promotion_choice, 1, "the knight, under the queen");
+        });
     }
 
     /// Castling put the rook beside the king, the king dragged onto its rook castled too, and a

@@ -239,6 +239,8 @@ pub struct ChessBoard {
     /// or, for a premove (`promotion_pre`), the piece chosen waits with the premove.
     promotion: Option<(Square, Square)>,
     promotion_pre: bool,
+    /// The player's move the board played and the page has not answered yet.
+    landed: Option<(Square, Square)>,
     /// The piece a queued promotion premove becomes, chosen when it was queued.
     pre_promotion: Option<(Square, Square, Role)>,
     /// Ctrl was held as the move was made: the picker asks, whatever Settings say (lila's
@@ -289,6 +291,7 @@ impl ChessBoard {
             promotion: None,
             promotion_pre: false,
             pre_promotion: None,
+            landed: None,
             ctrl: false,
             promotion_choice: 0,
             bounds: Rc::new(Cell::new(Bounds::default())),
@@ -310,7 +313,22 @@ impl ChessBoard {
         if state == self.given {
             return;
         }
+        // The page drew the position the player's move was made on again, with the same turn:
+        // only its marks changed (an engine's arrows, say), and the move stays until the page
+        // answers it. The same position with another turn is the page refusing it.
+        let kept = self.landed.filter(|_| {
+            state.fen == self.given.fen
+                && state.movable == self.given.movable
+                && state.premove == self.given.premove
+        });
         self.given = state.clone();
+        if let Some((from, to)) = kept {
+            self.state = state;
+            self.moved(from, to);
+            cx.notify();
+            return;
+        }
+        self.landed = None;
         let next = board_of(&state.fen);
         // The player's own move is on the board already, and does not slide again.
         if next != self.pieces {
@@ -330,7 +348,7 @@ impl ChessBoard {
         {
             self.selected = None;
         }
-        // A premove's picker stays while its premove waits.
+        // A premove's picker stays while its premove waits, until the position changes.
         if self.promotion.is_some_and(|(from, to)| {
             if self.promotion_pre {
                 self.queued != Some((from, to))
@@ -357,6 +375,9 @@ impl ChessBoard {
         self.state = self.given.clone();
         self.pieces = board_of(&self.state.fen);
         self.promotion = None;
+        self.landed = None;
+        // A refused move does not go on sliding over the piece put back.
+        self.animation = None;
         cx.notify();
     }
 
