@@ -1182,17 +1182,26 @@ mod pointer_tests {
     }
 
     /// Blindfold play hid the piece being dragged and its ghost too, which showed where every
-    /// other piece was hidden.
+    /// other piece was hidden; with Highlight off the ghost goes and the piece stays, as
+    /// Lichess's `showGhost` follows that setting.
     #[gpui_kit::test]
-    fn blindfold_hides_the_piece_being_dragged(cx: &mut TestAppContext) {
+    fn blindfold_and_highlight_hide_what_lichess_hides(cx: &mut TestAppContext) {
         use gpui_kit::test::TestWindowExt as _;
-        cx.update(|cx| {
+        let settings = cx.update(|cx| {
             gpui_kit::init(cx);
-            kchess_app::settings::init_for_tests(cx);
+            let settings = kchess_app::settings::init_for_tests(cx);
             let colors = kchess_ui::theme::colors("kchess", &[], false);
             cx.set_global(kchess_ui::theme::Palette::of(&colors, false));
+            settings
         });
-        for blindfold in [false, true] {
+        for (blindfold, highlight, held, ghost) in [
+            (false, true, true, true),
+            (true, true, false, false),
+            (false, false, true, false),
+        ] {
+            settings.update(cx, |settings, cx| {
+                settings.update(|s| s.frontend.highlight_moves = highlight, cx)
+            });
             let window = cx.add_window(|_, _| {
                 let position = kchess_domain::rules::setup_start(
                     kchess_domain::variant::Variant::Standard,
@@ -1230,7 +1239,11 @@ mod pointer_tests {
                     })
                 })
                 .expect("the window");
-            assert_eq!(shown, (!blindfold, !blindfold), "blindfold {blindfold}");
+            assert_eq!(
+                shown,
+                (held, ghost),
+                "blindfold {blindfold}, highlight {highlight}"
+            );
         }
     }
 

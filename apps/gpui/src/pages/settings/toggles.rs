@@ -64,7 +64,7 @@ const fn quick(id: &'static str, icon: &'static str, keywords: &'static str) -> 
     })
 }
 
-pub(crate) static TOGGLES: [Toggle; 32] = [
+pub(crate) static TOGGLES: [Toggle; 33] = [
     Toggle {
         id: "legal-moves",
         title: "Show possible moves",
@@ -73,6 +73,15 @@ pub(crate) static TOGGLES: [Toggle; 32] = [
         on: |s| s.frontend.show_legal_moves,
         set: |s, on| s.frontend.show_legal_moves = on,
         quick: quick("showLegalMoves", "locate", "legal dots hints"),
+    },
+    Toggle {
+        id: "highlight-moves",
+        title: "Highlight the last move and check",
+        hint: None,
+        section: Section::Gameplay,
+        on: |s| s.frontend.highlight_moves,
+        set: |s, on| s.frontend.highlight_moves = on,
+        quick: None,
     },
     Toggle {
         id: "premove",

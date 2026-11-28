@@ -388,6 +388,13 @@ impl Render for ChessBoard {
             None => self.hover,
         };
         let mut shown = self.state.clone();
+        // Highlight off, as on Lichess: no last move, no check and no ghost are drawn; a screen
+        // reader still hears them.
+        let highlight = frontend.highlight_moves;
+        if !highlight {
+            shown.last_move = None;
+            shown.check = None;
+        }
         for shape in &self.drawn {
             if shape.from == shape.to {
                 shown.circles.push(Circle::brush(shape.brush, shape.from));
@@ -452,7 +459,7 @@ impl Render for ChessBoard {
 
         // The king in check sits in Chessground's radial gradient, clipped to its square: solid
         // red to a quarter of the way out, fading to nothing at 89% of the square's half-diagonal.
-        let check = self.state.check.map(|square| {
+        let check = self.state.check.filter(|_| highlight).map(|square| {
             let (column, row) = self.cell(square);
             div()
                 .absolute()
@@ -471,20 +478,22 @@ impl Render for ChessBoard {
                 }))
         });
         // The piece's own square keeps a faint ghost while it is dragged (Chessground's `ghost`).
-        let ghost = lifted.filter(|_| !self.state.blindfold).and_then(|square| {
-            let piece = self.pieces.piece_at(square)?;
-            let (column, row) = self.cell(square);
-            Some(
-                img(SharedString::from(looks::piece_path(&set, piece)))
-                    .id("board-ghost")
-                    .absolute()
-                    .left(relative(column as f32 / 8.))
-                    .top(relative(row as f32 / 8.))
-                    .size(relative(0.125))
-                    .opacity(0.3)
-                    .test_support(),
-            )
-        });
+        let ghost = lifted
+            .filter(|_| highlight && !self.state.blindfold)
+            .and_then(|square| {
+                let piece = self.pieces.piece_at(square)?;
+                let (column, row) = self.cell(square);
+                Some(
+                    img(SharedString::from(looks::piece_path(&set, piece)))
+                        .id("board-ghost")
+                        .absolute()
+                        .left(relative(column as f32 / 8.))
+                        .top(relative(row as f32 / 8.))
+                        .size(relative(0.125))
+                        .opacity(0.3)
+                        .test_support(),
+                )
+            });
         // The piece a promotion premove becomes waits faded on its square (lila's auto shape).
         let pre_promotion = self
             .pre_promotion

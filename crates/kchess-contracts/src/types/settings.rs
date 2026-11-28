@@ -189,6 +189,9 @@ pub struct FrontendPreferences {
     pub show_tray_icon: bool,
     /// Show what an update brings, once: before it installs, or else on the first start after it.
     pub update_show_notes: bool,
+    /// Mark the last move and a king in check on the board, and the square a dragged piece left
+    /// (Lichess's Highlight setting).
+    pub highlight_moves: bool,
 }
 
 /// Every setting: the core's preferences and the desktop's.

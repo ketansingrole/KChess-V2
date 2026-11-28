@@ -18,6 +18,7 @@ The board editor sets up well-known openings and endgames in one click, and Gues
 - Guess the move can take a game from your databases. Search for a player and you guess the moves as them.
 - Clean up in Settings → Storage removes the files earlier versions of KChess left behind, which nothing uses any more.
 - Drag the corner of the board to make it smaller, and every board page keeps that size. Double-click the corner to make the board as large as fits again.
+- Settings can turn off the highlight of the last move and of a king in check, as on Lichess.
 
 ### Changed
 
@@ -38,6 +39,7 @@ The board editor sets up well-known openings and endgames in one click, and Gues
 - Settings → Storage shows what KChess keeps on your computer in a bar and a list, largest first, each in its own colour, with Update or Delete beside what you downloaded. Your disk's free space is shown with what you can still download.
 - A mark you give a move on the Analysis board, such as ?? or !?, shows on the board beside the move, ahead of the review's own.
 - The board handles as it does on Lichess: your move lands the moment you make it, so you can premove straight away; a clicked move slides while a dragged one drops in place, castling moves the rook at once, and a piece taken fades as its taker arrives.
+- The promotion picker opens on the pawn's file, queen first, as on Lichess, and a premove that promotes asks which piece as you make it. Premoves are offered only where the move could still be legal on your turn.
 
 ### Fixed
 
