@@ -187,6 +187,11 @@ impl Store for Saving {
             None => Ok(()),
         }
     }
+
+    /// A game saved again before its last save went out: only the newest is sent.
+    fn replaces(newer: &Write, older: &Write) -> bool {
+        matches!((newer, older), (Write::Game(newer), Write::Game(older)) if newer.id == older.id)
+    }
 }
 
 /// Sends a write; what the core answers is not read, only whether it went through.

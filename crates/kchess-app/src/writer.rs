@@ -22,6 +22,13 @@ pub trait Store: Send + 'static {
     /// Every write before this is answered. Send the refused ones again first when `retry`;
     /// then why one is still unsaved, if any is.
     fn flush(&mut self, retry: bool) -> impl Future<Output = Saved> + Send + '_;
+
+    /// Whether `newer`, queued behind `older` with no flush between them, leaves nothing of
+    /// `older` worth writing: a game saved again before its last save went out. Only the newer
+    /// is sent then.
+    fn replaces(_newer: &Self::Write, _older: &Self::Write) -> bool {
+        false
+    }
 }
 
 /// What the writer's queue carries.
@@ -101,21 +108,50 @@ impl<W: Send + 'static> Writer<W> {
     }
 }
 
-/// Write each queued write in turn, until every `Writer` is dropped.
+/// Write each queued write in turn, until every `Writer` is dropped. A write that one queued
+/// behind it replaces before the next flush is left out (`Store::replaces`).
 pub async fn write_in_order<S: Store>(
     mut store: S,
     mut queue: mpsc::UnboundedReceiver<Queued<S::Write>>,
 ) {
-    while let Some(queued) = queue.next().await {
-        match queued {
-            Queued::Write(write) => store.write(write).await,
-            Queued::Flush { retry, done } => {
-                let saved = store.flush(retry).await;
-                // The caller stopped waiting (the app quit without it): nothing to tell.
-                let _ = done.send(saved);
+    while let Some(first) = queue.next().await {
+        let mut ready = vec![first];
+        while let Ok(Some(next)) = queue.try_next() {
+            ready.push(next);
+        }
+        let replaced = replaced::<S>(&ready);
+        for (queued, replaced) in ready.into_iter().zip(replaced) {
+            match queued {
+                Queued::Write(_) if replaced => {}
+                Queued::Write(write) => store.write(write).await,
+                Queued::Flush { retry, done } => {
+                    let saved = store.flush(retry).await;
+                    // The caller stopped waiting (the app quit without it): nothing to tell.
+                    let _ = done.send(saved);
+                }
             }
         }
     }
+}
+
+/// Which of the queued writes a later one replaces before the next flush.
+fn replaced<S: Store>(ready: &[Queued<S::Write>]) -> Vec<bool> {
+    ready
+        .iter()
+        .enumerate()
+        .map(|(index, queued)| {
+            let Queued::Write(older) = queued else {
+                return false;
+            };
+            ready[index + 1..]
+                .iter()
+                .map_while(|later| match later {
+                    Queued::Write(newer) => Some(newer),
+                    Queued::Flush { .. } => None,
+                })
+                .any(|newer| S::replaces(newer, older))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -196,5 +232,44 @@ mod tests {
             pool.run_until(closed.flushed()),
             Err("The writer stopped".into())
         );
+    }
+
+    /// Keeps what it was sent; a write replaces a queued one of the same game.
+    struct Latest(Arc<Mutex<Vec<(char, u32)>>>);
+
+    impl Store for Latest {
+        type Write = (char, u32);
+
+        async fn write(&mut self, write: (char, u32)) {
+            self.0.lock().unwrap().push(write);
+        }
+
+        async fn flush(&mut self, _: bool) -> Saved {
+            Ok(())
+        }
+
+        fn replaces(newer: &(char, u32), older: &(char, u32)) -> bool {
+            newer.0 == older.0
+        }
+    }
+
+    /// Saves of one game queued while the one before them is still out reach the core as the
+    /// newest alone, in the place of the last; a flush between two keeps both.
+    #[test]
+    fn a_write_replaced_while_queued_is_left_out() {
+        let stored = Arc::new(Mutex::new(Vec::new()));
+        let (writer, queue) = Writer::queued("closed");
+        for write in [('a', 1), ('b', 1), ('a', 2), ('a', 3)] {
+            writer.send(write);
+        }
+        let first = writer.written();
+        writer.send(('a', 4));
+        let mut pool = LocalPool::new();
+        pool.spawner()
+            .spawn_local(write_in_order(Latest(Arc::clone(&stored)), queue))
+            .unwrap();
+        assert_eq!(pool.run_until(first), Ok(()));
+        assert_eq!(pool.run_until(writer.written()), Ok(()));
+        assert_eq!(*stored.lock().unwrap(), [('b', 1), ('a', 3), ('a', 4)],);
     }
 }
