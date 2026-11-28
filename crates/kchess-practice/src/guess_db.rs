@@ -43,7 +43,7 @@ pub struct DatabaseFinder {
     /// Why the game picked could not be fetched.
     open_error: Option<SharedString>,
     /// The list's scroll, kept to it rather than shared with the page's.
-    scroll: ScrollHandle,
+    scroll: widgets::NestedScroll,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -82,7 +82,7 @@ impl DatabaseFinder {
             opening: None,
             open_epoch: Epoch::default(),
             open_error: None,
-            scroll: ScrollHandle::new(),
+            scroll: widgets::NestedScroll::new(),
             _subscriptions: subscriptions,
         };
         finder.sync_databases(window, cx);

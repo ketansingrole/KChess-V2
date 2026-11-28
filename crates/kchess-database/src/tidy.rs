@@ -87,6 +87,8 @@ impl Group {
 }
 
 pub struct NamesDialog {
+    /// The scroll of the list inside it, kept to the list (`widgets::nested_scroll`).
+    list_scroll: widgets::NestedScroll,
     database: String,
     groups: Vec<Group>,
     loading: Loading,
@@ -98,6 +100,7 @@ pub struct NamesDialog {
 impl NamesDialog {
     fn new(info: DatabaseInfo, cx: &mut Context<Self>) -> Self {
         let mut dialog = NamesDialog {
+            list_scroll: widgets::NestedScroll::new(),
             database: info.id,
             groups: Vec::new(),
             loading: Loading::default(),
@@ -274,11 +277,11 @@ impl Render for NamesDialog {
                         .child("The chosen name replaces the others in every game."),
                 )
                 .child(
-                    v_flex()
-                        .id("names-groups")
-                        .max_h(px(420.))
-                        .overflow_y_scroll()
-                        .children(rows),
+                    widgets::nested_scroll(
+                        v_flex().id("names-groups").max_h(px(420.)),
+                        &self.list_scroll,
+                    )
+                    .children(rows),
                 )
                 .into_any_element()
         };

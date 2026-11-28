@@ -33,6 +33,7 @@ The board editor sets up well-known openings and endgames in one click, and Gues
 - Insights looks like the rest of KChess: its figures and breakdowns sit in cards, and its filters match the other pages.
 - A game or run with no clock shows ∞ where it said Untimed or No clock.
 - Settings → Storage shows what KChess keeps on your computer in a bar and a list, largest first, each in its own colour, with Update or Delete beside what you downloaded. Your disk's free space is shown with what you can still download.
+- A mark you give a move on the Analysis board, such as ?? or !?, shows on the board beside the move, ahead of the review's own.
 
 ### Fixed
 

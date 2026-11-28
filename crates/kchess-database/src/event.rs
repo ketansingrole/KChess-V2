@@ -125,6 +125,8 @@ pub fn open(
 }
 
 pub struct EventTable {
+    /// The scroll of the list inside it, kept to the list (`widgets::nested_scroll`).
+    list_scroll: widgets::NestedScroll,
     page: WeakEntity<DatabasePage>,
     database: String,
     report: Option<GameDbEventReport>,
@@ -139,6 +141,7 @@ impl EventTable {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = EventTable {
+            list_scroll: widgets::NestedScroll::new(),
             page,
             database: database.clone(),
             report: None,
@@ -374,12 +377,12 @@ impl Render for EventTable {
                     .child(summary),
             )
             .child(
-                v_flex()
-                    .id("event-tables")
-                    .max_h(px(560.))
-                    .overflow_y_scroll()
-                    .gap(px(16.))
-                    .child(self.table(&report, cx, &palette)),
+                widgets::nested_scroll(
+                    v_flex().id("event-tables").max_h(px(560.)),
+                    &self.list_scroll,
+                )
+                .gap(px(16.))
+                .child(self.table(&report, cx, &palette)),
             )
     }
 }
