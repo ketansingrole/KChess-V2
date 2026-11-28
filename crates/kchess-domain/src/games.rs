@@ -85,12 +85,14 @@ impl Times {
     }
 }
 
-/// A setup, its moves and what they reach: the position, how it ended, and any draw by
-/// repetition or the fifty-move rule. Worked out once per change of the moves.
+/// A setup, its moves and what they reach: the position, each move in SAN, how it ended, and any
+/// draw by repetition or the fifty-move rule. Worked out once per change of the moves, so a page
+/// drawing the game never replays it.
 #[derive(Clone, Debug)]
 pub struct Board {
     setup: Setup,
     moves: Vec<String>,
+    sans: Vec<String>,
     position: VariantPosition,
     info: Info,
     draw: Option<String>,
@@ -110,6 +112,11 @@ impl Board {
         let end = results::board_result(&position, setup.variant, draw.as_deref());
         Ok(Board {
             info: position::info(&position),
+            sans: replayed
+                .played
+                .into_iter()
+                .map(|played| played.san)
+                .collect(),
             setup,
             moves,
             position,
@@ -128,6 +135,11 @@ impl Board {
 
     pub fn position(&self) -> &VariantPosition {
         &self.position
+    }
+
+    /// Each move played, in SAN: up to the first illegal one.
+    pub fn sans(&self) -> &[String] {
+        &self.sans
     }
 
     pub fn info(&self) -> &Info {
