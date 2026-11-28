@@ -868,6 +868,8 @@ impl BooksPage {
     /// Play `moves` (UCI) on the board's position, as far as they are legal.
     fn play(&mut self, moves: &[String], cx: &mut Context<Self>) {
         let Some(study) = &mut self.study else {
+            // No diagram set up: the board played the move at once, and it goes back.
+            self.board.update(cx, |board, cx| board.undo_move(cx));
             return;
         };
         for uci in moves {

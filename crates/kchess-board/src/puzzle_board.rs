@@ -386,6 +386,8 @@ impl PuzzleBoard {
     fn on_move(&mut self, uci: &str, cx: &mut Context<Self>) {
         if !self.playing() {
             self.redraw(cx);
+            // With no puzzle on the board the redraw sends nothing, so the move goes back here.
+            self.board.update(cx, |board, cx| board.undo_move(cx));
             return;
         }
         let Some(board) = &mut self.on_board else {

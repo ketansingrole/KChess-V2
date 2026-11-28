@@ -740,6 +740,8 @@ impl Repertoire {
 
     fn play(&mut self, uci: &str, cx: &mut Context<Self>) {
         let Some((root, path)) = self.at.clone() else {
+            // No line to drill yet: the board played the move at once, and it goes back.
+            self.board.update(cx, |board, cx| board.undo_move(cx));
             return;
         };
         if !self.your_turn(cx) {

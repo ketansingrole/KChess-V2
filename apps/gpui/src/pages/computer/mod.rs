@@ -573,14 +573,17 @@ impl ComputerPage {
     fn play(&mut self, uci: &str, cx: &mut Context<Self>) {
         // Not before the saved game is restored, which would replace the move.
         if !self.saver.loaded() {
-            return self.after_change(cx);
+            self.after_change(cx);
+            return self.board.update(cx, |board, cx| board.undo_move(cx));
         }
         let host = self.host();
         let (played, effects) = self.game.play(uci, &host);
         self.perform(Ok(effects), cx);
         if !played {
-            // Put the piece back where the position says it is.
+            // Put the piece back where the position says it is: the board played it at once,
+            // and a refusal while it is still your turn redraws the same position.
             self.after_change(cx);
+            self.board.update(cx, |board, cx| board.undo_move(cx));
         }
         self.changed(cx);
     }
