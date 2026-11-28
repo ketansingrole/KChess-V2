@@ -51,7 +51,7 @@ use sql::{Lane, LaneMessages, Sql as _};
 pub struct StoreCache {
     changes: Arc<Changes>,
     games: Mutex<Option<(Stamp, GameTotals)>>,
-    library: Mutex<Option<(Stamp, Library)>>,
+    library: Mutex<Option<(Stamp, Arc<Library>)>>,
 }
 
 /// What the synced games' reads keep.
@@ -192,16 +192,16 @@ impl StoreCache {
     }
 
     /// The library snapshot, if none of its tables changed since it was read.
-    pub fn library(&self, db: &Connection) -> Option<Library> {
+    pub fn library(&self, db: &Connection) -> Option<Arc<Library>> {
         let stamp = self.changes.stamp(db, Area::Library);
         let library = lock(&self.library);
         let (read_at, snapshot) = library.as_ref()?;
-        (*read_at == stamp).then(|| snapshot.clone())
+        (*read_at == stamp).then(|| Arc::clone(snapshot))
     }
 
-    pub fn remember_library(&self, db: &Connection, snapshot: &Library) {
+    pub fn remember_library(&self, db: &Connection, snapshot: Arc<Library>) {
         let stamp = self.changes.stamp(db, Area::Library);
-        *lock(&self.library) = Some((stamp, snapshot.clone()));
+        *lock(&self.library) = Some((stamp, snapshot));
     }
 
     /// The kept count, as it was kept, for the tests that close the database.

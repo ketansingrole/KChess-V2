@@ -294,12 +294,11 @@ impl PlayedGames {
         cx.spawn(async move |this, cx| {
             let _ = written.await;
             let Ok(library) = this.update(cx, |_, cx| {
-                cx.global::<AppCore>().request(calls::Library {})
+                cx.global::<AppCore>().request(calls::PlayedGames {})
             }) else {
                 return;
             };
-            if let Some(library) = library.await.warn_on_err() {
-                let games = library.games;
+            if let Some(games) = library.await.warn_on_err() {
                 this.update(cx, |this, cx| match this.reads.answer(read) {
                     Answer::Show => {
                         this.games = games;

@@ -147,7 +147,7 @@ pub(crate) fn encode_session(kind: &str, session: &Value) -> Value {
 pub use super::documents::read_document;
 pub(crate) use super::documents::{assert_replaceable, write_document};
 pub use super::json_codec::{clean_name, js_json};
-pub use super::library_import::{cached_library, library};
+pub use super::library_import::{cached_library, library, with_library};
 pub(crate) use super::library_import::{
     read_joined, read_misses, read_mistakes, read_schedule_lines, read_session,
 };
@@ -1715,7 +1715,7 @@ mod tests {
         .expect("damage");
         assert!(game_ids(&read()).is_empty());
 
-        cache.remember_library(&db, &Default::default());
+        cache.remember_library(&db, Default::default());
         cache.clear();
         assert!(cache.library(&db).is_none());
     }

@@ -7,6 +7,7 @@ use kchess_contracts::types::{
 };
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 use super::StoreContext;
 use super::documents::{
@@ -186,22 +187,29 @@ pub(crate) fn read_games(host: &dyn Host, db: &Connection) -> Result<Vec<PlayedG
 }
 
 /// `library(now)` as the store answers it: the snapshot read last, when none of its tables has
-/// changed since, else read afresh. Every frontend reads the whole library to start, and pages read it again to
-/// resume their sessions; reading it decodes every study and replays every played game.
+/// changed since, else read afresh. Every frontend reads the whole library to start, and pages read
+/// it again to resume their sessions; reading it decodes every study and replays every played game.
 pub fn cached_library(ctx: &StoreContext, now: f64) -> Result<Library> {
-    let mut snapshot = match ctx.cache.library(ctx.db) {
-        Some(snapshot) => snapshot,
-        None => {
-            let snapshot = library(ctx.host, ctx.db, f64::NEG_INFINITY)?;
-            // Reading may migrate an earlier release's studies: kept as of after that write.
-            ctx.cache.remember_library(ctx.db, &snapshot);
-            snapshot
-        }
-    };
+    let mut snapshot = with_library(ctx, Library::clone)?;
     snapshot
         .joined_tournaments
         .retain(|entry| entry.until > now);
     Ok(snapshot)
+}
+
+/// `work` over the library snapshot, read afresh only when one of its tables changed: a part of
+/// the library (its games, its studies) is answered without copying the rest.
+pub fn with_library<T>(ctx: &StoreContext, work: impl FnOnce(&Library) -> T) -> Result<T> {
+    let snapshot = match ctx.cache.library(ctx.db) {
+        Some(snapshot) => snapshot,
+        None => {
+            let snapshot = Arc::new(library(ctx.host, ctx.db, f64::NEG_INFINITY)?);
+            // Reading may migrate an earlier release's studies: kept as of after that write.
+            ctx.cache.remember_library(ctx.db, Arc::clone(&snapshot));
+            snapshot
+        }
+    };
+    Ok(work(&snapshot))
 }
 
 /// `library(now)`: the whole snapshot.

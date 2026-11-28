@@ -183,7 +183,7 @@ impl Mistakes {
         let turn = self.loading.start();
         let core = cx.global::<AppCore>().clone();
         let (library, games, data) = (
-            core.request(calls::Library {}),
+            core.request(calls::Mistakes {}),
             core.request(calls::MistakeGames {}),
             core.request(calls::LoadData {}),
         );
@@ -194,8 +194,8 @@ impl Mistakes {
                 if !this.loading.settle(turn, "mistake-trainer", &library) {
                     return;
                 }
-                if let Ok(library) = library {
-                    this.items = library.mistakes;
+                if let Ok(mistakes) = library {
+                    this.items = mistakes;
                 }
                 match games {
                     Ok(games) => this.games = games,

@@ -116,7 +116,7 @@ pub async fn write_in_order<S: Store>(
 ) {
     while let Some(first) = queue.next().await {
         let mut ready = vec![first];
-        while let Ok(Some(next)) = queue.try_next() {
+        while let Ok(next) = queue.try_recv() {
             ready.push(next);
         }
         let replaced = replaced::<S>(&ready);

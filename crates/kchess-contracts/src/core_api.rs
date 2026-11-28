@@ -590,12 +590,22 @@ core_api! {
         Session = "session" fn session(kind: SessionKind) -> Option<SessionDocument>;
         /// The mistake drills; the library's `mistakes` alone.
         Mistakes = "mistakes" fn mistakes() -> Vec<Drill>;
+        /// The played games, the most recent first; the library's `games` alone.
+        PlayedGames = "playedGames" fn played_games() -> Vec<crate::types::PlayedGame>;
+        /// The saved studies; the library's `studies` alone.
+        Studies = "studies" fn studies() -> Vec<crate::types::Study>;
+        /// Every repertoire's missed positions; the library's `repertoireMisses` alone.
+        RepertoireMisses = "repertoireMisses" fn repertoire_misses(
+        ) -> crate::types::RepertoireMisses;
+        /// Every repertoire line's review schedule; the library's `repertoireSchedule` alone.
+        RepertoireSchedule = "repertoireSchedule" fn repertoire_schedule(
+        ) -> crate::types::RepertoireSchedule;
         /// Answers every repertoire's missed positions.
         #[writes(Repertoire)]
         RecordRepertoireMiss = "recordRepertoireMiss" fn record_repertoire_miss(
             key: RepertoireKey,
             fen: Position
-        ) -> RepertoireMisses;
+        ) -> crate::types::RepertoireMisses;
         /// Forget a repertoire's misses; answers the misses left and the ones removed (for Undo).
         #[writes(Repertoire)]
         ClearRepertoireMisses = "clearRepertoireMisses" fn clear_repertoire_misses(
@@ -606,7 +616,7 @@ core_api! {
         RestoreRepertoireMisses = "restoreRepertoireMisses" fn restore_repertoire_misses(
             key: RepertoireKey,
             misses: MissCounts
-        ) -> RepertoireMisses;
+        ) -> crate::types::RepertoireMisses;
         /// Answer a repertoire line right or wrong; its spaced-repetition schedule moves on.
         /// Returns every repertoire's schedule.
         #[writes(Repertoire)]
@@ -614,7 +624,7 @@ core_api! {
             key: RepertoireKey,
             line: RepertoireLine,
             correct: bool
-        ) -> RepertoireSchedule;
+        ) -> crate::types::RepertoireSchedule;
         /// How each page was last left (tabs, filters, toggles), by `kchess:` preference name.
         ViewPreferences = "viewPreferences" fn view_preferences() -> serde_json::Map<String, Value>;
         /// Remember a view preference for every KChess app on this profile; null forgets it.

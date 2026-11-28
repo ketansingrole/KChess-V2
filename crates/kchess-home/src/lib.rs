@@ -552,16 +552,31 @@ impl HomePage {
     fn refresh_today(&mut self, cx: &mut Context<Self>) {
         let turn = self.today_read.start();
         let core = cx.global::<AppCore>().clone();
-        let (library, missed) = (
-            core.request(calls::Library {}),
+        let (studies, schedule, mistakes, missed) = (
+            core.request(calls::Studies {}),
+            core.request(calls::RepertoireSchedule {}),
+            core.request(calls::Mistakes {}),
             core.request(calls::RunSchedule {
                 kind: kchess_contracts::types::RunKind::Endgame,
             }),
         );
         cx.spawn(async move |this, cx| {
-            let (library, missed) = match (library.await, missed.await) {
-                (Ok(library), Ok(missed)) => (library, missed),
-                (Err(cause), _) | (_, Err(cause)) => {
+            let read = (studies.await, schedule.await, mistakes.await, missed.await);
+            // What practice is due needs these parts of the library alone, not its played games.
+            let (library, missed) = match read {
+                (Ok(studies), Ok(repertoire_schedule), Ok(mistakes), Ok(missed)) => (
+                    kchess_contracts::types::Library {
+                        studies,
+                        repertoire_schedule,
+                        mistakes,
+                        ..Default::default()
+                    },
+                    missed,
+                ),
+                (Err(cause), ..)
+                | (_, Err(cause), ..)
+                | (_, _, Err(cause), _)
+                | (.., Err(cause)) => {
                     crate::log::write(
                         kchess_contracts::Level::Warn,
                         "home",

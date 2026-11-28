@@ -4,16 +4,34 @@ use kchess_core::test_host::TestHost;
 use kchess_core::{Config, Core};
 use serde_json::{Value, json};
 
-/// A page resuming its session reads it, and the drills, alone: through the facade each answers
-/// what the whole library holds for it, and a kind no session has is refused.
+/// A page reads what it shows alone (its session, the drills, the played games, the studies, the
+/// repertoires' misses and schedule): through the facade each answers what the whole library holds
+/// for it, and a kind no session has is refused.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_session_and_the_drills_are_read_alone() {
+async fn a_session_and_each_part_of_the_library_are_read_alone() {
     let dir = tempfile::tempdir().expect("profile");
     let core = Core::open(Config::new(dir.path().to_path_buf()), TestHost::quiet()).expect("opens");
     let kept = json!({ "pgn": "1. e4 e5 *", "path": "e2e4", "orientation": "black" });
     core.call("saveSession", vec![json!("analysis"), kept])
         .await
         .expect("save");
+    let game = json!({
+        "id": "Played01", "source": "board", "startedAt": 1, "updatedAt": 2, "white": "A",
+        "black": "B", "result": "*", "reason": "-", "timeControl": "-", "finished": false,
+        "setup": {
+            "variant": "standard",
+            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        },
+        "moves": ["e2e4"],
+    });
+    core.call("saveArchivedGame", vec![game])
+        .await
+        .expect("game");
+    let study = json!({
+        "op": "saveChapters", "name": "Openings",
+        "chapters": [{ "name": "King pawn", "pgn": "1. e4 e5 *" }],
+    });
+    core.call("studyCommand", vec![study]).await.expect("study");
     let library = core.call("library", vec![]).await.expect("library");
     let session = core
         .call("session", vec![json!("analysis")])
@@ -28,10 +46,21 @@ async fn a_session_and_the_drills_are_read_alone() {
         Value::Null
     );
     assert!(core.call("session", vec![json!("nonsense")]).await.is_err());
-    assert_eq!(
-        core.call("mistakes", vec![]).await.expect("mistakes"),
-        library["mistakes"]
-    );
+    for (method, part) in [
+        ("mistakes", "mistakes"),
+        ("playedGames", "games"),
+        ("studies", "studies"),
+        ("repertoireMisses", "repertoireMisses"),
+        ("repertoireSchedule", "repertoireSchedule"),
+    ] {
+        assert_eq!(
+            core.call(method, vec![]).await.expect(method),
+            library[part],
+            "{method}"
+        );
+    }
+    assert_eq!(library["games"].as_array().map(Vec::len), Some(1));
+    assert_eq!(library["studies"].as_array().map(Vec::len), Some(1));
     core.close().await;
 }
 
