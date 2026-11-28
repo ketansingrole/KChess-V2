@@ -1181,6 +1181,59 @@ mod pointer_tests {
         assert_eq!(*moves.borrow(), ["e1e2"]);
     }
 
+    /// Blindfold play hid the piece being dragged and its ghost too, which showed where every
+    /// other piece was hidden.
+    #[gpui_kit::test]
+    fn blindfold_hides_the_piece_being_dragged(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            kchess_app::settings::init_for_tests(cx);
+            let colors = kchess_ui::theme::colors("kchess", &[], false);
+            cx.set_global(kchess_ui::theme::Palette::of(&colors, false));
+        });
+        for blindfold in [false, true] {
+            let window = cx.add_window(|_, _| {
+                let position = kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    START,
+                )
+                .expect("a position");
+                let mut state = BoardState::of(&position, Color::White, Some(Color::White), None);
+                state.blindfold = blindfold;
+                ChessBoard::new(state)
+            });
+            cx.run_until_parked();
+            let shown = window
+                .update(cx, |board, window, cx| {
+                    board
+                        .bounds
+                        .set(Bounds::new(Point::default(), size(px(800.), px(800.))));
+                    let e2 = at(Square::E2);
+                    let side = px(100.);
+                    let event = MouseDownEvent {
+                        position: e2,
+                        click_count: 1,
+                        ..MouseDownEvent::default()
+                    };
+                    board.press(&event, cx);
+                    board.pointer_moved(e2 + point(side, -side), cx);
+                    window.refresh();
+                })
+                .and_then(|_| {
+                    cx.run_until_parked();
+                    window.update(cx, |_, window, _| {
+                        (
+                            window.try_find("board-held").is_some(),
+                            window.try_find("board-ghost").is_some(),
+                        )
+                    })
+                })
+                .expect("the window");
+            assert_eq!(shown, (!blindfold, !blindfold), "blindfold {blindfold}");
+        }
+    }
+
     /// Castling put the rook beside the king, the king dragged onto its rook castled too, and a
     /// pawn taken en passant left the board, all before the page's next position.
     #[test]

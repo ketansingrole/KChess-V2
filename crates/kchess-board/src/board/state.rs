@@ -142,7 +142,8 @@ pub struct BoardState {
     pub dests: HashMap<Square, Vec<Square>>,
     pub last_move: Option<(Square, Square)>,
     pub check: Option<Square>,
-    /// Hide the pieces (blindfold play); highlights and moves stay.
+    /// Hide the pieces (blindfold play), the one dragged too, and the dots where they may go;
+    /// highlights stay.
     pub blindfold: bool,
     /// A small picture of a position: no coordinates, nothing to touch.
     pub preview: bool,

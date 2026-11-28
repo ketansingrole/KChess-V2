@@ -433,7 +433,8 @@ impl Render for ChessBoard {
             selected: self.selected,
             lifted,
             hovered,
-            show_dests: frontend.show_legal_moves,
+            // Blindfold play keeps the dots to itself too, as Lichess does (`showDests`).
+            show_dests: frontend.show_legal_moves && !self.state.blindfold,
             set: set.clone(),
             queued: self.queued,
             premove_dests,
@@ -470,16 +471,18 @@ impl Render for ChessBoard {
                 }))
         });
         // The piece's own square keeps a faint ghost while it is dragged (Chessground's `ghost`).
-        let ghost = lifted.and_then(|square| {
+        let ghost = lifted.filter(|_| !self.state.blindfold).and_then(|square| {
             let piece = self.pieces.piece_at(square)?;
             let (column, row) = self.cell(square);
             Some(
                 img(SharedString::from(looks::piece_path(&set, piece)))
+                    .id("board-ghost")
                     .absolute()
                     .left(relative(column as f32 / 8.))
                     .top(relative(row as f32 / 8.))
                     .size(relative(0.125))
-                    .opacity(0.3),
+                    .opacity(0.3)
+                    .test_support(),
             )
         });
         // The piece a promotion premove becomes waits faded on its square (lila's auto shape).
@@ -557,17 +560,23 @@ impl Render for ChessBoard {
                 })
                 .unwrap_or_default()
         };
-        let held = self.drag.as_ref().filter(|drag| drag.moved).map(|drag| {
-            deferred(
-                img(SharedString::from(looks::piece_path(&set, drag.piece)))
-                    .absolute()
-                    .left(drag.position.x - origin.x - side / 2.)
-                    .top(drag.position.y - origin.y - side / 2.)
-                    .size(side)
-                    .cursor(CursorStyle::PointingHand),
-            )
-            .with_priority(1)
-        });
+        let held = self
+            .drag
+            .as_ref()
+            .filter(|drag| drag.moved && !self.state.blindfold)
+            .map(|drag| {
+                deferred(
+                    img(SharedString::from(looks::piece_path(&set, drag.piece)))
+                        .id("board-held")
+                        .test_support()
+                        .absolute()
+                        .left(drag.position.x - origin.x - side / 2.)
+                        .top(drag.position.y - origin.y - side / 2.)
+                        .size(side)
+                        .cursor(CursorStyle::PointingHand),
+                )
+                .with_priority(1)
+            });
         let coordinate_mode = self.state.coordinates.unwrap_or(frontend.coordinates);
         let gutter = (!self.state.preview && coordinate_mode == CoordinateMode::Outside)
             .then_some(OUTSIDE_GUTTER);

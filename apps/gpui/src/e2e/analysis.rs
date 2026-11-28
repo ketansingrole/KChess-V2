@@ -236,8 +236,8 @@ fn stepping_through_moves_never_asks_the_system_about_the_microphone(
 }
 
 /// A promotion from the keyboard: the cursor walks from e2 to the pawn on a7, Enter picks it up,
-/// Up and Enter play it to a8, and the picker takes the arrows and Enter (Left from the queen
-/// goes round to the knight). The keys the board does not take still reach the page.
+/// Up and Enter play it to a8, and the picker takes the arrows and Enter (Down from the queen
+/// is the knight, under it in the column). The keys the board does not take still reach the page.
 #[gpui_kit::test]
 fn a_pawn_is_promoted_from_the_keyboard(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
@@ -262,7 +262,7 @@ fn a_pawn_is_promoted_from_the_keyboard(cx: &mut gpui_kit::TestAppContext) {
     app.press("enter");
     app.find("promotion-choices");
     assert_eq!(app.find("Queen").selected(), Some(true));
-    app.press("left");
+    app.press("down");
     assert_eq!(app.find("Knight").selected(), Some(true));
     app.press("enter");
     assert_eq!(selected(&mut app, "a7a8n"), Some(true));
