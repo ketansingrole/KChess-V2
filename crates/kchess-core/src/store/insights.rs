@@ -17,6 +17,7 @@ use shakmaty::fen::Fen;
 use shakmaty::san::San;
 use shakmaty::{CastlingMode, Chess, Color, Move, Position as _};
 use shakmaty_syzygy::Tablebase;
+use std::sync::Arc;
 
 use super::sql::Sql as _;
 use crate::gamedb::endgames;
@@ -141,6 +142,45 @@ fn clauses(query: &InsightsQuery, prefix: &str, now: f64) -> Result<(Vec<String>
     // In-progress games have no result yet.
     clauses.push(format!("{prefix}status NOT IN ('created', 'started')"));
     Ok((clauses, params))
+}
+
+/// What an Insights report for `query` is made from besides the games and reviews: the filter, the
+/// tablebases its endgames are judged by, and the time zone its days and hours are counted in.
+pub fn report_key(
+    db: &Connection,
+    query: &InsightsQuery,
+    tables: Option<&Arc<Tablebase<Chess>>>,
+) -> Result<String> {
+    let offset: i64 = db
+        .query_row(
+            "SELECT strftime('%s', 'now', 'localtime') - strftime('%s', 'now')",
+            [],
+            |row| row.get(0),
+        )
+        .sql()?;
+    let filter = serde_json::to_string(query).map_err(|cause| CoreError::new(cause.to_string()))?;
+    Ok(format!("{filter} {:?} {offset}", tables.map(Arc::as_ptr)))
+}
+
+/// Until when a report for `query` made at `now` holds as time passes: when the oldest game in its
+/// period leaves it. A report of every game, or of a period no game is in, holds until a game or
+/// review changes.
+pub fn unchanged_until(db: &Connection, query: &InsightsQuery, now: f64) -> Result<f64> {
+    let Some(days) = query.days.filter(|days| *days > 0) else {
+        return Ok(f64::INFINITY);
+    };
+    let (clauses, params) = clauses(query, "", now)?;
+    let oldest: Option<f64> = db
+        .query_row(
+            &format!(
+                "SELECT MIN(createdAt) FROM games WHERE {}",
+                clauses.join(" AND ")
+            ),
+            params_from_iter(params.iter()),
+            |row| row.get(0),
+        )
+        .sql()?;
+    Ok(oldest.map_or(f64::INFINITY, |oldest| oldest + days as f64 * DAY_MS))
 }
 
 /// The variants other than standard the account has finished games in, in KChess's order.
@@ -875,5 +915,49 @@ fn count_of(value: Option<&Value>) -> f64 {
     match value {
         None | Some(Value::Null) => 0.0,
         other => js::to_number(other),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A report of a period holds until its oldest game is older than the period; one of every
+    /// game, or of a period with no game, until the games change.
+    #[test]
+    fn a_report_of_a_period_holds_until_its_oldest_game_leaves_it() {
+        crate::store::in_memory(|ctx| {
+            ctx.db
+                .execute_batch(
+                    "INSERT INTO accounts (username, connected) VALUES ('Alice', 1);
+                     INSERT INTO games (account, id, createdAt, lastMoveAt, rated, speed, perf,
+                       status, color, opponent, moves)
+                     VALUES ('Alice', 'old', 1000, 1000, 1, 'blitz', 'blitz', 'mate', 'white',
+                       'X', ''),
+                       ('Alice', 'new', 5000, 5000, 1, 'blitz', 'blitz', 'mate', 'white', 'X', '');",
+                )
+                .unwrap();
+            let query = |days| InsightsQuery {
+                account: "Alice".into(),
+                speed: None,
+                rated: None,
+                days,
+                variant: None,
+            };
+            let now = 2.0 * DAY_MS;
+            assert_eq!(
+                unchanged_until(ctx.db, &query(Some(2)), now).unwrap(),
+                1000.0 + 2.0 * DAY_MS
+            );
+            assert_eq!(
+                unchanged_until(ctx.db, &query(None), now).unwrap(),
+                f64::INFINITY
+            );
+            assert_eq!(
+                unchanged_until(ctx.db, &query(Some(1)), 10.0 * DAY_MS).unwrap(),
+                f64::INFINITY,
+                "no game is in the period"
+            );
+        });
     }
 }

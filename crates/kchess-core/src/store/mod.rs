@@ -34,13 +34,13 @@ use std::sync::{Arc, Mutex};
 use crate::host::{Config, Host};
 use crate::tasks::lock;
 use kchess_contracts::error::Result;
-use kchess_contracts::types::GameLibraryOverview;
+use kchess_contracts::types::{GameLibraryOverview, InsightsReport};
 use sql::{Lane, LaneMessages, Sql as _};
 
 /// Reads kept until the tables they were read from change: the synced games' filtered page counts,
 /// overview and storage (a count is a full scan of the filter's index, the storage reads every
-/// game's row), and the library snapshot, which decodes every study and replays every played game
-/// (`library_import::cached_library`).
+/// game's row), the library snapshot, which decodes every study and replays every played game
+/// (`library_import::cached_library`), and Insights reports, which replay up to 2,000 games.
 ///
 /// The connection tells [`StoreCache::watch`] of every row it changes, so a write to the settings
 /// keeps the library, and a played game's move keeps the synced games' totals. A change it is not
@@ -52,7 +52,22 @@ pub struct StoreCache {
     changes: Arc<Changes>,
     games: Mutex<Option<(Stamp, GameTotals)>>,
     library: Mutex<Option<(Stamp, Arc<Library>)>>,
+    insights: Mutex<Vec<KeptInsights>>,
 }
+
+/// An Insights report, with what it was made from: its tables' changes, its filter (and the
+/// tablebases and time zone it was read with), and the time it holds until, when the oldest game
+/// in its period leaves it.
+struct KeptInsights {
+    stamp: Stamp,
+    key: String,
+    made_at: f64,
+    until: f64,
+    report: InsightsReport,
+}
+
+/// The most Insights reports kept: one for each filter recently shown.
+const INSIGHTS_KEPT: usize = 16;
 
 /// What the synced games' reads keep.
 #[derive(Default)]
@@ -69,6 +84,8 @@ enum Area {
     Games,
     /// `archived_games`, `studies` and every document but the view preferences.
     Library,
+    /// `games`, `accounts`, `reviews` and `game_reviews`.
+    Insights,
 }
 
 /// The changes the connection has told of since it opened.
@@ -78,6 +95,7 @@ struct Changes {
     told: AtomicU64,
     games: AtomicU64,
     library: AtomicU64,
+    reviews: AtomicU64,
     /// The documents written since the library last looked: only some are the library's.
     documents: Mutex<Vec<i64>>,
 }
@@ -106,22 +124,29 @@ impl Changes {
             "documents" | "archived_games" | "studies" => {
                 self.library.fetch_add(1, Ordering::Relaxed);
             }
+            "reviews" | "game_reviews" => {
+                self.reviews.fetch_add(1, Ordering::Relaxed);
+            }
             _ => {}
         }
     }
 
     fn stamp(&self, db: &Connection, area: Area) -> Stamp {
         let changes = match area {
-            Area::Games => &self.games,
+            Area::Games => self.games.load(Ordering::Relaxed),
             Area::Library => {
                 self.settle_documents(db);
-                &self.library
+                self.library.load(Ordering::Relaxed)
             }
+            Area::Insights => self
+                .games
+                .load(Ordering::Relaxed)
+                .wrapping_add(self.reviews.load(Ordering::Relaxed)),
         };
         let untold = db
             .total_changes()
             .wrapping_sub(self.told.load(Ordering::Relaxed));
-        (changes.load(Ordering::Relaxed), untold)
+        (changes, untold)
     }
 
     /// Counts the library as changed when a document written since is any but the view
@@ -204,6 +229,41 @@ impl StoreCache {
         *lock(&self.library) = Some((stamp, snapshot));
     }
 
+    /// The Insights report for `key` made before `now`, if its tables have not changed since and
+    /// no game in its period has left it.
+    pub fn insights(&self, db: &Connection, key: &str, now: f64) -> Option<InsightsReport> {
+        let stamp = self.changes.stamp(db, Area::Insights);
+        let mut kept = lock(&self.insights);
+        kept.retain(|report| report.stamp == stamp);
+        kept.iter()
+            .find(|report| report.key == key && report.made_at <= now && now < report.until)
+            .map(|report| report.report.clone())
+    }
+
+    /// Keeps `report`, made at `now` for `key`, until `until`.
+    pub fn remember_insights(
+        &self,
+        db: &Connection,
+        key: String,
+        now: f64,
+        until: f64,
+        report: &InsightsReport,
+    ) {
+        let stamp = self.changes.stamp(db, Area::Insights);
+        let mut kept = lock(&self.insights);
+        kept.retain(|report| report.stamp == stamp && report.key != key);
+        if kept.len() >= INSIGHTS_KEPT {
+            kept.remove(0);
+        }
+        kept.push(KeptInsights {
+            stamp,
+            key,
+            made_at: now,
+            until,
+            report: report.clone(),
+        });
+    }
+
     /// The kept count, as it was kept, for the tests that close the database.
     #[cfg(test)]
     fn kept_count(&self, key: &str) -> Option<i64> {
@@ -214,6 +274,7 @@ impl StoreCache {
     pub fn clear(&self) {
         *lock(&self.library) = None;
         *lock(&self.games) = None;
+        lock(&self.insights).clear();
     }
 }
 
@@ -600,6 +661,78 @@ mod tests {
                 })
                 .expect("read");
             assert_eq!(kept, expected, "after a change to {change}");
+        }
+    }
+
+    /// An Insights report holds for its filter until its games or reviews change, or time takes
+    /// its period's oldest game out of it (or the clock goes back); a setting saved keeps it.
+    #[test]
+    fn an_insights_report_lasts_until_its_games_reviews_or_period_change() {
+        let (_dir, database) = database();
+        let report = InsightsReport {
+            variants: vec![kchess_domain::variant::Variant::Chess960],
+            ..InsightsReport::default()
+        };
+        let keep = || {
+            database
+                .read(|ctx| {
+                    ctx.cache
+                        .remember_insights(ctx.db, "alice".into(), 100.0, 200.0, &report);
+                    Ok(())
+                })
+                .expect("keep")
+        };
+        let kept = |key: &str, now: f64| {
+            database
+                .read(|ctx| Ok(ctx.cache.insights(ctx.db, key, now)))
+                .expect("read")
+        };
+        keep();
+        assert_eq!(kept("alice", 150.0), Some(report.clone()));
+        assert_eq!(kept("bob", 150.0), None, "another filter");
+        assert_eq!(
+            kept("alice", 200.0),
+            None,
+            "its oldest game left the period"
+        );
+        assert_eq!(kept("alice", 50.0), None, "the clock went back");
+        database
+            .write(|ctx| games::save_settings(ctx.db, &games::default_settings()).map(drop))
+            .expect("settings");
+        assert_eq!(
+            kept("alice", 150.0),
+            Some(report.clone()),
+            "a setting keeps it"
+        );
+        type Change = fn(&StoreContext) -> Result<()>;
+        let changes: [(&str, Change); 2] = [
+            ("a review", |ctx| {
+                ctx.db
+                    .execute(
+                        "INSERT INTO reviews (key, source, complete, depth, data, summary,
+                           updatedAt) VALUES ('r', 'local', 1, 18, '{}', '{}', 1)",
+                        [],
+                    )
+                    .sql()
+                    .map(drop)
+            }),
+            ("a game", |ctx| {
+                games::add_account(ctx.db, "Alice", false)?;
+                ctx.db
+                    .execute(
+                        "INSERT INTO games (account, id, createdAt, lastMoveAt, rated, speed, perf,
+                           status, color, opponent, moves)
+                         VALUES ('Alice', 'g', 1, 1, 1, 'blitz', 'blitz', 'mate', 'white', 'X', '')",
+                        [],
+                    )
+                    .sql()
+                    .map(drop)
+            }),
+        ];
+        for (change, write) in changes {
+            keep();
+            database.write(write).expect(change);
+            assert_eq!(kept("alice", 150.0), None, "after {change}");
         }
     }
 

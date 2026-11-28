@@ -40,10 +40,18 @@ impl GamesApi for Core {
         let tablebases = self.tablebases.clone();
         self.database
             .read_async(move |ctx| {
-                let mut report = insights::insights(ctx.host, ctx.db, &query, now)?;
                 let tables = tablebases.tables();
+                // A filter shown before is answered as it was, until its games or reviews change.
+                let key = insights::report_key(ctx.db, &query, tables.as_ref())?;
+                if let Some(report) = ctx.cache.insights(ctx.db, &key, now) {
+                    return Ok(report);
+                }
+                let mut report = insights::insights(ctx.host, ctx.db, &query, now)?;
                 (report.endgames, report.structures) =
                     insights::replayed_games(ctx.db, &query, now, tables.as_deref())?;
+                let until = insights::unchanged_until(ctx.db, &query, now)?;
+                ctx.cache
+                    .remember_insights(ctx.db, key, now, until, &report);
                 Ok(report)
             })
             .await
