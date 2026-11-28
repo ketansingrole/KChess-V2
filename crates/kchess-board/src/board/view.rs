@@ -820,6 +820,14 @@ fn rounded<E: Styled>(element: E, corners: &Corners<Pixels>) -> E {
         .rounded_bl(corners.bottom_left)
 }
 
+/// Each promotion choice's hover group, in `keyboard::PROMOTION`'s order.
+const PROMOTION_GROUPS: [&str; 4] = [
+    "promotion-Queen",
+    "promotion-Knight",
+    "promotion-Rook",
+    "promotion-Bishop",
+];
+
 #[cfg(test)]
 mod description_tests {
     use super::{BoardState, describe};
@@ -909,11 +917,3 @@ mod description_tests {
         assert_eq!(describe(&state), "White to move · Solution e2–e4, d2–d4");
     }
 }
-
-/// Each promotion choice's hover group, in `keyboard::PROMOTION`'s order.
-const PROMOTION_GROUPS: [&str; 4] = [
-    "promotion-Queen",
-    "promotion-Knight",
-    "promotion-Rook",
-    "promotion-Bishop",
-];
