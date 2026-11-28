@@ -88,7 +88,7 @@ impl Group {
 
 pub struct NamesDialog {
     /// The scroll of the list inside it, kept to the list (`widgets::nested_scroll`).
-    list_scroll: ScrollHandle,
+    list_scroll: widgets::NestedScroll,
     database: String,
     groups: Vec<Group>,
     loading: Loading,
@@ -100,7 +100,7 @@ pub struct NamesDialog {
 impl NamesDialog {
     fn new(info: DatabaseInfo, cx: &mut Context<Self>) -> Self {
         let mut dialog = NamesDialog {
-            list_scroll: ScrollHandle::new(),
+            list_scroll: widgets::NestedScroll::new(),
             database: info.id,
             groups: Vec::new(),
             loading: Loading::default(),

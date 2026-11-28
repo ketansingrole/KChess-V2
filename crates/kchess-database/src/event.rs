@@ -126,7 +126,7 @@ pub fn open(
 
 pub struct EventTable {
     /// The scroll of the list inside it, kept to the list (`widgets::nested_scroll`).
-    list_scroll: ScrollHandle,
+    list_scroll: widgets::NestedScroll,
     page: WeakEntity<DatabasePage>,
     database: String,
     report: Option<GameDbEventReport>,
@@ -141,7 +141,7 @@ impl EventTable {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = EventTable {
-            list_scroll: ScrollHandle::new(),
+            list_scroll: widgets::NestedScroll::new(),
             page,
             database: database.clone(),
             report: None,
