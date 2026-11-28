@@ -2191,19 +2191,30 @@ fn board_side(app: &mut Harness) -> f32 {
     f32::from(app.find("chess-board").bounds().size.width)
 }
 
-/// Dragging the board's corner handle sizes the board, and every board page draws it at the
-/// size kept; a double click makes it as large as fits again, keeping nothing. A board page
+/// Dragging the board's corner handle sizes the board, and nothing else: the piece under it stays.
+/// Every board page draws the board at the size kept; a double click makes it as large as fits again, keeping nothing. A board page
 /// sizes its board from the window alone, so a size the page did not read would leave the
 /// other pages' boards as they were.
 #[gpui_kit::test]
 fn the_board_is_as_large_as_its_handle_leaves_it(cx: &mut gpui_kit::TestAppContext) {
     use kchess_board::board::size::KEY;
     let mut app = analysis(cx);
+    // A queen on h1, under the handle, whose diagonal the drag follows: pressing the handle
+    // reached the board under it too, which picked her up and played the drag as her move.
+    import(&mut app, "4k3/8/8/8/8/8/8/4K2Q w - - 0 1");
+    assert_eq!(app.square_name("h1"), "h1, white queen");
     let fit = board_side(&mut app);
     let handle = app.find("board-resize").bounds().center();
     let to = handle - gpui_kit::point(gpui_kit::px(120.), gpui_kit::px(120.));
     app.with_window(|window, cx| window.drag(handle, to, cx));
     app.settle();
+    let h1 = ("square", usize::from(shakmaty::Square::H1));
+    assert_eq!(
+        app.find(h1).selected(),
+        Some(false),
+        "the queen is not picked up"
+    );
+    assert!(app.moves().is_empty(), "the queen stays: {:?}", app.moves());
     let kept: Option<f32> = app.cx.update(|cx| crate::prefs::get(cx, KEY, None));
     let kept = kept.expect("the size is kept");
     // The board keeps whole squares, so it may be a few pixels smaller than the size kept.

@@ -99,6 +99,9 @@ pub fn resizable(board: &Entity<ChessBoard>) -> AnyElement {
         .right_0()
         .bottom_0()
         .size(HANDLE)
+        // The square under it takes no press from it: the piece there was picked up, and the
+        // drag played as its move.
+        .occlude()
         .cursor(CursorStyle::ResizeUpLeftDownRight)
         .opacity(0.55)
         .hover(|handle| handle.opacity(1.))
