@@ -267,6 +267,11 @@ pub struct SettingsPage {
     /// Storage: every file in the profile, and the installed app with its service's copy.
     profile_bytes: Option<u64>,
     app_bytes: Option<u64>,
+    /// Storage: what the Electron app left in the profile, whether Clean up runs, and why it
+    /// failed.
+    leftover_bytes: Option<u64>,
+    leftovers_busy: bool,
+    leftovers_error: Option<SharedString>,
     /// Storage: what clearing the scores and exporting diagnostics said.
     runs_note: Option<SharedString>,
     diagnostics_note: Option<SharedString>,
@@ -550,6 +555,9 @@ impl SettingsPage {
             free_space: None,
             profile_bytes: None,
             app_bytes: None,
+            leftover_bytes: None,
+            leftovers_busy: false,
+            leftovers_error: None,
             runs_note: None,
             diagnostics_note: None,
             exporting: false,

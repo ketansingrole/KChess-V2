@@ -9,13 +9,14 @@ with nothing there.
 
 ## Unreleased
 
-The board editor sets up well-known openings and endgames in one click, and Guess the move has 22 famous games and takes games from your databases. KChess stays connected to Lichess when it is left open for a long time, and Player search, Books, the engine lines, the Watch page, move lists and the panels beside the board are cleaner.
+The board editor sets up well-known openings and endgames in one click, and Guess the move has 22 famous games and takes games from your databases. Settings → Storage shows what KChess keeps and helps you free up space, KChess stays connected to Lichess when left open, and many pages are cleaner.
 
 ### Added
 
 - Set the board in the board editor sets up the starting position, an empty board, a popular opening or a classic endgame such as the Lucena or Philidor position.
 - Guess the move lists 22 famous games by era, from McDonnell against La Bourdonnais in 1834 to Kasparov's Immortal in 1999.
 - Guess the move can take a game from your databases. Search for a player and you guess the moves as them.
+- Clean up in Settings → Storage removes the files earlier versions of KChess left behind, which nothing uses any more.
 
 ### Changed
 
@@ -31,6 +32,7 @@ The board editor sets up well-known openings and endgames in one click, and Gues
 - Over the board leaves whose turn it is to the board, and speaks up for a check or a paused clock.
 - Insights looks like the rest of KChess: its figures and breakdowns sit in cards, and its filters match the other pages.
 - A game or run with no clock shows ∞ where it said Untimed or No clock.
+- Settings → Storage shows what KChess keeps on your computer in a bar and a list, largest first, each in its own colour, with Update or Delete beside what you downloaded. Your disk's free space is shown with what you can still download.
 - A mark you give a move on the Analysis board, such as ?? or !?, shows on the board beside the move, ahead of the review's own.
 
 ### Fixed

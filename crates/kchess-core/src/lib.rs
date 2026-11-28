@@ -21,6 +21,7 @@ pub mod facade;
 pub mod gamedb;
 pub mod host;
 pub mod ids;
+pub mod leftovers;
 pub mod lichess;
 pub mod loopback;
 mod panics;
