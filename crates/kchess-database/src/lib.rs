@@ -1391,7 +1391,12 @@ impl Render for DatabasePage {
             let content = if first_page {
                 div()
                     .p(px(24.))
-                    .child(widgets::loading("Loading games…", &palette))
+                    .child(widgets::loading_rows(
+                        "database-games-loading",
+                        "Loading games…",
+                        6,
+                        &palette,
+                    ))
                     .into_any_element()
             } else if let Some(error) = self.loading.error() {
                 div()

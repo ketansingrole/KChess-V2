@@ -401,7 +401,12 @@ impl Render for PuzzleHistory {
                 div()
                     .px(kchess_nav::play_layout::side_padding(window))
                     .pt(px(20.))
-                    .child(crate::widgets::loading("Loading puzzles…", &palette)),
+                    .child(crate::widgets::loading_rows(
+                        "puzzles-history-loading",
+                        "Loading puzzles…",
+                        6,
+                        &palette,
+                    )),
             );
         }
         let filter = crate::prefs::get::<String>(cx, FILTER, "all".into());
@@ -466,7 +471,13 @@ impl Render for PuzzleHistory {
             });
         let now = jiff::ZonedDateTime::now();
         let body: AnyElement = if shows_loading(self.loading.busy(), rows.is_empty()) {
-            crate::widgets::loading("Loading from Lichess…", &palette).into_any_element()
+            crate::widgets::loading_rows(
+                "puzzles-lichess-loading",
+                "Loading from Lichess…",
+                6,
+                &palette,
+            )
+            .into_any_element()
         } else if any && rows.is_empty() && unsolved_only && shown_count > 0 {
             div()
                 .text_size(px(13.))

@@ -695,7 +695,12 @@ impl HistoryPage {
         let body = if tab.loading_first_page() {
             div()
                 .p(px(24.))
-                .child(widgets::loading("Loading games…", palette))
+                .child(widgets::loading_rows(
+                    "history-games-loading",
+                    "Loading games…",
+                    6,
+                    palette,
+                ))
                 .into_any_element()
         } else if let Some(error) = tab.loading.error() {
             div()

@@ -362,7 +362,12 @@ impl PlayersPage {
             ));
         }
         let Some(stats) = &self.stats else {
-            return card.child(widgets::loading("Loading…", palette));
+            return card.child(widgets::loading_rows(
+                "players-stats-loading",
+                "Loading…",
+                3,
+                palette,
+            ));
         };
         let counts = stats.count.clone().unwrap_or_default();
         let count = |value: Option<i64>| value.unwrap_or_default() as f64;
@@ -504,7 +509,12 @@ impl PlayersPage {
             ));
         }
         let Some(board) = &self.board else {
-            return card.child(widgets::loading("Loading…", palette));
+            return card.child(widgets::loading_rows(
+                "players-board-loading",
+                "Loading…",
+                5,
+                palette,
+            ));
         };
         let filter = self.board_title.as_str();
         let shown: Vec<(usize, &LeaderboardEntry)> = board
@@ -623,7 +633,12 @@ impl PlayersPage {
             ));
         }
         match &self.days {
-            None => card.child(widgets::loading("Loading…", palette)),
+            None => card.child(widgets::loading_rows(
+                "players-days-loading",
+                "Loading…",
+                3,
+                palette,
+            )),
             Some(days) if days.is_empty() => {
                 card.child(widgets::hint("No recent activity", palette))
             }
@@ -649,7 +664,12 @@ impl PlayersPage {
             ));
         }
         match &self.games {
-            None => card.child(widgets::loading("Loading…", palette)),
+            None => card.child(widgets::loading_rows(
+                "players-games-loading",
+                "Loading…",
+                4,
+                palette,
+            )),
             Some(games) if games.is_empty() => card.child(widgets::hint("No games yet", palette)),
             Some(games) => card.children(games.iter().enumerate().map(|(index, game)| {
                 let chosen = game.clone();

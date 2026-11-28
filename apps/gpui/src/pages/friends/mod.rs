@@ -931,7 +931,12 @@ impl FriendsPage {
                     },
                 ))
             }
-            (None, None) => card.child(widgets::loading("Loading…", palette)),
+            (None, None) => card.child(widgets::loading_rows(
+                "friends-timeline-loading",
+                "Loading…",
+                4,
+                palette,
+            )),
             (None, Some(entries)) if entries.is_empty() => {
                 card.child(widgets::hint("Nothing new", palette))
             }
