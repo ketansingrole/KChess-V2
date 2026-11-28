@@ -145,21 +145,27 @@ fn clauses(query: &InsightsQuery, prefix: &str, now: f64) -> Result<(Vec<String>
 }
 
 /// What an Insights report for `query` is made from besides the games and reviews: the filter, the
-/// tablebases its endgames are judged by, and the time zone its days and hours are counted in.
+/// tablebases its endgames are judged by, and the time zone its days and hours are counted in:
+/// its offset from UTC now, in January and in July, so two zones with the same offset today but
+/// another summer time are not taken for each other.
 pub fn report_key(
     db: &Connection,
     query: &InsightsQuery,
     tables: Option<&Arc<Tablebase<Chess>>>,
 ) -> Result<String> {
-    let offset: i64 = db
+    let offset: (i64, i64, i64) = db
         .query_row(
-            "SELECT strftime('%s', 'now', 'localtime') - strftime('%s', 'now')",
+            "SELECT strftime('%s', 'now', 'localtime') - strftime('%s', 'now'),
+                    strftime('%s', 'now', 'start of year', 'localtime')
+                      - strftime('%s', 'now', 'start of year'),
+                    strftime('%s', 'now', 'start of year', '+6 months', 'localtime')
+                      - strftime('%s', 'now', 'start of year', '+6 months')",
             [],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .sql()?;
     let filter = serde_json::to_string(query).map_err(|cause| CoreError::new(cause.to_string()))?;
-    Ok(format!("{filter} {:?} {offset}", tables.map(Arc::as_ptr)))
+    Ok(format!("{filter} {:?} {offset:?}", tables.map(Arc::as_ptr)))
 }
 
 /// Until when a report for `query` made at `now` holds as time passes: when the oldest game in its
