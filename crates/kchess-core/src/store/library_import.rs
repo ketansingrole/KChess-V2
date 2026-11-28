@@ -185,18 +185,16 @@ pub(crate) fn read_games(host: &dyn Host, db: &Connection) -> Result<Vec<PlayedG
     Ok(games)
 }
 
-/// `library(now)` as the store answers it: the snapshot read last, when no row has changed since,
-/// else read afresh. Every frontend reads the whole library to start, and pages read it again to
+/// `library(now)` as the store answers it: the snapshot read last, when none of its tables has
+/// changed since, else read afresh. Every frontend reads the whole library to start, and pages read it again to
 /// resume their sessions; reading it decodes every study and replays every played game.
 pub fn cached_library(ctx: &StoreContext, now: f64) -> Result<Library> {
-    let changes = ctx.db.total_changes();
-    let mut snapshot = match ctx.cache.library(changes) {
+    let mut snapshot = match ctx.cache.library(ctx.db) {
         Some(snapshot) => snapshot,
         None => {
             let snapshot = library(ctx.host, ctx.db, f64::NEG_INFINITY)?;
             // Reading may migrate an earlier release's studies: kept as of after that write.
-            ctx.cache
-                .remember_library(ctx.db.total_changes(), &snapshot);
+            ctx.cache.remember_library(ctx.db, &snapshot);
             snapshot
         }
     };

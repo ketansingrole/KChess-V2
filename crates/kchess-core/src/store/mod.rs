@@ -28,6 +28,7 @@ use rusqlite::Connection;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::host::{Config, Host};
@@ -36,78 +37,189 @@ use kchess_contracts::error::Result;
 use kchess_contracts::types::GameLibraryOverview;
 use sql::{Lane, LaneMessages, Sql as _};
 
-/// Filtered page counts, the library overview and the storage the games take, valid until a
-/// write runs. The count is a full scan of the filter's index, while the page rows themselves are
-/// a short index range; the storage reads every game's row.
+/// Reads kept until the tables they were read from change: the synced games' filtered page counts,
+/// overview and storage (a count is a full scan of the filter's index, the storage reads every
+/// game's row), and the library snapshot, which decodes every study and replays every played game
+/// (`library_import::cached_library`).
 ///
-/// And the library snapshot, which decodes every study and replays every played game: it is kept
-/// with the connection's count of changed rows when it was read, and is stale once any write has
-/// changed a row since (`library_import::cached_library`).
+/// The connection tells [`StoreCache::watch`] of every row it changes, so a write to the settings
+/// keeps the library, and a played game's move keeps the synced games' totals. A change it is not
+/// told of (SQLite deletes a whole table without naming its rows) still counts in the
+/// connection's `total_changes`, and that makes every kept read stale; so does any change on a
+/// connection nobody watches.
 #[derive(Default)]
 pub struct StoreCache {
-    counts: Mutex<HashMap<String, i64>>,
-    overview: Mutex<Option<GameLibraryOverview>>,
-    storage: Mutex<Option<Vec<(String, i64, i64)>>>,
-    library: Mutex<Option<(u64, Library)>>,
+    changes: Arc<Changes>,
+    games: Mutex<Option<(Stamp, GameTotals)>>,
+    library: Mutex<Option<(Stamp, Library)>>,
+}
+
+/// What the synced games' reads keep.
+#[derive(Default)]
+struct GameTotals {
+    counts: HashMap<String, i64>,
+    overview: Option<GameLibraryOverview>,
+    storage: Option<Vec<(String, i64, i64)>>,
+}
+
+/// The tables a kept read comes from.
+#[derive(Clone, Copy)]
+enum Area {
+    /// `games` and `accounts`.
+    Games,
+    /// `archived_games`, `studies` and every document but the view preferences.
+    Library,
+}
+
+/// The changes the connection has told of since it opened.
+#[derive(Default)]
+struct Changes {
+    /// Every row told of: whatever `total_changes` counts beyond them, nobody was told of.
+    told: AtomicU64,
+    games: AtomicU64,
+    library: AtomicU64,
+    /// The documents written since the library last looked: only some are the library's.
+    documents: Mutex<Vec<i64>>,
+}
+
+/// When a kept read was made: its area's changes then, and the changes nobody was told of.
+type Stamp = (u64, u64);
+
+/// The most written documents remembered before the library counts as changed.
+const DOCUMENTS_KEPT: usize = 64;
+
+impl Changes {
+    fn told(&self, action: rusqlite::hooks::Action, table: &str, rowid: i64) {
+        self.told.fetch_add(1, Ordering::Relaxed);
+        match table {
+            "games" | "accounts" => {
+                self.games.fetch_add(1, Ordering::Relaxed);
+            }
+            "documents" if action != rusqlite::hooks::Action::SQLITE_DELETE => {
+                let mut documents = lock(&self.documents);
+                if documents.len() < DOCUMENTS_KEPT {
+                    documents.push(rowid);
+                } else {
+                    self.library.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            "documents" | "archived_games" | "studies" => {
+                self.library.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+    }
+
+    fn stamp(&self, db: &Connection, area: Area) -> Stamp {
+        let changes = match area {
+            Area::Games => &self.games,
+            Area::Library => {
+                self.settle_documents(db);
+                &self.library
+            }
+        };
+        let untold = db
+            .total_changes()
+            .wrapping_sub(self.told.load(Ordering::Relaxed));
+        (changes.load(Ordering::Relaxed), untold)
+    }
+
+    /// Counts the library as changed when a document written since is any but the view
+    /// preferences, or can no longer be read.
+    fn settle_documents(&self, db: &Connection) {
+        let written = std::mem::take(&mut *lock(&self.documents));
+        let library = written.iter().any(|rowid| {
+            db.query_row(
+                "SELECT key = ?2 FROM documents WHERE rowid = ?1",
+                rusqlite::params![rowid, view_preferences::VIEW_PREFERENCES],
+                |row| row.get::<_, bool>(0),
+            ) != Ok(true)
+        });
+        if library {
+            self.library.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 }
 
 impl StoreCache {
-    pub fn count(&self, key: &str) -> Option<i64> {
-        lock(&self.counts).get(key).copied()
+    /// Tells this cache of every row `db` changes from now on.
+    pub fn watch(&self, db: &mut Connection) -> Result<()> {
+        let changes = Arc::clone(&self.changes);
+        db.update_hook(Some(move |action, _: &str, table: &str, rowid| {
+            changes.told(action, table, rowid);
+        }))
+        .sql()
     }
 
-    pub fn remember_count(&self, key: String, total: i64) {
-        let mut counts = lock(&self.counts);
-        if counts.len() >= 128 {
-            counts.clear();
+    fn games<T>(&self, db: &Connection, work: impl FnOnce(&mut GameTotals) -> T) -> T {
+        let stamp = self.changes.stamp(db, Area::Games);
+        let mut games = lock(&self.games);
+        let kept = games.get_or_insert_with(|| (stamp, GameTotals::default()));
+        if kept.0 != stamp {
+            *kept = (stamp, GameTotals::default());
         }
-        counts.insert(key, total);
+        work(&mut kept.1)
     }
 
-    pub fn overview(&self) -> Option<GameLibraryOverview> {
-        lock(&self.overview).clone()
+    pub fn count(&self, db: &Connection, key: &str) -> Option<i64> {
+        self.games(db, |games| games.counts.get(key).copied())
     }
 
-    pub fn remember_overview(&self, overview: &GameLibraryOverview) {
-        *lock(&self.overview) = Some(overview.clone());
+    pub fn remember_count(&self, db: &Connection, key: String, total: i64) {
+        self.games(db, |games| {
+            if games.counts.len() >= 128 {
+                games.counts.clear();
+            }
+            games.counts.insert(key, total);
+        });
+    }
+
+    pub fn overview(&self, db: &Connection) -> Option<GameLibraryOverview> {
+        self.games(db, |games| games.overview.clone())
+    }
+
+    pub fn remember_overview(&self, db: &Connection, overview: &GameLibraryOverview) {
+        self.games(db, |games| games.overview = Some(overview.clone()));
     }
 
     /// Each account's games and the bytes they take.
-    pub fn storage(&self) -> Option<Vec<(String, i64, i64)>> {
-        lock(&self.storage).clone()
+    pub fn storage(&self, db: &Connection) -> Option<Vec<(String, i64, i64)>> {
+        self.games(db, |games| games.storage.clone())
     }
 
-    pub fn remember_storage(&self, rows: &[(String, i64, i64)]) {
-        *lock(&self.storage) = Some(rows.to_vec());
+    pub fn remember_storage(&self, db: &Connection, rows: &[(String, i64, i64)]) {
+        self.games(db, |games| games.storage = Some(rows.to_vec()));
     }
 
-    /// The library snapshot read when the connection had changed `changes` rows, if it is kept.
-    pub fn library(&self, changes: u64) -> Option<Library> {
+    /// The library snapshot, if none of its tables changed since it was read.
+    pub fn library(&self, db: &Connection) -> Option<Library> {
+        let stamp = self.changes.stamp(db, Area::Library);
         let library = lock(&self.library);
         let (read_at, snapshot) = library.as_ref()?;
-        (*read_at == changes).then(|| snapshot.clone())
+        (*read_at == stamp).then(|| snapshot.clone())
     }
 
-    pub fn remember_library(&self, changes: u64, snapshot: &Library) {
-        *lock(&self.library) = Some((changes, snapshot.clone()));
+    pub fn remember_library(&self, db: &Connection, snapshot: &Library) {
+        let stamp = self.changes.stamp(db, Area::Library);
+        *lock(&self.library) = Some((stamp, snapshot.clone()));
     }
 
-    /// A connection opened afresh counts its changes from zero again.
-    pub fn forget_library(&self) {
-        *lock(&self.library) = None;
+    /// The kept count, as it was kept, for the tests that close the database.
+    #[cfg(test)]
+    fn kept_count(&self, key: &str) -> Option<i64> {
+        lock(&self.games).as_ref()?.1.counts.get(key).copied()
     }
 
+    /// Forgets every kept read: a connection opened afresh counts its changes from zero again.
     pub fn clear(&self) {
-        self.forget_library();
-        lock(&self.counts).clear();
-        *lock(&self.overview) = None;
-        *lock(&self.storage) = None;
+        *lock(&self.library) = None;
+        *lock(&self.games) = None;
     }
 }
 
 /// `kchess.db` as the core shares it: one connection on one [`Lane`], so there is never a second
-/// copy of the database. A read leaves the caches alone; a write clears them, so no write can
-/// leave a stale total behind. A write that changed the player's own games says so to whoever
+/// copy of the database. Its caches keep each read until a table it came from changes
+/// ([`StoreCache`]), whichever call changed it. A write that changed the player's own games says so to whoever
 /// follows them (`own_games_changes`).
 pub struct Database {
     lane: Arc<Lane>,
@@ -137,8 +249,9 @@ impl Database {
             },
             Arc::clone(&host),
             move |host| {
-                let db = open(&path, host)?;
-                opened.forget_library();
+                let mut db = open(&path, host)?;
+                opened.clear();
+                opened.watch(&mut db)?;
                 Ok(db)
             },
         );
@@ -245,7 +358,6 @@ impl Database {
         };
         let result = work(&ctx);
         if matches!(access, Access::Write) {
-            self.cache.clear();
             match own_games::take_changes(db) {
                 Ok(true) => self.own_games.send_modify(|count| *count += 1),
                 Ok(false) => {}
@@ -402,25 +514,93 @@ mod tests {
         assert_eq!(played_games(&database), 1);
     }
 
-    /// A write clears the cached totals, whichever table it changed.
+    /// A kept read lasts until a table it came from changes, whichever call changed it: a played
+    /// game's move keeps the synced games' totals, a setting keeps the library. A change SQLite
+    /// does not name row by row (a whole table emptied at once) drops every kept read.
     #[test]
-    fn a_write_clears_the_cached_totals_and_a_read_keeps_them() {
+    fn a_kept_read_lasts_until_a_table_it_came_from_changes() {
+        type Change = fn(&StoreContext) -> Result<()>;
+        let changes: [(&str, Change, (bool, bool)); 7] = [
+            (
+                "nothing",
+                |ctx| games::load_app_data(ctx.db).map(drop),
+                (true, true),
+            ),
+            (
+                "the settings",
+                |ctx| games::save_settings(ctx.db, &games::default_settings()).map(drop),
+                (true, true),
+            ),
+            (
+                "a view preference",
+                |ctx| view_preferences::set(ctx, "kchess:board", &json!(1)),
+                (true, true),
+            ),
+            (
+                "an account",
+                |ctx| games::add_account(ctx.db, "Alice", false).map(drop),
+                (false, true),
+            ),
+            (
+                "a session",
+                |ctx| {
+                    library::save_session(
+                        ctx.db,
+                        kchess_contracts::types::SessionKind::Local,
+                        json!({}),
+                    )
+                },
+                (true, false),
+            ),
+            (
+                "a played game",
+                |ctx| {
+                    let game = json!({
+                        "id": "one", "source": "board", "startedAt": 1, "updatedAt": 2,
+                        "white": "A", "black": "B", "result": "1-0", "reason": "Checkmate",
+                        "timeControl": "-", "finished": true,
+                        "moves": ["e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"],
+                        "setup": { "variant": "standard", "fen": kchess_domain::rules::INITIAL_FEN },
+                    });
+                    let game = kchess_domain::library::decode_archived_game(&game)
+                        .ok_or_else(|| kchess_contracts::error::CoreError::new("not a game"))?;
+                    library::write_game(ctx.db, &game)
+                },
+                (true, false),
+            ),
+            (
+                "a whole table",
+                |ctx| {
+                    ctx.db
+                        .execute_batch(
+                            "CREATE TEMP TABLE IF NOT EXISTS scratch (x);
+                             INSERT INTO scratch VALUES (1);
+                             DELETE FROM scratch;",
+                        )
+                        .sql()
+                },
+                (false, false),
+            ),
+        ];
         let (_dir, database) = database();
-        database
-            .read(|ctx| {
-                ctx.cache.remember_count("all".into(), 3);
-                Ok(())
-            })
-            .expect("read");
-        assert_eq!(database.cache.count("all"), Some(3));
-        database
-            .read(|ctx| games::load_app_data(ctx.db))
-            .expect("read");
-        assert_eq!(database.cache.count("all"), Some(3));
-        database
-            .write(|ctx| games::add_account(ctx.db, "Alice", false))
-            .expect("write");
-        assert_eq!(database.cache.count("all"), None);
+        for (change, write, expected) in changes {
+            database
+                .read(|ctx| {
+                    ctx.cache.remember_count(ctx.db, "all".into(), 3);
+                    library::cached_library(ctx, 0.0).map(drop)
+                })
+                .expect("read");
+            database.write(write).expect(change);
+            let kept = database
+                .read(|ctx| {
+                    Ok((
+                        ctx.cache.count(ctx.db, "all").is_some(),
+                        ctx.cache.library(ctx.db).is_some(),
+                    ))
+                })
+                .expect("read");
+            assert_eq!(kept, expected, "after a change to {change}");
+        }
     }
 
     #[tokio::test]
@@ -476,12 +656,12 @@ mod tests {
             .expect("write");
         database
             .read(|ctx| {
-                ctx.cache.remember_count("all".into(), 3);
+                ctx.cache.remember_count(ctx.db, "all".into(), 3);
                 Ok(())
             })
             .expect("read");
         database.close();
-        assert_eq!(database.cache.count("all"), None);
+        assert_eq!(database.cache.kept_count("all"), None);
         for suffix in ["", "-wal", "-shm"] {
             let file = dir.path().join(format!("kchess.db{suffix}"));
             if file.exists() {
@@ -495,12 +675,12 @@ mod tests {
 
         database
             .read(|ctx| {
-                ctx.cache.remember_count("all".into(), 3);
+                ctx.cache.remember_count(ctx.db, "all".into(), 3);
                 Ok(())
             })
             .expect("read");
         database.close_async().await;
-        assert_eq!(database.cache.count("all"), None);
+        assert_eq!(database.cache.kept_count("all"), None);
         let refused = database
             .read_async(|ctx| games::load_app_data(ctx.db))
             .await;

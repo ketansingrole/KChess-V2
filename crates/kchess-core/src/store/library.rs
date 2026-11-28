@@ -1644,12 +1644,9 @@ mod tests {
         )
         .expect("save");
         assert_eq!(game_ids(&read()), ["one"]);
-        let changes = db.total_changes();
-        assert!(cache.library(changes).is_some(), "the read is kept");
-        assert!(
-            cache.library(changes + 1).is_none(),
-            "and stale after a write"
-        );
+        assert!(cache.library(&db).is_some(), "the read is kept");
+        save_session(&db, "local", json!({ "x": 1 })).ok();
+        assert!(cache.library(&db).is_none(), "and stale after a write");
         assert_eq!(game_ids(&read()), ["one"]);
 
         write_game(
@@ -1670,12 +1667,9 @@ mod tests {
         .expect("damage");
         assert!(game_ids(&read()).is_empty());
 
-        cache.remember_library(db.total_changes(), &Default::default());
-        cache.forget_library();
-        assert!(cache.library(db.total_changes()).is_none());
-        cache.remember_library(db.total_changes(), &Default::default());
+        cache.remember_library(&db, &Default::default());
         cache.clear();
-        assert!(cache.library(db.total_changes()).is_none());
+        assert!(cache.library(&db).is_none());
     }
 
     /// The kept snapshot holds every joined tournament: each read leaves out those ended by its
