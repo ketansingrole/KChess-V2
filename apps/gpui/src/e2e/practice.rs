@@ -1637,6 +1637,65 @@ fn repertoire_misses_from_another_window_are_read_here(cx: &mut gpui_kit::TestAp
     });
 }
 
+/// Regression: the trainer kept whichever read of the misses answered last. An earlier read
+/// answering after a newer one, or after a miss this window recorded, put back the misses from
+/// before them.
+#[gpui_kit::test]
+fn only_the_latest_read_of_the_repertoire_misses_counts(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Openings);
+    let trainer = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).repertoire())
+            .expect("the repertoire trainer")
+    });
+    app.cx.update(|cx| {
+        let choice = crate::game::OpeningChoice {
+            name: "Italian Game".into(),
+            moves: vec!["e2e4".into(), "e7e5".into(), "g1f3".into()],
+        };
+        crate::prefs::set(cx, "kchess:repertoire-opening", choice);
+        crate::prefs::set(cx, "kchess:repertoire-study", "opening");
+    });
+    app.cx.run_until_parked();
+    let fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+    let missed = |keys: &[&str]| -> kchess_contracts::types::Library {
+        let misses: serde_json::Map<_, _> = keys
+            .iter()
+            .map(|key| (key.to_string(), serde_json::json!({ fen: 1 })))
+            .collect();
+        serde_json::from_value(serde_json::json!({
+            "studies": [], "games": [], "mistakes": [], "sessions": {}, "joinedTournaments": [],
+            "repertoireMisses": misses, "repertoireSchedule": {},
+        }))
+        .expect("a library")
+    };
+    let read = |app: &mut Harness| {
+        app.cx
+            .update(|cx| trainer.update(cx, |t, _| t.start_misses_read()))
+    };
+    let answer = |app: &mut Harness, turn, library| {
+        app.cx
+            .update(|cx| trainer.update(cx, |t, cx| t.answer_misses_read(turn, library, cx)));
+    };
+    let count = |app: &mut Harness| app.cx.update(|cx| trainer.read(cx).missed_repertoires());
+
+    // Two reads answer out of order.
+    let (older, newer) = (read(&mut app), read(&mut app));
+    answer(&mut app, newer, missed(&["a:white", "b:white"]));
+    answer(&mut app, older, missed(&["a:white"]));
+    assert_eq!(count(&mut app), 2, "the older read answered last");
+
+    // A read sent before this window's own miss answers after it.
+    let before = read(&mut app);
+    app.cx
+        .update(|cx| trainer.update(cx, |t, cx| t.miss_at(fen.to_string(), cx)));
+    app.cx.run_until_parked();
+    assert_eq!(count(&mut app), 1, "the miss recorded here");
+    answer(&mut app, before, missed(&[]));
+    assert_eq!(count(&mut app), 1, "a read from before the miss");
+}
+
 /// Another window added or answered drills: the open Mistakes tab lists the profile's. It kept
 /// the drills it had until the tab was opened again.
 #[gpui_kit::test]

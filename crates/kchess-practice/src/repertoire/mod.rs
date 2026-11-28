@@ -10,7 +10,7 @@ use crate::game::tree::TreePgn as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{Fen, MissCounts, Position, RepertoireKey, RepertoireLine};
 use kchess_contracts::types::{
-    Keyed, LookupOptions, PositionLookupKind, RepertoireMisses, RepertoireSchedule, Study,
+    Keyed, Library, LookupOptions, PositionLookupKind, RepertoireMisses, RepertoireSchedule, Study,
     StudyChapter as Chapter, StudyCommand,
 };
 use std::collections::VecDeque;
@@ -116,6 +116,9 @@ pub struct Repertoire {
     misses: RepertoireMisses,
     /// Every repertoire's spaced-repetition schedule: key → line → card.
     schedule: RepertoireSchedule,
+    /// The latest read of the misses and schedule: an earlier one answering after it, or after a
+    /// change of this window's own, would put back what they replaced.
+    misses_read: crate::loading::Epoch,
     /// The line being drilled, when one was chosen (a due line): the opponent's moves follow it.
     target: Option<String>,
     /// Whether this line had a wrong move or a shown one: it is then answered wrong.
@@ -233,6 +236,7 @@ impl Repertoire {
             studies: Self::studies_of(cx),
             misses: Keyed::default(),
             schedule: Keyed::default(),
+            misses_read: crate::loading::Epoch::default(),
             target: None,
             line_missed: false,
             reviewing: false,
@@ -282,22 +286,12 @@ impl Repertoire {
 
     /// The missed moves, as the core keeps them.
     fn load_misses(&mut self, cx: &mut Context<Self>) {
+        let turn = self.misses_read.start();
         let library = cx.global::<AppCore>().request(calls::PracticeLibrary {});
         cx.spawn(async move |this, cx| match library.await {
             Ok(library) => {
-                this.update(cx, |this, cx| {
-                    this.misses = library.repertoire_misses;
-                    this.schedule = library.repertoire_schedule;
-                    // A due line comes first, also when the schedule arrived after the first line.
-                    if this.target.is_none()
-                        && this.correct + this.wrong == 0
-                        && this.due_line(cx).is_some()
-                    {
-                        this.start_line(cx);
-                    }
-                    cx.notify();
-                })
-                .ok();
+                this.update(cx, |this, cx| this.adopt_misses(turn, library, cx))
+                    .ok();
             }
             Err(cause) => crate::log::write(
                 Level::Warn,
@@ -306,6 +300,48 @@ impl Repertoire {
             ),
         })
         .detach();
+    }
+
+    /// The misses and schedule `turn` read, if it is the latest read.
+    fn adopt_misses(
+        &mut self,
+        turn: crate::loading::Turn,
+        library: Library,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.misses_read.is_current(turn) {
+            return;
+        }
+        self.misses = library.repertoire_misses;
+        self.schedule = library.repertoire_schedule;
+        // A due line comes first, also when the schedule arrived after the first line.
+        if self.target.is_none() && self.correct + self.wrong == 0 && self.due_line(cx).is_some() {
+            self.start_line(cx);
+        }
+        cx.notify();
+    }
+
+    /// Starts a read of the misses whose answer the test gives (`answer_misses_read`).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn start_misses_read(&mut self) -> crate::loading::Turn {
+        self.misses_read.start()
+    }
+
+    /// Answers a read of the misses `start_misses_read` started.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn answer_misses_read(
+        &mut self,
+        turn: crate::loading::Turn,
+        library: Library,
+        cx: &mut Context<Self>,
+    ) {
+        self.adopt_misses(turn, library, cx);
+    }
+
+    /// Records a miss at `fen` in the repertoire drilled, as a wrong move does.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn miss_at(&mut self, fen: String, cx: &mut Context<Self>) {
+        self.record_miss(fen, cx);
     }
 
     /// The saved studies, as the library has them.
@@ -979,6 +1015,7 @@ impl Repertoire {
             return;
         }
         self.schedule = schedule;
+        self.misses_read.invalidate();
         let saved = cx.global::<AppCore>().request(calls::ReviewRepertoireLine {
             key: RepertoireKey(key),
             line: RepertoireLine(line),
@@ -1029,6 +1066,7 @@ impl Repertoire {
     fn clear_misses(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let key = self.miss_key(cx);
         self.misses.0.retain(|(table, _)| *table != key);
+        self.misses_read.invalidate();
         cx.notify();
         let cleared = cx
             .global::<AppCore>()
@@ -1111,6 +1149,8 @@ impl Repertoire {
         what: &'static str,
         cx: &mut Context<Self>,
     ) {
+        // A read sent before this write answers with the misses from before it.
+        self.misses_read.invalidate();
         cx.spawn(async move |this, cx| match saved.await {
             Ok(misses) => {
                 this.update(cx, |this, cx| {
