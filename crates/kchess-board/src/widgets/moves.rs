@@ -146,7 +146,10 @@ pub fn reveal(scroll: ScrollHandle, due: impl FnOnce() -> bool + 'static) -> imp
                 return;
             }
             scroll.set_offset(offset);
-            window.refresh();
+            // Drawn with the old offset: the next frame shows the new one. `refresh` is ignored
+            // while drawing, so a White move, which starts a new row, stayed below the list
+            // until the next move redrew it.
+            window.request_animation_frame();
         },
         |_, _, _, _| {},
     )
