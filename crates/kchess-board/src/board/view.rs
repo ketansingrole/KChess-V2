@@ -357,11 +357,13 @@ impl Render for ChessBoard {
             .as_ref()
             .filter(|drag| drag.moved)
             .map(|drag| drag.from);
-        let hovered = self
-            .drag
-            .as_ref()
-            .filter(|drag| drag.moved)
-            .and_then(|drag| self.square_at(drag.position));
+        // The square under the dragged piece, or under the pointer while a piece is selected:
+        // a destination there fills, as Chessground's `move-dest:hover` does.
+        let hovered = match &self.drag {
+            Some(drag) if drag.moved => self.square_at(drag.position),
+            Some(_) => None,
+            None => self.hover,
+        };
         let mut shown = self.state.clone();
         let preview = self
             .drawing
@@ -446,6 +448,28 @@ impl Render for ChessBoard {
                     .opacity(0.3),
             )
         });
+        // Pieces taken stay faded on their squares while the taker slides in.
+        let fading: Vec<AnyElement> = self
+            .animation
+            .as_ref()
+            .filter(|_| !self.state.blindfold)
+            .map(|animation| {
+                animation
+                    .fadings
+                    .iter()
+                    .map(|(piece, square)| {
+                        let (column, row) = self.cell(*square);
+                        img(SharedString::from(looks::piece_path(&set, *piece)))
+                            .absolute()
+                            .left(relative(column as f32 / 8.))
+                            .top(relative(row as f32 / 8.))
+                            .size(relative(0.125))
+                            .opacity(0.5)
+                            .into_any_element()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         // Sliding pieces, between where they were and where they land.
         let sliding: Vec<AnyElement> = if self.state.blindfold {
             Vec::new()
@@ -487,7 +511,7 @@ impl Render for ChessBoard {
                     .left(drag.position.x - origin.x - side / 2.)
                     .top(drag.position.y - origin.y - side / 2.)
                     .size(side)
-                    .cursor_grabbing(),
+                    .cursor(CursorStyle::PointingHand),
             )
             .with_priority(1)
         });
@@ -628,6 +652,7 @@ impl Render for ChessBoard {
                     )
                     .children(squares)
                     .children(ghost)
+                    .children(fading)
                     .children(sliding)
                     .children(coordinates)
                     .children(badge)
@@ -647,12 +672,18 @@ impl Render for ChessBoard {
                 MouseButton::Right,
                 cx.listener(|this, event, _, cx| {
                     cx.stop_propagation();
-                    this.start_drawing(event, cx)
+                    this.right_press(event, cx)
                 }),
             )
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
                 if this.drawing.is_some() {
                     this.draw_to(event.position, cx)
+                }
+                this.hover_at(Some(event.position), cx);
+            }))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !*hovered {
+                    this.hover_at(None, cx);
                 }
             }))
             .on_mouse_up(
@@ -685,7 +716,9 @@ impl Render for ChessBoard {
             .cursor(match self.state.edit {
                 Some(EditTool::Place(_) | EditTool::Trash) => CursorStyle::Crosshair,
                 Some(EditTool::Pointer) => CursorStyle::PointingHand,
-                None if self.state.movable.is_some() => CursorStyle::PointingHand,
+                // A board the player can move on, or premove on, takes the pointing hand, as
+                // Chessground's `manipulable` board does, during a drag too.
+                None if self.interactive() => CursorStyle::PointingHand,
                 None => CursorStyle::Arrow,
             })
     }

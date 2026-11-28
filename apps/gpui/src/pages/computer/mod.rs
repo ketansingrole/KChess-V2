@@ -782,9 +782,9 @@ impl ComputerPage {
             self.orientation(),
             interactive.then_some(self.user_color()),
         );
-        // While Stockfish thinks, a move can be queued for the next turn.
-        let premove =
-            (!interactive && live && self.ply() == self.moves().len()).then_some(self.user_color());
+        // While Stockfish thinks, a move can be queued for the next turn, from the moment the
+        // player's move is on the board.
+        let premove = (live && self.ply() == self.moves().len()).then_some(self.user_color());
         surface::board_options(&mut state, live, premove, cx);
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));

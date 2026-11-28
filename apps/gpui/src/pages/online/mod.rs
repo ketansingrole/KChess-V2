@@ -379,14 +379,11 @@ impl OnlinePage {
             let frontend = &crate::settings::frontend(cx);
             // Blindfold hides the pieces while the game is on (`settings.blindfold && playing`).
             state.blindfold = frontend.blindfold && online.phase == Phase::Playing;
-            // On the opponent's turn a move can be queued (`premove && !correspondence`).
+            // A move can be queued for the next turn (`premove && !correspondence`): on the
+            // opponent's turn, and on the board's own turn once the player's move is on it, as
+            // Lichess's board passes the turn before the move comes back.
             let premove = frontend.premove;
-            if premove
-                && can_play
-                && movable.is_none()
-                && self.pending.is_none()
-                && !online.correspondence()
-            {
+            if premove && can_play && self.pending.is_none() && !online.correspondence() {
                 state.premove = Some(online.color());
             }
             (state, online.id().to_string())

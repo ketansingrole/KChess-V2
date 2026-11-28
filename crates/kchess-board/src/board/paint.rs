@@ -4,6 +4,10 @@
 use super::*;
 
 /// What one frame paints in the canvas.
+/// A destination dot's width, of a square's: Chessground's `radial-gradient(… 19%, … 20%)` on a
+/// square, whose farthest corner is half its diagonal away.
+const DOT: f32 = 0.195 * std::f32::consts::SQRT_2;
+
 pub(super) struct Frame {
     pub(super) state: BoardState,
     pub(super) pieces: Board,
@@ -60,7 +64,7 @@ pub(super) fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Win
                 } else if frame.pieces.piece_at(to).is_some() {
                     paint_corners(window, cell, rounded(to), rgba(DEST_CORNER));
                 } else {
-                    let diameter = side * 0.311;
+                    let diameter = side * DOT;
                     let dot = Bounds::new(
                         point(
                             cell.center().x - diameter / 2.,
@@ -82,7 +86,7 @@ pub(super) fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Win
                 continue;
             }
             let cell = at(to);
-            let diameter = side * 0.311;
+            let diameter = side * DOT;
             let dot = Bounds::new(
                 point(
                     cell.center().x - diameter / 2.,
@@ -100,7 +104,15 @@ pub(super) fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Win
     if frame.show_dests {
         for &to in &frame.premove_dests {
             let cell = at(to);
-            let diameter = side * 0.311;
+            if frame.hovered == Some(to) {
+                fill(window, to, PREMOVE_HOVER);
+                continue;
+            }
+            if frame.pieces.piece_at(to).is_some() {
+                paint_corners(window, cell, rounded(to), rgba(PREMOVE_CORNER));
+                continue;
+            }
+            let diameter = side * DOT;
             let dot = Bounds::new(
                 point(
                     cell.center().x - diameter / 2.,

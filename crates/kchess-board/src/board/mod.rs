@@ -50,8 +50,12 @@ const DEST_HOVER: u32 = 0x14551e4d; // rgba(20, 85, 30, 0.3)
 /// Chessground's queued premove and its targets.
 const PREMOVE: u32 = 0x141e5580; // rgba(20, 30, 85, 0.5)
 const PREMOVE_DOT: u32 = 0x141e5580;
-/// A press moves this far before it is a drag rather than a click.
-const DRAG_THRESHOLD: Pixels = px(4.);
+/// Chessground's premove target under the pointer, and on a piece.
+const PREMOVE_HOVER: u32 = 0x141e5533; // rgba(20, 30, 85, 0.2)
+const PREMOVE_CORNER: u32 = 0x141e5533;
+/// After a click-to-move, a press moves this far before it is a drag (Chessground's
+/// `draggable.distance`); otherwise the piece lifts as it is pressed (`autoDistance`).
+const DRAG_THRESHOLD: Pixels = px(3.);
 
 struct Drag {
     from: Square,
@@ -62,12 +66,17 @@ struct Drag {
     moved: bool,
     /// The piece was already selected when pressed: let go of it on release unless dragged.
     again: bool,
+    /// The pointer left the piece's square (Chessground's `keyHasChanged`).
+    left: bool,
 }
 
 /// Pieces sliding from one square to another, timed by the executor's clock: the real one in the
 /// app, the test's own in tests, where a slide holds still until the test moves the clock.
 struct Animation {
     moves: Vec<(Piece, Square, Square)>,
+    /// Pieces taken, shown faded on their square until the slide ends (Chessground's
+    /// `fadings`).
+    fadings: Vec<(Piece, Square)>,
     start: std::time::Instant,
     duration: std::time::Duration,
 }
@@ -134,6 +143,73 @@ fn slides(old: &Board, new: &Board) -> Vec<(Piece, Square, Square)> {
     if moves.len() > 4 { Vec::new() } else { moves }
 }
 
+/// The pieces of `old` that are gone in `new` without sliding anywhere: the ones taken.
+fn fadings(old: &Board, new: &Board, moves: &[(Piece, Square, Square)]) -> Vec<(Piece, Square)> {
+    old.occupied()
+        .into_iter()
+        .filter_map(|square| {
+            let piece = old.piece_at(square)?;
+            (new.piece_at(square) != Some(piece)
+                && !moves.iter().any(|(_, from, _)| *from == square))
+            .then_some((piece, square))
+        })
+        .collect()
+}
+
+/// Move a piece on `pieces` as Chessground does for the player's own move: a king moved onto its
+/// own rook, or two squares from the e-file towards one, castles, the rook landing beside it
+/// (`tryAutoCastle`); a pawn moving diagonally onto an empty square takes the pawn beside it
+/// (`tryEnPassant`); a promotion puts the new piece down.
+fn apply_move(pieces: &mut Board, from: Square, to: Square, promotion: Option<Role>) {
+    let Some(piece) = pieces.piece_at(from) else {
+        return;
+    };
+    if piece.role == Role::King && from.rank() == to.rank() {
+        let home = if piece.color == Color::White {
+            Rank::First
+        } else {
+            Rank::Eighth
+        };
+        let rook_square = if from.file() == File::E && pieces.piece_at(to).is_none() {
+            match to.file() {
+                File::G => Some(Square::from_coords(File::H, home)),
+                File::C => Some(Square::from_coords(File::A, home)),
+                _ => None,
+            }
+        } else {
+            Some(to)
+        };
+        let rook = Piece {
+            color: piece.color,
+            role: Role::Rook,
+        };
+        if from.rank() == home
+            && let Some(rook_square) = rook_square
+            && pieces.piece_at(rook_square) == Some(rook)
+        {
+            pieces.discard_piece_at(from);
+            pieces.discard_piece_at(rook_square);
+            let (king_file, rook_file) = if from.file() < rook_square.file() {
+                (File::G, File::F)
+            } else {
+                (File::C, File::D)
+            };
+            pieces.set_piece_at(Square::from_coords(king_file, home), piece);
+            pieces.set_piece_at(Square::from_coords(rook_file, home), rook);
+            return;
+        }
+    }
+    if piece.role == Role::Pawn && from.file() != to.file() && pieces.piece_at(to).is_none() {
+        pieces.discard_piece_at(Square::from_coords(to.file(), from.rank()));
+    }
+    pieces.discard_piece_at(from);
+    let landed = promotion.map_or(piece, |role| Piece {
+        color: piece.color,
+        role,
+    });
+    pieces.set_piece_at(to, landed);
+}
+
 /// Where a piece could go next turn, whatever stands in the way (Chessground's `premove`).
 fn premove_targets(pieces: &Board, from: Square) -> Vec<Square> {
     let Some(piece) = pieces.piece_at(from) else {
@@ -175,7 +251,16 @@ fn premove_targets(pieces: &Board, from: Square) -> Vec<Square> {
 }
 
 pub struct ChessBoard {
+    /// What the board shows: the page's state, and the player's move on it until the page's
+    /// next state (Chessground's own turn after a move).
     state: BoardState,
+    /// The page's last state, so the same state again does not take back a move just made.
+    given: BoardState,
+    /// The last move was dragged, not clicked: the next piece pressed lifts at once
+    /// (Chessground's `stats.dragged`).
+    dragged: bool,
+    /// The square under the pointer, where a selected piece could go.
+    hover: Option<Square>,
     pieces: Board,
     /// The player's right-button drawings, until a left click clears them.
     drawn: Vec<Drawn>,
@@ -227,6 +312,9 @@ impl ChessBoard {
             queued: None,
             animation: None,
             _animating: None,
+            given: state.clone(),
+            dragged: true,
+            hover: None,
             state,
             selected: None,
             selected_drop: None,
@@ -245,24 +333,30 @@ impl ChessBoard {
         &self.state
     }
 
-    /// Show another position (after a move, a takeback, a new game).
+    /// Show another position (after a move, a takeback, a new game). The same state again
+    /// changes nothing, so a page drawn again before it has the player's move leaves the move
+    /// on the board.
     pub fn set_state(&mut self, state: BoardState, cx: &mut Context<Self>) {
-        if state == self.state {
+        if state == self.given {
             return;
         }
-        if state.fen != self.state.fen {
-            let next = board_of(&state.fen);
+        self.given = state.clone();
+        let next = board_of(&state.fen);
+        // The player's own move is on the board already, and does not slide again.
+        if next != self.pieces {
             if !state.preview {
                 self.animate(&next, state.orientation, cx);
             }
             self.pieces = next;
             self.promotion = None;
         }
-        // A selection, and a promotion being chosen, survive only while their piece can still
-        // move: a game that ended on the same position left the picker open, still playing.
-        if self
-            .selected
-            .is_some_and(|square| !state.dests.contains_key(&square))
+        // A selection survives while its piece can still move or premove, as Chessground keeps
+        // it: a piece picked on the opponent's turn shows its moves once the turn comes.
+        if let Some(square) = self.selected
+            && !self.pieces.piece_at(square).is_some_and(|piece| {
+                Some(piece.color) == state.movable
+                    || (state.movable.is_none() && Some(piece.color) == state.premove)
+            })
         {
             self.selected = None;
         }
@@ -286,6 +380,7 @@ impl ChessBoard {
     /// Put the pieces back as the state has them: a move the board played at once and the page
     /// refused goes back, which `set_state` cannot see when the position did not change.
     pub fn undo_move(&mut self, cx: &mut Context<Self>) {
+        self.state = self.given.clone();
         self.pieces = board_of(&self.state.fen);
         self.promotion = None;
         cx.notify();
@@ -313,6 +408,7 @@ impl ChessBoard {
         }
         let duration = std::time::Duration::from_secs_f64(duration / 1000.);
         self.animation = Some(Animation {
+            fadings: fadings(&self.pieces, next, &moves),
             moves,
             start: now,
             duration,
@@ -347,7 +443,7 @@ impl ChessBoard {
         if self.state.movable.is_some() && self.state.movable == mine {
             self.queued = None;
             if self.reaches(from, to) {
-                self.play_move(from, to, true, cx);
+                self.play_move(from, to, true, true, cx);
             }
         } else if self.state.premove.is_none() || self.state.premove != mine {
             self.queued = None;
@@ -384,13 +480,6 @@ impl ChessBoard {
             Color::Black => (7 - column, row),
         };
         Some(Square::from_coords(File::new(file), Rank::new(rank)))
-    }
-
-    fn can_move_from(&self, square: Square) -> bool {
-        self.state
-            .dests
-            .get(&square)
-            .is_some_and(|targets| !targets.is_empty())
     }
 
     /// A premove from `from` to `to` can be queued.
@@ -470,8 +559,8 @@ pub fn outside_gutter(cx: &App) -> Pixels {
 
 #[cfg(test)]
 mod premove_tests {
-    use super::{board_of, premove_targets, slides, slides_now};
-    use shakmaty::Square;
+    use super::{board_of, fadings, premove_targets, slides, slides_now};
+    use shakmaty::{Color, Piece, Role, Square};
 
     #[test]
     fn premoves_ignore_what_stands_in_the_way() {
@@ -494,6 +583,16 @@ mod premove_tests {
         let castled = board_of("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQ1RK1 b kq - 0 1");
         let castle = board_of("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQK2R w KQkq - 0 1");
         assert_eq!(slides(&castle, &castled).len(), 2);
+        // A capture slides the taker in over the piece taken, which fades where it stood.
+        let taken = board_of("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1");
+        let took = board_of("4k3/8/8/3P4/8/8/8/4K3 b - - 0 1");
+        let moves = slides(&taken, &took);
+        assert_eq!(moves.len(), 1);
+        assert_eq!(
+            fadings(&taken, &took, &moves),
+            [(Piece { color: Color::Black, role: Role::Pawn }, Square::D5)]
+        );
+        assert!(fadings(&before, &after, &slides(&before, &after)).is_empty());
         let empty = board_of("8/8/8/8/8/8/8/8 w - - 0 1");
         assert!(slides(&empty, &before).is_empty());
     }

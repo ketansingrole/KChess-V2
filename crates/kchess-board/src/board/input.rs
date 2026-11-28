@@ -11,10 +11,11 @@ pub(super) struct Drawn {
     pub(super) brush: &'static str,
 }
 
-/// Chessground's brush for a right-button drawing: Shift or Ctrl red, Alt or ⌘
-/// blue, both yellow, else green.
-fn drawing_brush(modifiers: &Modifiers) -> &'static str {
-    let a = modifiers.shift || modifiers.control;
+/// Chessground's brush for a drawing (`eventBrush`): with the right button Shift or Ctrl red, Alt
+/// or ⌘ blue, both yellow, else green; a Shift-drag of the left button draws green, or blue with
+/// Alt or ⌘.
+fn drawing_brush(modifiers: &Modifiers, right: bool) -> &'static str {
+    let a = (modifiers.shift || modifiers.control) && right;
     let b = modifiers.alt || modifiers.platform;
     ["green", "red", "blue", "yellow"][usize::from(a) + 2 * usize::from(b)]
 }
@@ -37,7 +38,7 @@ fn toggle_shape(shapes: &mut Vec<Drawn>, shape: Drawn) {
 /// Whether the pointer went far enough from where it was pressed to be a drag.
 fn far(start: Point<Pixels>, now: Point<Pixels>) -> bool {
     let (dx, dy) = ((now.x - start.x).as_f32(), (now.y - start.y).as_f32());
-    (dx * dx + dy * dy).sqrt() > DRAG_THRESHOLD.as_f32()
+    dx * dx + dy * dy >= DRAG_THRESHOLD.as_f32().powi(2)
 }
 
 impl ChessBoard {
@@ -52,12 +53,14 @@ impl ChessBoard {
         cx.notify();
     }
 
-    /// Drop a pocket piece: it lands at once, and the page's next position confirms or undoes it.
+    /// Drop a pocket piece: it lands at once and the turn passes, and the page's next position
+    /// confirms or undoes it.
     fn drop_piece(&mut self, role: Role, to: Square, cx: &mut Context<Self>) {
         if let Some(color) = self.state.movable {
             self.pieces.set_piece_at(to, Piece { color, role });
         }
         self.selected_drop = None;
+        self.moved(to, to);
         cx.emit(BoardEvent::Move(format!(
             "{}@{to}",
             role.char().to_ascii_uppercase()
@@ -81,14 +84,17 @@ impl ChessBoard {
         }
     }
 
+    /// A left press (Chessground's `startDragOrDraw`): it ends a drag or a drawing under way,
+    /// Shift starts a drawing, and otherwise it plays, premoves or picks up.
     pub(super) fn press(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
         if self.promotion.is_some() || self.state.preview {
             return;
         }
-        // A left click clears the drawings; Shift keeps them.
-        if !event.modifiers.shift && !self.drawn.is_empty() {
-            self.drawn.clear();
-            cx.notify();
+        if self.cancel_gesture(cx) {
+            return;
+        }
+        if event.modifiers.shift && self.state.edit.is_none() {
+            return self.start_drawing(event, false, cx);
         }
         let Some(square) = self.square_at(event.position) else {
             return;
@@ -96,29 +102,55 @@ impl ChessBoard {
         if let Some(tool) = self.state.edit {
             return self.edit_press(tool, square, event.position, cx);
         }
+        // A press with nothing selected clears the drawings (`eraseOnMovablePieceClick`).
+        if self.selected.is_none() && !self.drawn.is_empty() {
+            self.drawn.clear();
+        }
         cx.emit(BoardEvent::Select(square));
         match self.decide(square) {
             Press::Drop(role) => return self.drop_piece(role, square, cx),
-            Press::Play(from) => return self.play(from, square, cx),
+            Press::Play(from) => {
+                // A click-to-move slides its piece, and the next piece pressed waits for a drag.
+                self.dragged = false;
+                return self.play_move(from, square, false, true, cx);
+            }
             Press::Pick { piece, again } => {
-                // A second press on the selected piece lets go of it on release, unless it is
-                // dragged.
+                // The piece lifts as it is pressed, unless the last move was clicked; a second
+                // press on the selected piece lets go of it on release, unless it is dragged.
                 self.drag = Some(Drag {
                     from: square,
                     piece,
                     position: event.position,
                     start: event.position,
-                    moved: false,
+                    moved: self.dragged,
                     again,
+                    left: false,
                 });
             }
+            // A premove clicked in counts as a click-to-move.
+            Press::Queued if self.queued.is_some() => self.dragged = false,
             Press::Queued | Press::Clear => {}
         }
         cx.notify();
     }
 
+    /// A press while a drag or a drawing is under way ends it, and does nothing else. Whether
+    /// there was one.
+    fn cancel_gesture(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.drag.take().is_some() {
+            self.selected = None;
+        } else if self.drawing.take().is_none() {
+            return false;
+        }
+        cx.notify();
+        true
+    }
+
     /// What pressing `square` does to the selection, a picked pocket piece and a queued premove,
-    /// and what is left to play.
+    /// and what is left to play (Chessground's `selectSquare` and the press around it): the
+    /// selected piece moves or premoves there, or the press picks up a piece of the side to move
+    /// or to premove, even one with nowhere to go. A premove waiting stays while a piece is
+    /// picked up, which a release ends, and goes on any other press.
     fn decide(&mut self, square: Square) -> Press {
         if let Some(role) = self.selected_drop.take()
             && self.drops_to(role, square)
@@ -126,56 +158,64 @@ impl ChessBoard {
             self.selected = None;
             return Press::Drop(role);
         }
-        // A press while a premove waits takes it back.
-        if self.queued.take().is_some() {
-            self.selected = None;
-            return Press::Queued;
-        }
-        if let Some(from) = self.selected
+        let before = self.selected;
+        if let Some(from) = before
             && from != square
-            && self.reaches(from, square)
         {
+            if self.reaches(from, square) {
+                self.selected = None;
+                return Press::Play(from);
+            }
             self.selected = None;
-            return Press::Play(from);
-        }
-        if let Some(from) = self.selected
-            && from != square
-            && self.premoves_to(from, square)
-        {
-            self.selected = None;
-            self.queued = Some((from, square));
-            return Press::Queued;
+            if self.premoves_to(from, square) {
+                self.queued = Some((from, square));
+                return Press::Queued;
+            }
         }
         match self.pieces.piece_at(square) {
             Some(piece)
-                if (Some(piece.color) == self.state.movable && self.can_move_from(square))
+                if Some(piece.color) == self.state.movable
                     || (Some(piece.color) == self.state.premove
                         && self.state.movable.is_none()) =>
             {
-                let again = self.selected == Some(square);
                 self.selected = Some(square);
-                Press::Pick { piece, again }
+                Press::Pick {
+                    piece,
+                    again: before == Some(square),
+                }
             }
             _ => {
                 self.selected = None;
-                Press::Clear
+                if self.queued.take().is_some() {
+                    Press::Queued
+                } else {
+                    Press::Clear
+                }
             }
         }
     }
 
-    /// The right button starts a drawing on a square.
-    pub(super) fn start_drawing(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+    /// A right press: it ends a drag or a drawing under way, or starts a drawing.
+    pub(super) fn right_press(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        if self.state.preview || self.cancel_gesture(cx) {
+            return;
+        }
+        self.start_drawing(event, true, cx);
+    }
+
+    /// Start a drawing on a square (the right button, or Shift with the left). As on Lichess it
+    /// takes back a queued premove and lets go of the piece picked (`cancelMove`).
+    fn start_drawing(&mut self, event: &MouseDownEvent, right: bool, cx: &mut Context<Self>) {
         if self.state.preview || self.state.edit.is_some() {
             return;
         }
-        // The right button also takes back a queued premove, as on Lichess.
-        if self.queued.take().is_some() {
-            cx.notify();
-        }
+        self.queued = None;
+        self.selected = None;
+        self.selected_drop = None;
         if let Some(square) = self.square_at(event.position) {
-            self.drawing = Some((square, drawing_brush(&event.modifiers), Some(square)));
-            cx.notify();
+            self.drawing = Some((square, drawing_brush(&event.modifiers, right), Some(square)));
         }
+        cx.notify();
     }
 
     pub(super) fn draw_to(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
@@ -200,6 +240,7 @@ impl ChessBoard {
     }
 
     pub(super) fn pointer_moved(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let square = self.square_at(position);
         let Some(drag) = &mut self.drag else {
             return;
         };
@@ -207,7 +248,21 @@ impl ChessBoard {
         if far(drag.start, position) {
             drag.moved = true;
         }
+        if drag.moved && square != Some(drag.from) {
+            drag.left = true;
+        }
         cx.notify();
+    }
+
+    /// The pointer over the board: a square a selected piece could go to fills under it.
+    pub(super) fn hover_at(&mut self, position: Option<Point<Pixels>>, cx: &mut Context<Self>) {
+        let square = position.and_then(|position| self.square_at(position));
+        if square != self.hover {
+            self.hover = square;
+            if self.selected.is_some() || self.selected_drop.is_some() {
+                cx.notify();
+            }
+        }
     }
 
     /// The editor's press: put a piece down or take it off, or pick one up to move it.
@@ -241,6 +296,7 @@ impl ChessBoard {
                         start: position,
                         moved: false,
                         again: false,
+                        left: false,
                     });
                 }
             }
@@ -270,6 +326,10 @@ impl ChessBoard {
     }
 
     pub(super) fn release(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        // A Shift-drag of the left button draws.
+        if self.drawing.is_some() {
+            return self.finish_drawing(position, cx);
+        }
         let Some(drag) = self.drag.take() else {
             return;
         };
@@ -293,38 +353,42 @@ impl ChessBoard {
             cx.notify();
             return;
         }
-        // The moves of a quick drag may all have come before the board was listening.
-        if drag.moved || far(drag.start, position) {
-            match target {
-                Some(to) if self.reaches(drag.from, to) => {
-                    self.selected = None;
-                    self.play(drag.from, to, cx);
-                }
-                Some(to) if to != drag.from && self.premoves_to(drag.from, to) => {
-                    self.selected = None;
-                    self.queued = Some((drag.from, to));
-                }
-                // Dropped back on its square: still selected, as Chessground keeps it.
-                Some(to) if to == drag.from => {}
-                _ => self.selected = None,
+        // As Chessground's `end`: a premove waiting goes, and a drag that left its square moves
+        // there, premoves there or lets go. The moves of a quick drag may all have come before
+        // the board was listening.
+        self.queued = None;
+        let started = drag.moved || far(drag.start, position);
+        if let Some(to) = target
+            && started
+            && to != drag.from
+        {
+            self.selected = None;
+            if self.reaches(drag.from, to) {
+                self.dragged = true;
+                self.play_move(drag.from, to, false, false, cx);
+            } else if self.premoves_to(drag.from, to) {
+                self.dragged = true;
+                self.queued = Some((drag.from, to));
             }
-        } else if target == Some(drag.from) && self.selected == Some(drag.from) && drag.again {
+        }
+        // Let go of a piece pressed again, or dragged away and back or off the board.
+        if (drag.again || drag.left) && (target == Some(drag.from) || target.is_none()) {
             self.selected = None;
         }
         cx.notify();
     }
 
-    /// Play a move the player made; a pawn reaching the last rank asks which piece it becomes.
-    fn play(&mut self, from: Square, to: Square, cx: &mut Context<Self>) {
-        self.play_move(from, to, false, cx);
-    }
-
-    /// Play a move; a premove's promotion becomes a queen when Settings say so for premoves.
+    /// Play a move the player made: it lands at once (the rook too when castling, and a pawn
+    /// taken en passant goes) and the turn passes, as Chessground's own turn does until the
+    /// page's next position confirms or undoes it. A clicked move or a premove slides; a dragged
+    /// one is already there. A pawn reaching the last rank becomes a queen when Settings say
+    /// so, or asks which piece.
     pub(super) fn play_move(
         &mut self,
         from: Square,
         to: Square,
         premove: bool,
+        slide: bool,
         cx: &mut Context<Self>,
     ) {
         let promotes = self.pieces.piece_at(from).is_some_and(|piece| {
@@ -333,19 +397,49 @@ impl ChessBoard {
         if promotes {
             let mode = crate::settings::frontend(cx).promotion;
             if mode == PromotionMode::Queen || (premove && mode == PromotionMode::Premove) {
+                self.land(from, to, Some(Role::Queen), slide, cx);
                 cx.emit(BoardEvent::Move(format!("{from}{to}q")));
             } else {
                 self.promotion = Some((from, to));
                 self.promotion_choice = 0;
             }
         } else {
-            // The piece lands at once; the page's next position confirms or undoes it.
-            if let Some(piece) = self.pieces.remove_piece_at(from) {
-                self.pieces.set_piece_at(to, piece);
-            }
+            self.land(from, to, None, slide, cx);
             cx.emit(BoardEvent::Move(format!("{from}{to}")));
         }
         cx.notify();
+    }
+
+    /// Put the player's move on the board and pass the turn.
+    fn land(
+        &mut self,
+        from: Square,
+        to: Square,
+        promotion: Option<Role>,
+        slide: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let mut next = self.pieces.clone();
+        apply_move(&mut next, from, to, promotion);
+        if slide {
+            self.animate(&next, self.state.orientation, cx);
+        } else {
+            self.animation = None;
+        }
+        self.pieces = next;
+        self.moved(from, to);
+    }
+
+    /// The turn passes after the player's move (Chessground's `baseUserMove`): the move is the
+    /// last one, no king is in check and nothing moves until the page's next position, though a
+    /// premove can be queued at once.
+    pub(super) fn moved(&mut self, from: Square, to: Square) {
+        self.state.last_move = Some((from, to));
+        self.state.check = None;
+        self.state.badge = None;
+        self.state.movable = None;
+        self.state.dests.clear();
+        self.state.drops.clear();
     }
 
     pub(super) fn promote(&mut self, role: Role, cx: &mut Context<Self>) {
@@ -451,7 +545,10 @@ impl ChessBoard {
         let press = self.press_key(square);
         match press {
             Press::Drop(role) => self.drop_piece(role, square, cx),
-            Press::Play(from) => self.play(from, square, cx),
+            Press::Play(from) => {
+                self.dragged = false;
+                self.play_move(from, square, false, true, cx);
+            }
             Press::Pick { .. } | Press::Queued | Press::Clear => {}
         }
         cx.notify();
@@ -462,8 +559,12 @@ impl ChessBoard {
     /// selected piece lets go of it, as a click's release does.
     pub(super) fn press_key(&mut self, square: Square) -> Press {
         let press = self.decide(square);
-        if let Press::Pick { again: true, .. } = press {
-            self.selected = None;
+        // A piece picked up ends a premove waiting, as a release does.
+        if let Press::Pick { again, .. } = press {
+            self.queued = None;
+            if again {
+                self.selected = None;
+            }
         }
         press
     }
@@ -601,10 +702,17 @@ mod drawing_tests {
             alt: true,
             ..Modifiers::default()
         };
-        assert_eq!(drawing_brush(&none), "green");
-        assert_eq!(drawing_brush(&shift), "red");
-        assert_eq!(drawing_brush(&alt), "blue");
-        assert_eq!(drawing_brush(&both), "yellow");
+        for (modifiers, right, brush) in [
+            (&none, true, "green"),
+            (&shift, true, "red"),
+            (&alt, true, "blue"),
+            (&both, true, "yellow"),
+            // A Shift-drag of the left button draws, but never in red.
+            (&shift, false, "green"),
+            (&both, false, "blue"),
+        ] {
+            assert_eq!(drawing_brush(modifiers, right), brush, "{modifiers:?} {right}");
+        }
     }
 
     #[test]
@@ -621,5 +729,183 @@ mod drawing_tests {
         assert_eq!(shapes, [arrow("red")]);
         toggle_shape(&mut shapes, arrow("red"));
         assert!(shapes.is_empty());
+    }
+}
+
+/// The pointer on the board, as Chessground's `drag.ts` and `board.ts` answer it.
+#[cfg(test)]
+mod pointer_tests {
+    use super::super::{BoardEvent, BoardState, ChessBoard, apply_move, board_of};
+    use gpui_kit::{
+        AppContext as _, Bounds, Entity, MouseDownEvent, Point, TestAppContext, point, px, size,
+    };
+    use shakmaty::{Color, Square};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    /// A board 800 px across, White to move and to premove, and the moves it sends.
+    fn board(cx: &mut TestAppContext, fen: &str) -> (Entity<ChessBoard>, Rc<RefCell<Vec<String>>>) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            kchess_app::settings::init_for_tests(cx);
+        });
+        let board = cx.new(|_| {
+            let position =
+                kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, fen)
+                    .expect("a position");
+            let mut state = BoardState::of(&position, Color::White, Some(Color::White), None);
+            state.premove = Some(Color::White);
+            let board = ChessBoard::new(state);
+            board
+                .bounds
+                .set(Bounds::new(Point::default(), size(px(800.), px(800.))));
+            board
+        });
+        let moves = Rc::new(RefCell::new(Vec::new()));
+        let sent = moves.clone();
+        cx.update(|cx| {
+            cx.subscribe(&board, move |_, event, _| {
+                if let BoardEvent::Move(uci) = event {
+                    sent.borrow_mut().push(uci.clone());
+                }
+            })
+            .detach();
+        });
+        (board, moves)
+    }
+
+    fn at(square: Square) -> Point<gpui_kit::Pixels> {
+        let (file, rank) = (u32::from(square.file()), u32::from(square.rank()));
+        point(px(file as f32 * 100. + 50.), px((7 - rank) as f32 * 100. + 50.))
+    }
+
+    fn press(board: &Entity<ChessBoard>, square: Square, cx: &mut TestAppContext) {
+        board.update(cx, |board, cx| {
+            let event = MouseDownEvent {
+                position: at(square),
+                click_count: 1,
+                ..MouseDownEvent::default()
+            };
+            board.press(&event, cx);
+        });
+    }
+
+    fn drag_to(board: &Entity<ChessBoard>, squares: &[Square], cx: &mut TestAppContext) {
+        board.update(cx, |board, cx| {
+            for square in squares {
+                board.pointer_moved(at(*square), cx);
+            }
+        });
+    }
+
+    fn release(board: &Entity<ChessBoard>, square: Square, cx: &mut TestAppContext) {
+        board.update(cx, |board, cx| board.release(at(square), cx));
+    }
+
+    fn click(board: &Entity<ChessBoard>, square: Square, cx: &mut TestAppContext) {
+        press(board, square, cx);
+        release(board, square, cx);
+    }
+
+    /// A clicked move slid in from its square and a dragged one landed where it was let go
+    /// (`anim` wraps only `selectSquare`); the piece pressed next lifts at once only after a
+    /// drag (`autoDistance && stats.dragged`).
+    #[gpui_kit::test]
+    fn a_clicked_move_slides_and_a_dragged_one_lands(cx: &mut TestAppContext) {
+        let (clicked, moves) = board(cx, START);
+        click(&clicked, Square::E2, cx);
+        click(&clicked, Square::E4, cx);
+        assert_eq!(*moves.borrow(), ["e2e4"]);
+        clicked.update(cx, |board, _| {
+            assert!(board.animation.is_some(), "a clicked move slides");
+            assert!(!board.dragged);
+        });
+        let (dragged, moves) = board(cx, START);
+        press(&dragged, Square::E2, cx);
+        drag_to(&dragged, &[Square::E3, Square::E4], cx);
+        release(&dragged, Square::E4, cx);
+        assert_eq!(*moves.borrow(), ["e2e4"]);
+        dragged.update(cx, |board, _| {
+            assert!(board.animation.is_none(), "a dragged move is already there");
+            assert!(board.dragged);
+        });
+        press(&dragged, Square::G1, cx);
+        dragged.update(cx, |board, _| {
+            assert!(board.drag.as_ref().is_some_and(|drag| drag.moved), "lifted at once");
+        });
+    }
+
+    /// The move played, the turn passed at once (`baseUserMove`): nothing more moves, and a
+    /// premove can be queued before the page has answered.
+    #[gpui_kit::test]
+    fn the_turn_passes_with_the_move_so_a_premove_can_follow(cx: &mut TestAppContext) {
+        let (board, moves) = board(cx, START);
+        click(&board, Square::E2, cx);
+        click(&board, Square::E4, cx);
+        click(&board, Square::G1, cx);
+        click(&board, Square::F3, cx);
+        assert_eq!(*moves.borrow(), ["e2e4"], "the knight's move waits for its turn");
+        board.update(cx, |board, _| {
+            assert_eq!(board.state.movable, None);
+            assert_eq!(board.queued, Some((Square::G1, Square::F3)));
+        });
+    }
+
+    /// A premove waiting went once another piece was picked up and let go (`drag.end`
+    /// `unsetPremove`), and the piece stayed selected.
+    #[gpui_kit::test]
+    fn picking_up_another_piece_takes_back_the_premove(cx: &mut TestAppContext) {
+        let (board, _) = board(cx, START);
+        click(&board, Square::E2, cx);
+        click(&board, Square::E4, cx);
+        click(&board, Square::G1, cx);
+        click(&board, Square::F3, cx);
+        click(&board, Square::B1, cx);
+        board.update(cx, |board, _| {
+            assert_eq!(board.queued, None);
+            assert_eq!(board.selected, Some(Square::B1));
+        });
+    }
+
+    /// A piece dragged off its square and back is let go of (`keyHasChanged`); one only
+    /// pressed stays selected, and pressed again lets go.
+    #[gpui_kit::test]
+    fn a_piece_dragged_away_and_back_is_let_go(cx: &mut TestAppContext) {
+        let (board, moves) = board(cx, START);
+        press(&board, Square::E2, cx);
+        drag_to(&board, &[Square::E3, Square::E2], cx);
+        release(&board, Square::E2, cx);
+        board.update(cx, |board, _| assert_eq!(board.selected, None));
+        click(&board, Square::E2, cx);
+        board.update(cx, |board, _| assert_eq!(board.selected, Some(Square::E2)));
+        click(&board, Square::E2, cx);
+        board.update(cx, |board, _| assert_eq!(board.selected, None));
+        assert!(moves.borrow().is_empty());
+    }
+
+    /// Castling put the rook beside the king, the king dragged onto its rook castled too, and a
+    /// pawn taken en passant left the board, all before the page's next position.
+    #[test]
+    fn castling_and_en_passant_move_both_pieces_at_once() {
+        let castles = "4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1";
+        for (to, king, rook, empty) in [
+            (Square::G1, Square::G1, Square::F1, Square::H1),
+            (Square::H1, Square::G1, Square::F1, Square::H1),
+            (Square::C1, Square::C1, Square::D1, Square::A1),
+            (Square::A1, Square::C1, Square::D1, Square::A1),
+        ] {
+            let mut pieces = board_of(castles);
+            apply_move(&mut pieces, Square::E1, to, None);
+            assert_eq!(pieces.piece_at(king).map(|p| p.role), Some(shakmaty::Role::King), "{to}");
+            assert_eq!(pieces.piece_at(rook).map(|p| p.role), Some(shakmaty::Role::Rook), "{to}");
+            assert_eq!(pieces.piece_at(empty), None, "{to}");
+            assert_eq!(pieces.piece_at(Square::E1), None, "{to}");
+        }
+        let mut pieces = board_of("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1");
+        apply_move(&mut pieces, Square::E5, Square::D6, None);
+        assert_eq!(pieces.piece_at(Square::D5), None);
+        assert!(pieces.piece_at(Square::D6).is_some());
     }
 }

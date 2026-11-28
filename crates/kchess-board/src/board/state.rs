@@ -160,7 +160,8 @@ pub struct BoardState {
     pub edit: Option<EditTool>,
     /// A review's label on the move just played.
     pub badge: Option<Badge>,
-    /// The side that may queue a move for its next turn while the other side is to move.
+    /// The side that may queue a move for its next turn while the other side is to move, set on
+    /// both turns where premoves are on: the board passes the turn as soon as the player moves.
     pub premove: Option<Color>,
     /// Crazyhouse: the pieces each side holds in hand.
     pub pockets: Option<ByColor<ByRole<u8>>>,

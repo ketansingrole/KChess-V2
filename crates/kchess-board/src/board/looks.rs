@@ -182,7 +182,7 @@ static LOOKS: LazyLock<Looks> = LazyLock::new(|| match serde_json::from_str(LOOK
 /// How long a piece slides for the Settings choice (`animationMs`): `none`, `fast`, `normal`,
 /// `slow`.
 pub fn animation_ms(choice: &str) -> f64 {
-    LOOKS.animation_ms.get(choice).copied().unwrap_or(180.)
+    LOOKS.animation_ms.get(choice).copied().unwrap_or(250.)
 }
 
 /// Every board look, in the order Settings shows them.
