@@ -421,11 +421,30 @@ pub fn replayed_games(
     now: f64,
     tables: Option<&Tablebase<Chess>>,
 ) -> Result<(Option<EndgameReport>, Option<StructureReport>)> {
+    replay(replay_rows(db, query, now)?.as_deref(), tables)
+}
+
+/// A game Insights replays: the player's side, its result for them, the position it was set up
+/// from (none for the usual start) and its moves in SAN.
+pub struct ReplayRow {
+    you: Color,
+    result: String,
+    fen: Option<String>,
+    sans: String,
+}
+
+/// The games `query`'s endgames and structures come from, newest first; none for a variant. Only
+/// these are read from the database: replaying them (`replay`) needs it no longer.
+pub fn replay_rows(
+    db: &Connection,
+    query: &InsightsQuery,
+    now: f64,
+) -> Result<Option<Vec<ReplayRow>>> {
     if query
         .variant
         .is_some_and(|variant| variant != Variant::Standard)
     {
-        return Ok((None, None));
+        return Ok(None);
     }
     let (clauses, params) = clauses(query, "", now)?;
     let where_sql = clauses.join(" AND ");
@@ -436,18 +455,36 @@ pub fn replayed_games(
     );
     let mut statement = db.prepare(&sql).sql()?;
     let mut rows = statement.query(params_from_iter(params.iter())).sql()?;
-    let mut replays = Replays::default();
+    let mut read = Vec::new();
     while let Some(row) = rows.next().sql()? {
         let color: String = row.get(0).sql()?;
-        let sans: String = row.get(1).sql()?;
         let pgn: Option<String> = row.get(2).sql()?;
-        let result: String = row.get(3).sql()?;
-        let you = if color == "white" {
-            Color::White
-        } else {
-            Color::Black
-        };
-        replays.add(you, &result, replayed(pgn.as_deref(), &sans), tables)?;
+        read.push(ReplayRow {
+            you: if color == "white" {
+                Color::White
+            } else {
+                Color::Black
+            },
+            result: row.get(3).sql()?,
+            fen: pgn.as_deref().and_then(setup_fen).map(str::to_string),
+            sans: row.get(1).sql()?,
+        });
+    }
+    Ok(Some(read))
+}
+
+/// The endgames and structures of `rows` (none for a variant), as `tables` decide them.
+pub fn replay(
+    rows: Option<&[ReplayRow]>,
+    tables: Option<&Tablebase<Chess>>,
+) -> Result<(Option<EndgameReport>, Option<StructureReport>)> {
+    let Some(rows) = rows else {
+        return Ok((None, None));
+    };
+    let mut replays = Replays::default();
+    for row in rows {
+        let replayed = replayed(row.fen.as_deref(), &row.sans);
+        replays.add(row.you, &row.result, replayed, tables)?;
     }
     Ok(replays.report(tables.is_some()))
 }
@@ -561,14 +598,16 @@ impl Replays {
     }
 }
 
-/// A synced game's start, its PGN's `FEN` or the usual one, and its moves (`sans`) from there.
-fn replayed(pgn: Option<&str>, sans: &str) -> Option<(Chess, Vec<Move>)> {
-    let fen = pgn.and_then(|pgn| {
-        pgn.lines()
-            .map(str::trim)
-            .take_while(|line| line.starts_with('['))
-            .find_map(|line| line.strip_prefix("[FEN \"")?.strip_suffix("\"]"))
-    });
+/// The FEN a game's PGN was set up from, if its headers give one.
+fn setup_fen(pgn: &str) -> Option<&str> {
+    pgn.lines()
+        .map(str::trim)
+        .take_while(|line| line.starts_with('['))
+        .find_map(|line| line.strip_prefix("[FEN \"")?.strip_suffix("\"]"))
+}
+
+/// A synced game's start, its `fen` or the usual one, and its moves (`sans`) from there.
+fn replayed(fen: Option<&str>, sans: &str) -> Option<(Chess, Vec<Move>)> {
     let mut pos: Chess = match fen {
         Some(fen) => fen
             .parse::<Fen>()

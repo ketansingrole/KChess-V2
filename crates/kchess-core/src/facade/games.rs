@@ -13,7 +13,7 @@ use crate::core::Core;
 use crate::store::games;
 use crate::store::insights;
 use crate::time::now_ms;
-use kchess_contracts::error::Result;
+use kchess_contracts::error::{CoreError, Result};
 
 impl GamesApi for Core {
     async fn sync_games(&self, username: Option<Username>) -> Result<AppData> {
@@ -38,23 +38,45 @@ impl GamesApi for Core {
     async fn insights(&self, query: InsightsQuery) -> Result<InsightsReport> {
         let now = now_ms() as f64;
         let tablebases = self.tablebases.clone();
-        self.database
+        // A filter shown before is answered as it was, until its games or reviews change. Else
+        // its games are read, and replayed for their endgames and structures off the database,
+        // which meanwhile serves every other call.
+        let read = self
+            .database
             .read_async(move |ctx| {
                 let tables = tablebases.tables();
-                // A filter shown before is answered as it was, until its games or reviews change.
                 let key = insights::report_key(ctx.db, &query, tables.as_ref())?;
                 if let Some(report) = ctx.cache.insights(ctx.db, &key, now) {
-                    return Ok(report);
+                    return Ok(Insights::Kept(report));
                 }
-                let mut report = insights::insights(ctx.host, ctx.db, &query, now)?;
-                (report.endgames, report.structures) =
-                    insights::replayed_games(ctx.db, &query, now, tables.as_deref())?;
-                let until = insights::unchanged_until(ctx.db, &query, now)?;
-                ctx.cache
-                    .remember_insights(ctx.db, key, now, until, &report);
-                Ok(report)
+                Ok(Insights::Read(InsightsRead {
+                    stamp: ctx.cache.insights_stamp(ctx.db),
+                    report: insights::insights(ctx.host, ctx.db, &query, now)?,
+                    rows: insights::replay_rows(ctx.db, &query, now)?,
+                    until: insights::unchanged_until(ctx.db, &query, now)?,
+                    key,
+                    tables,
+                }))
             })
-            .await
+            .await?;
+        let mut read = match read {
+            Insights::Read(read) => read,
+            Insights::Kept(report) => return Ok(report),
+        };
+        let (rows, tables) = (read.rows.take(), read.tables.take());
+        (read.report.endgames, read.report.structures) = tokio::task::spawn_blocking(move || {
+            insights::replay(rows.as_deref(), tables.as_deref())
+        })
+        .await
+        .map_err(|cause| CoreError::wrap("Insights replay failed", cause))??;
+        self.database.cache().remember_insights(
+            read.stamp,
+            read.key,
+            now,
+            read.until,
+            &read.report,
+        );
+        Ok(read.report)
     }
 
     async fn game_rating_history(&self, account: GameAccount) -> Result<Vec<RatingSeries>> {
@@ -139,4 +161,21 @@ impl GamesApi for Core {
         self.services.lichess().prime_profiles(&names).await?;
         Ok(data)
     }
+}
+
+/// An Insights report as the database answers it: kept from before, or read with its games to
+/// replay.
+enum Insights {
+    Kept(InsightsReport),
+    Read(InsightsRead),
+}
+
+/// An Insights report read from the database, its games still to replay.
+struct InsightsRead {
+    stamp: crate::store::InsightsStamp,
+    key: String,
+    report: InsightsReport,
+    rows: Option<Vec<insights::ReplayRow>>,
+    until: f64,
+    tables: Option<std::sync::Arc<shakmaty_syzygy::Tablebase<shakmaty::Chess>>>,
 }

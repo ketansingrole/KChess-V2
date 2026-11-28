@@ -66,6 +66,10 @@ struct KeptInsights {
     report: InsightsReport,
 }
 
+/// When an Insights report's games and reviews were read (`StoreCache::insights_stamp`).
+#[derive(Clone, Copy)]
+pub struct InsightsStamp(Stamp);
+
 /// The most Insights reports kept: one for each filter recently shown.
 const INSIGHTS_KEPT: usize = 16;
 
@@ -240,18 +244,24 @@ impl StoreCache {
             .map(|report| report.report.clone())
     }
 
-    /// Keeps `report`, made at `now` for `key`, until `until`.
+    /// What an Insights report read now is made from: given back with it to `remember_insights`,
+    /// so a write made while the report was worked out makes it stale.
+    pub fn insights_stamp(&self, db: &Connection) -> InsightsStamp {
+        InsightsStamp(self.changes.stamp(db, Area::Insights))
+    }
+
+    /// Keeps `report`, read at `stamp` and `now` for `key`, until `until`.
     pub fn remember_insights(
         &self,
-        db: &Connection,
+        stamp: InsightsStamp,
         key: String,
         now: f64,
         until: f64,
         report: &InsightsReport,
     ) {
-        let stamp = self.changes.stamp(db, Area::Insights);
+        let InsightsStamp(stamp) = stamp;
         let mut kept = lock(&self.insights);
-        kept.retain(|report| report.stamp == stamp && report.key != key);
+        kept.retain(|report| report.key != key);
         if kept.len() >= INSIGHTS_KEPT {
             kept.remove(0);
         }
@@ -430,6 +440,11 @@ impl Database {
             }
         }
         result
+    }
+
+    /// The caches, for a read that finishes its work off the lane (`StoreCache::insights_stamp`).
+    pub fn cache(&self) -> &StoreCache {
+        &self.cache
     }
 
     /// Occupies the async execution lane until the permit drops: a test holds the store busy.
@@ -676,8 +691,9 @@ mod tests {
         let keep = || {
             database
                 .read(|ctx| {
+                    let stamp = ctx.cache.insights_stamp(ctx.db);
                     ctx.cache
-                        .remember_insights(ctx.db, "alice".into(), 100.0, 200.0, &report);
+                        .remember_insights(stamp, "alice".into(), 100.0, 200.0, &report);
                     Ok(())
                 })
                 .expect("keep")
