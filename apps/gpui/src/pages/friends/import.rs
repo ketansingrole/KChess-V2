@@ -5,7 +5,7 @@ use super::*;
 /// The players the connected accounts follow on Lichess, to add.
 pub struct ImportDialog {
     /// The scroll of the list inside it, kept to the list (`widgets::nested_scroll`).
-    list_scroll: ScrollHandle,
+    list_scroll: widgets::NestedScroll,
     report: Option<FollowingReport>,
     loading: Loading,
     selected: HashSet<String>,
@@ -23,7 +23,7 @@ impl ImportDialog {
             }
         })];
         let mut dialog = ImportDialog {
-            list_scroll: ScrollHandle::new(),
+            list_scroll: widgets::NestedScroll::new(),
             report: None,
             loading: Loading::default(),
             selected: HashSet::new(),

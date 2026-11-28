@@ -624,13 +624,35 @@ impl Harness {
 
     /// Turn the wheel at a point of the window by `delta` (negative scrolls down).
     pub fn scroll_point(&mut self, position: Point<Pixels>, delta: Pixels) {
+        self.scroll_phase(position, delta, gpui_kit::TouchPhase::Moved);
+    }
+
+    /// A trackpad swipe as macOS sends it, a second after the last: the finger down at `start`,
+    /// then a move by each of `deltas` at `over`, where the pointer has gone.
+    pub fn swipe(&mut self, start: Point<Pixels>, over: Point<Pixels>, deltas: &[Pixels]) {
+        use gpui_kit::{TouchPhase, px};
+        self.cx
+            .executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        self.scroll_phase(start, px(0.), TouchPhase::Started);
+        for &delta in deltas {
+            self.scroll_phase(over, delta, TouchPhase::Moved);
+        }
+    }
+
+    fn scroll_phase(
+        &mut self,
+        position: Point<Pixels>,
+        delta: Pixels,
+        phase: gpui_kit::TouchPhase,
+    ) {
         self.with_window(|window, cx| {
-            use gpui_kit::{ScrollDelta, ScrollEvent, TouchPhase, point, px};
+            use gpui_kit::{ScrollDelta, ScrollEvent, point, px};
             let event = ScrollEvent {
                 position,
                 delta: ScrollDelta::Pixels(point(px(0.), delta)),
                 modifiers: Modifiers::default(),
-                touch_phase: TouchPhase::Moved,
+                touch_phase: phase,
                 source: Default::default(),
             }
             .to_platform_input();

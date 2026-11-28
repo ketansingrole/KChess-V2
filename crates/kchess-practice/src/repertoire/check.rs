@@ -180,7 +180,7 @@ pub fn open(steps: Vec<Step>, target: Target, window: &mut Window, cx: &mut App)
 
 pub struct RepertoireCheck {
     /// The scroll of the list inside it, kept to the list (`widgets::nested_scroll`).
-    list_scroll: ScrollHandle,
+    list_scroll: widgets::NestedScroll,
     steps: Vec<Step>,
     target: Target,
     checks: Option<Vec<GameDbRepertoireCheck>>,
@@ -206,7 +206,7 @@ impl RepertoireCheck {
             })
             .collect();
         let mut this = RepertoireCheck {
-            list_scroll: ScrollHandle::new(),
+            list_scroll: widgets::NestedScroll::new(),
             steps,
             target,
             checks: None,

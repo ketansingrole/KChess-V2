@@ -1477,27 +1477,62 @@ fn the_database_games_scroll_without_the_page(cx: &mut gpui_kit::TestAppContext)
     }
 
     let list = app.find("guess-db-games").bounds();
-    let card = app.find("guess-databases").bounds();
-    // A row that stays in the list as it scrolls.
-    let first = app.find(("guess-db-game", 4usize)).bounds();
-    app.scroll_point(list.center(), gpui_kit::px(-60.));
-    let scrolled = app.find(("guess-db-game", 4usize)).bounds();
+    let over = list.center();
+    let page = |app: &mut Harness| app.find("guess-databases").bounds();
+    // The last game's place in the card, which moves only when the games scroll.
+    let last = |app: &mut Harness| {
+        let card = page(app);
+        app.with_window(|window, _| {
+            use gpui_kit::test::TestWindowExt as _;
+            window
+                .try_find(("guess-db-game", 11usize))
+                .map(|row| row.bounds().top() - card.top())
+        })
+    };
+
+    // A swipe over the games scrolls them, and not the page.
+    let before = page(&mut app);
+    let row = app.find(("guess-db-game", 4usize)).bounds();
+    app.swipe(over, over, &[gpui_kit::px(-30.), gpui_kit::px(-30.)]);
     assert!(
-        scrolled.top() < first.top(),
-        "the games scroll: {first:?} then {scrolled:?}"
+        app.find(("guess-db-game", 4usize)).bounds().top() < row.top(),
+        "the games scroll"
     );
     assert_eq!(
-        app.find("guess-databases").bounds(),
-        card,
+        page(&mut app),
+        before,
         "the page holds still while the games scroll"
     );
-    // To the list's end, and then the page moves.
-    app.scroll_point(list.center(), gpui_kit::px(-2000.));
-    let card = app.find("guess-databases").bounds();
-    app.scroll_point(list.center(), gpui_kit::px(-60.));
+
+    // A swipe past their end stops there, its momentum too: the page holds still.
+    app.swipe(over, over, &[gpui_kit::px(-2000.), gpui_kit::px(-60.)]);
+    assert_eq!(
+        page(&mut app),
+        before,
+        "the page holds still past the games' end"
+    );
+
+    // The next swipe, begun with the games at their end, scrolls the page.
+    app.swipe(over, over, &[gpui_kit::px(-60.)]);
+    let moved = page(&mut app);
     assert!(
-        app.find("guess-databases").bounds().top() < card.top(),
-        "at the list's end the page scrolls"
+        moved.top() < before.top(),
+        "begun at the games' end, a swipe scrolls the page"
+    );
+
+    // A swipe begun on the page keeps the page as the games pass under the pointer, and leaves
+    // the games where they were.
+    let held = last(&mut app);
+    let above = gpui_kit::point(over.x, moved.top() - gpui_kit::px(20.));
+    app.swipe(above, over, &[gpui_kit::px(40.), gpui_kit::px(40.)]);
+    assert!(
+        page(&mut app).top() > moved.top(),
+        "the page scrolls back up"
+    );
+    assert_eq!(
+        last(&mut app),
+        held,
+        "the games stay as the page's swipe passes over them"
     );
 }
 

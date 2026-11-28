@@ -88,7 +88,7 @@ pub fn open(
 
 pub struct YourGamesCheck {
     /// The scroll of the list inside it, kept to the list (`widgets::nested_scroll`).
-    list_scroll: ScrollHandle,
+    list_scroll: widgets::NestedScroll,
     steps: Vec<Step>,
     target: Target,
     color: Color,
@@ -129,7 +129,7 @@ impl YourGamesCheck {
             }
         };
         let mut this = YourGamesCheck {
-            list_scroll: ScrollHandle::new(),
+            list_scroll: widgets::NestedScroll::new(),
             steps,
             target,
             color,

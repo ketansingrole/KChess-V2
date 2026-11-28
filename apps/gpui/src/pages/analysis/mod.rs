@@ -1177,25 +1177,35 @@ impl AnalysisPage {
             Some(position.turn()),
             last_move,
         );
-        // The review's label on the move just played; without one, checkmate's "#", then the
-        // game's novelty.
+        // The glyph you gave the move just played; without one, the review's label on it, then
+        // checkmate's "#", then the game's novelty.
+        let dark = cx.global::<Palette>().dark;
+        let own = move_glyph(node)
+            .and_then(|(glyph, _)| review::glyph_look(&glyph, dark))
+            .zip(last_move)
+            .map(|((glyph, color), (_, to))| Badge {
+                square: to,
+                glyph,
+                color,
+            });
         let marks = self.review_marks(cx);
         let mate = state.badge.take();
         let novelty = self.novelty_badge(last_move);
-        state.badge = marks
-            .get(&self.path)
-            .and_then(|mark| mark.classification)
-            .zip(last_move)
-            .map(|(classification, (_, to))| {
-                let (_, glyph, color) = review::classification_look(
-                    classification.as_str(),
-                    cx.global::<Palette>().dark,
-                );
-                Badge {
-                    square: to,
-                    glyph,
-                    color,
-                }
+        state.badge = own
+            .or_else(|| {
+                marks
+                    .get(&self.path)
+                    .and_then(|mark| mark.classification)
+                    .zip(last_move)
+                    .map(|(classification, (_, to))| {
+                        let (_, glyph, color) =
+                            review::classification_look(classification.as_str(), dark);
+                        Badge {
+                            square: to,
+                            glyph,
+                            color,
+                        }
+                    })
             })
             .or(mate)
             .or(novelty);

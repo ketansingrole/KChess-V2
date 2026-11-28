@@ -30,6 +30,25 @@ pub fn classification_look(classification: &str, dark: bool) -> (&'static str, &
     }
 }
 
+/// A move glyph you gave a move, as the board's badge shows it: the glyph and its colour, the
+/// review's for the glyphs a review also gives, green for "!" and Lichess's pink for "!?". `None`
+/// for any other glyph.
+pub fn glyph_look(glyph: &str, dark: bool) -> Option<(&'static str, Hsla)> {
+    let review = |classification: &str| {
+        let (_, glyph, color) = classification_look(classification, dark);
+        (glyph, color)
+    };
+    Some(match glyph {
+        "!!" => review("brilliant"),
+        "!" => ("!", rgb(0x22ac38).into()),
+        "!?" => ("!?", rgb(0xea45d8).into()),
+        "?!" => review("inaccuracy"),
+        "?" => review("mistake"),
+        "??" => review("blunder"),
+        _ => return None,
+    })
+}
+
 /// How a game opens on the board.
 #[derive(Clone, Default)]
 pub struct Opening {

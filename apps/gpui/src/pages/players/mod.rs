@@ -109,7 +109,7 @@ fn follow(name: String, window: &mut Window, cx: &mut App) {
 
 pub struct PlayersPage {
     /// The scroll of the list inside it, kept to the list (`widgets::nested_scroll`).
-    list_scroll: ScrollHandle,
+    list_scroll: widgets::NestedScroll,
     input: Entity<InputState>,
     profile: Option<LichessUser>,
     /// `UserPresence`, once known.
@@ -242,7 +242,7 @@ impl PlayersPage {
             }),
         ];
         PlayersPage {
-            list_scroll: ScrollHandle::new(),
+            list_scroll: widgets::NestedScroll::new(),
             input,
             profile: None,
             status: None,
