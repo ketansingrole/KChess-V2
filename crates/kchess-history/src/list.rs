@@ -11,19 +11,23 @@ pub(super) fn source_tabs(
 ) -> impl IntoElement {
     let connected = !crate::accounts::handle(cx).read(cx).connected().is_empty();
     let mut sources = vec![Source::Computer, Source::Board, Source::Lichess];
-    let mut labels: Vec<(Option<Icon>, SharedString)> = vec![
-        (None, "Computer".into()),
-        (None, "Over the board".into()),
-        (None, "Online".into()),
-    ];
+    let mut labels = vec!["Computer", "Over the board", "Online"];
     if connected {
         sources.push(Source::Bookmarks);
-        labels.push((None, "Bookmarks".into()));
+        labels.push("Bookmarks");
     }
     let page = cx.entity().downgrade();
-    widgets::pill_tabs(
+    widgets::header_pills(
         "history-source",
-        labels,
+        labels
+            .into_iter()
+            .map(|label| widgets::Pill {
+                icon: None,
+                label: SharedString::new_static(label),
+                badge: None,
+                disabled: false,
+            })
+            .collect(),
         sources.iter().position(|item| *item == source).unwrap_or(0),
         move |index, _, cx| {
             page.update(cx, |page, cx| page.choose_source(sources[index], cx))

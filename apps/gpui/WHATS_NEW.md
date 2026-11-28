@@ -28,6 +28,7 @@ The board editor sets up well-known openings and endgames in one click, and Gues
 - Searching for a player on Players, Following, Guess the move and the database's player download lists matching Lichess players under the field as you type; pick one with the arrows or the pointer. Players has a way back to the leaderboard.
 - On the Books page, your books end with a card to open another, an open book has a way back to them, and its page buttons float at the foot of its pages. The diagram buttons sit under the board.
 - Filters, search fields and buttons that share a row are the same height.
+- The tabs on Game history, Over the board, Studies and Openings are only as wide as their names, so they sit together instead of stretching across the page.
 - The board editor speaks up only when the position is not legal yet.
 - Over the board leaves whose turn it is to the board, and speaks up for a check or a paused clock.
 - Insights looks like the rest of KChess: its figures and breakdowns sit in cards, and its filters match the other pages.

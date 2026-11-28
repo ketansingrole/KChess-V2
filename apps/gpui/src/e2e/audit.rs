@@ -315,6 +315,30 @@ fn describe(control: &ElementSnapshot) -> String {
     }
 }
 
+/// A page's own tabs are as wide as their labels, at the page's start: stretched across a wide
+/// window, Game history's three tabs were 320 px each, their labels far apart.
+#[gpui_kit::test]
+fn a_pages_tabs_are_as_wide_as_their_labels(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let (width, height) = SIZES[SIZES.len() - 1];
+    app.cx
+        .simulate_window_resize(app.window, size(px(width), px(height)));
+    for (page, bar) in [
+        ("Game history", "history-source"),
+        ("Over the board", "local-mode"),
+        ("Openings", "openings-group"),
+    ] {
+        app.open(page);
+        app.settle();
+        let bounds = app.find(bar).bounds();
+        assert!(
+            bounds.size.width < px(width / 2.),
+            "{page}'s {bar} is {:?} wide in a {width} px window",
+            bounds.size.width
+        );
+    }
+}
+
 /// The board editor's settings scroll under its actions, which stay inside the panel at every size
 /// (they were cut off at its foot in a laptop-sized window).
 #[gpui_kit::test]

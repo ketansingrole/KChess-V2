@@ -346,7 +346,7 @@ impl OpeningsPage {
             v_flex()
                 .child(section("All openings"))
                 .child(
-                    div().mb(px(12.)).child(widgets::pills(
+                    div().mb(px(12.)).child(widgets::header_pills(
                         "openings-group",
                         GROUPS
                             .iter()
@@ -365,7 +365,6 @@ impl OpeningsPage {
                             crate::prefs::set(cx, GROUP, GROUPS[index].0);
                             window.refresh();
                         },
-                        false,
                         palette,
                     )),
                 )

@@ -89,7 +89,9 @@ pub fn pills(
     )
 }
 
-/// A page header's tabs: full-size pills, only as wide as their labels.
+/// A page header's tabs: full-size pills, only as wide as their labels, at the start of the
+/// row. In a row of their own: a column or a block stretches its child to its width, and Game
+/// history's tabs were 995 px wide in a 1320 px window.
 pub fn header_pills(
     id: &'static str,
     tabs: Vec<Pill>,
@@ -97,7 +99,7 @@ pub fn header_pills(
     choose: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
     palette: &Palette,
 ) -> impl IntoElement {
-    pill_row(
+    h_flex().child(pill_row(
         id,
         tabs,
         selected,
@@ -109,7 +111,7 @@ pub fn header_pills(
             segments: false,
         },
         palette,
-    )
+    ))
 }
 
 /// Full-width pills that take another row when they do not fit on one, each row's pills
