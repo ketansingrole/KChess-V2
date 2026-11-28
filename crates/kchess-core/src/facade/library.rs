@@ -130,15 +130,18 @@ impl LibraryApi for Core {
             .await
     }
 
-    async fn repertoire_misses(&self) -> Result<RepertoireMisses> {
+    async fn practice_library(&self) -> Result<Library> {
         self.database
-            .read_async(|ctx| library_import::read_misses(ctx.host, ctx.db))
-            .await
-    }
-
-    async fn repertoire_schedule(&self) -> Result<RepertoireSchedule> {
-        self.database
-            .read_async(|ctx| library_import::read_schedule_lines(ctx.host, ctx.db))
+            .read_async(|ctx| {
+                library::with_library(ctx, |library| Library {
+                    studies: library.studies.clone(),
+                    mistakes: library.mistakes.clone(),
+                    repertoire_misses: library.repertoire_misses.clone(),
+                    repertoire_schedule: library.repertoire_schedule.clone(),
+                    study_error: library.study_error.clone(),
+                    ..Library::default()
+                })
+            })
             .await
     }
 

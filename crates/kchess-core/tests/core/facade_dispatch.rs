@@ -5,7 +5,7 @@ use kchess_core::{Config, Core};
 use serde_json::{Value, json};
 
 /// A page reads what it shows alone (its session, the drills, the played games, the studies, the
-/// repertoires' misses and schedule): through the facade each answers what the whole library holds
+/// library practice reads): through the facade each answers what the whole library holds
 /// for it, and a kind no session has is refused.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_session_and_each_part_of_the_library_are_read_alone() {
@@ -50,8 +50,6 @@ async fn a_session_and_each_part_of_the_library_are_read_alone() {
         ("mistakes", "mistakes"),
         ("playedGames", "games"),
         ("studies", "studies"),
-        ("repertoireMisses", "repertoireMisses"),
-        ("repertoireSchedule", "repertoireSchedule"),
     ] {
         assert_eq!(
             core.call(method, vec![]).await.expect(method),
@@ -61,6 +59,17 @@ async fn a_session_and_each_part_of_the_library_are_read_alone() {
     }
     assert_eq!(library["games"].as_array().map(Vec::len), Some(1));
     assert_eq!(library["studies"].as_array().map(Vec::len), Some(1));
+    // Practice reads the library but its played games, sessions and tournaments in one read.
+    let mut practice = library.clone();
+    practice["games"] = json!([]);
+    practice["sessions"] = json!({});
+    practice["joinedTournaments"] = json!([]);
+    assert_eq!(
+        core.call("practiceLibrary", vec![])
+            .await
+            .expect("practice"),
+        practice
+    );
     core.close().await;
 }
 

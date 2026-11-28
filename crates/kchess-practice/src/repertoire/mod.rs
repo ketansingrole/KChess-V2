@@ -282,16 +282,12 @@ impl Repertoire {
 
     /// The missed moves, as the core keeps them.
     fn load_misses(&mut self, cx: &mut Context<Self>) {
-        let core = cx.global::<AppCore>();
-        let (misses, schedule) = (
-            core.request(calls::RepertoireMisses {}),
-            core.request(calls::RepertoireSchedule {}),
-        );
-        cx.spawn(async move |this, cx| match (misses.await, schedule.await) {
-            (Ok(misses), Ok(schedule)) => {
+        let library = cx.global::<AppCore>().request(calls::PracticeLibrary {});
+        cx.spawn(async move |this, cx| match library.await {
+            Ok(library) => {
                 this.update(cx, |this, cx| {
-                    this.misses = misses;
-                    this.schedule = schedule;
+                    this.misses = library.repertoire_misses;
+                    this.schedule = library.repertoire_schedule;
                     // A due line comes first, also when the schedule arrived after the first line.
                     if this.target.is_none()
                         && this.correct + this.wrong == 0
@@ -303,7 +299,7 @@ impl Repertoire {
                 })
                 .ok();
             }
-            (Err(cause), _) | (_, Err(cause)) => crate::log::write(
+            Err(cause) => crate::log::write(
                 Level::Warn,
                 "repertoire",
                 &format!("Reading the missed moves failed: {}", cause.message),
