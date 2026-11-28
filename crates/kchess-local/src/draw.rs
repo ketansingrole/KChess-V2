@@ -186,11 +186,11 @@ impl LocalPage {
         };
         let narrow = widgets::is_narrow(self.layout.panel_width(board_size, max_width, window));
         let moves = self.moves();
-        let sans = view::sans(self.setup(), &moves);
+        let sans = self.game.board().sans();
         let shown = self.shown_ply();
         let over = self.game.over();
         let result = self.game.result();
-        let display = view::position_at(self.setup(), &moves, shown);
+        let display = view::board_position_at(self.game.board(), shown);
         let frontend = crate::settings::frontend(cx).clone();
         let (timed, paused) = (self.game.timed(), self.game.paused());
         let variant_label = crate::game::setup_label(self.setup());
@@ -324,7 +324,7 @@ impl LocalPage {
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
                 "local-moves",
                 widgets::MoveSheet {
-                    sans: &sans,
+                    sans,
                     shown,
                     first: view::first_move(self.setup()),
                 },

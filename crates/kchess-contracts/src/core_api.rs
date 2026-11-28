@@ -590,6 +590,13 @@ core_api! {
         Session = "session" fn session(kind: SessionKind) -> Option<SessionDocument>;
         /// The mistake drills; the library's `mistakes` alone.
         Mistakes = "mistakes" fn mistakes() -> Vec<Drill>;
+        /// The played games, the most recent first; the library's `games` alone.
+        PlayedGames = "playedGames" fn played_games() -> Vec<crate::types::PlayedGame>;
+        /// The saved studies; the library's `studies` alone.
+        Studies = "studies" fn studies() -> Vec<crate::types::Study>;
+        /// The library without its played games, sessions or tournaments, all read at once: the
+        /// studies, mistake drills and repertoire notes that practice and Home show together.
+        PracticeLibrary = "practiceLibrary" fn practice_library() -> crate::types::Library;
         /// Answers every repertoire's missed positions.
         #[writes(Repertoire)]
         RecordRepertoireMiss = "recordRepertoireMiss" fn record_repertoire_miss(

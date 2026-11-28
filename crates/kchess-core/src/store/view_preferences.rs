@@ -11,7 +11,7 @@ use kchess_contracts::error::{CoreError, Result};
 use kchess_domain::js::utf16_len;
 
 /// The document holding every preference, as `{ key: value }`.
-const VIEW_PREFERENCES: &str = "view:preferences";
+pub(crate) const VIEW_PREFERENCES: &str = "view:preferences";
 /// One preference's largest JSON text: lists of recent items stay well below it.
 const MAX_VALUE: usize = 16 * 1024;
 /// The most keys kept; the app names fewer than a hundred.

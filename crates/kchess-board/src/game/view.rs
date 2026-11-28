@@ -1,6 +1,7 @@
 //! What the game pages show of a game: the position at a move, the moves in SAN, the last move,
 //! a typed move and the board's state, from a setup and its UCI moves.
 
+use kchess_domain::games::Board;
 use kchess_domain::variant::Setup;
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Chess, Color, Position as _, Square};
@@ -15,6 +16,16 @@ pub fn position_at(setup: &Setup, moves: &[String], ply: usize) -> Option<Varian
         &moves[..ply.min(moves.len())],
     )?;
     kchess_domain::rules::setup_start(setup.variant, &replay.fen)
+}
+
+/// The position after the first `ply` moves of `board`: the board's own from the latest move on,
+/// so drawing the game as it stands replays nothing.
+pub fn board_position_at(board: &Board, ply: usize) -> Option<VariantPosition> {
+    if ply >= board.moves().len() {
+        Some(board.position().clone())
+    } else {
+        position_at(board.setup(), board.moves(), ply)
+    }
 }
 
 /// Each move in SAN.
@@ -117,8 +128,42 @@ impl Wheel {
 
 #[cfg(test)]
 mod tests {
-    use super::{Way, Wheel, navigate};
+    use super::{Way, Wheel, board_position_at, navigate, position_at, sans};
     use gpui_kit::{point, px};
+    use kchess_domain::games::Board;
+    use kchess_domain::variant::{Setup, Variant};
+
+    /// A game page draws its moves and positions from its board, which replayed them once: the
+    /// same as replaying them again at every ply, past an illegal move and in a variant too.
+    #[test]
+    fn a_boards_moves_and_positions_are_its_replays() {
+        let games = [
+            (
+                Setup::standard(),
+                vec!["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"],
+            ),
+            (Setup::standard(), vec!["e2e4", "e7e5", "e1e3", "d7d5"]),
+            (
+                Setup {
+                    variant: Variant::Crazyhouse,
+                    fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1".into(),
+                },
+                vec!["e2e4", "d7d5", "e4d5", "d8d5", "P@e4"],
+            ),
+        ];
+        for (setup, moves) in games {
+            let moves: Vec<String> = moves.into_iter().map(String::from).collect();
+            let board = Board::new(setup.clone(), moves.clone()).expect("a legal setup");
+            assert_eq!(board.sans(), sans(&setup, &moves), "{moves:?}");
+            for ply in 0..=moves.len() + 1 {
+                assert_eq!(
+                    board_position_at(&board, ply),
+                    position_at(&setup, &moves, ply),
+                    "{moves:?} at {ply}"
+                );
+            }
+        }
+    }
 
     /// A wheel's small turns add up to one move; down goes on, up goes back, sideways neither.
     #[test]

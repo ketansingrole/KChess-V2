@@ -287,6 +287,10 @@ pub const MIGRATIONS: &[&str] = &[
     r#"ALTER TABLE settings ADD COLUMN highlightMoves INTEGER NOT NULL DEFAULT 1;"#,
     // Several premoves in a line, each played as its turn comes: off, as on Lichess.
     r#"ALTER TABLE settings ADD COLUMN premoveQueue INTEGER NOT NULL DEFAULT 0;"#,
+    // Each played game's size, as the archive's limit counts it, in an index of its own: a move's
+    // save checks the limit from the index rather than reading every other game
+    // (`library::write_game`).
+    r#"CREATE INDEX idx_archived_games_size ON archived_games(id, length(body));"#,
 ];
 
 /// Apply every migration newer than the database's `user_version`, each in its own transaction.

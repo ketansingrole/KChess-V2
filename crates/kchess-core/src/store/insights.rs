@@ -17,6 +17,7 @@ use shakmaty::fen::Fen;
 use shakmaty::san::San;
 use shakmaty::{CastlingMode, Chess, Color, Move, Position as _};
 use shakmaty_syzygy::Tablebase;
+use std::sync::Arc;
 
 use super::sql::Sql as _;
 use crate::gamedb::endgames;
@@ -141,6 +142,51 @@ fn clauses(query: &InsightsQuery, prefix: &str, now: f64) -> Result<(Vec<String>
     // In-progress games have no result yet.
     clauses.push(format!("{prefix}status NOT IN ('created', 'started')"));
     Ok((clauses, params))
+}
+
+/// What an Insights report for `query` is made from besides the games and reviews: the filter, the
+/// tablebases its endgames are judged by, and the time zone its days and hours are counted in:
+/// its offset from UTC now, in January and in July, so two zones with the same offset today but
+/// another summer time are not taken for each other.
+pub fn report_key(
+    db: &Connection,
+    query: &InsightsQuery,
+    tables: Option<&Arc<Tablebase<Chess>>>,
+) -> Result<String> {
+    let offset: (i64, i64, i64) = db
+        .query_row(
+            "SELECT strftime('%s', 'now', 'localtime') - strftime('%s', 'now'),
+                    strftime('%s', 'now', 'start of year', 'localtime')
+                      - strftime('%s', 'now', 'start of year'),
+                    strftime('%s', 'now', 'start of year', '+6 months', 'localtime')
+                      - strftime('%s', 'now', 'start of year', '+6 months')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .sql()?;
+    let filter = serde_json::to_string(query).map_err(|cause| CoreError::new(cause.to_string()))?;
+    Ok(format!("{filter} {:?} {offset:?}", tables.map(Arc::as_ptr)))
+}
+
+/// Until when a report for `query` made at `now` holds as time passes: when the oldest game in its
+/// period leaves it. A report of every game, or of a period no game is in, holds until a game or
+/// review changes.
+pub fn unchanged_until(db: &Connection, query: &InsightsQuery, now: f64) -> Result<f64> {
+    let Some(days) = query.days.filter(|days| *days > 0) else {
+        return Ok(f64::INFINITY);
+    };
+    let (clauses, params) = clauses(query, "", now)?;
+    let oldest: Option<f64> = db
+        .query_row(
+            &format!(
+                "SELECT MIN(createdAt) FROM games WHERE {}",
+                clauses.join(" AND ")
+            ),
+            params_from_iter(params.iter()),
+            |row| row.get(0),
+        )
+        .sql()?;
+    Ok(oldest.map_or(f64::INFINITY, |oldest| oldest + days as f64 * DAY_MS))
 }
 
 /// The variants other than standard the account has finished games in, in KChess's order.
@@ -381,11 +427,30 @@ pub fn replayed_games(
     now: f64,
     tables: Option<&Tablebase<Chess>>,
 ) -> Result<(Option<EndgameReport>, Option<StructureReport>)> {
+    replay(replay_rows(db, query, now)?.as_deref(), tables)
+}
+
+/// A game Insights replays: the player's side, its result for them, the position it was set up
+/// from (none for the usual start) and its moves in SAN.
+pub struct ReplayRow {
+    you: Color,
+    result: String,
+    fen: Option<String>,
+    sans: String,
+}
+
+/// The games `query`'s endgames and structures come from, newest first; none for a variant. Only
+/// these are read from the database: replaying them (`replay`) needs it no longer.
+pub fn replay_rows(
+    db: &Connection,
+    query: &InsightsQuery,
+    now: f64,
+) -> Result<Option<Vec<ReplayRow>>> {
     if query
         .variant
         .is_some_and(|variant| variant != Variant::Standard)
     {
-        return Ok((None, None));
+        return Ok(None);
     }
     let (clauses, params) = clauses(query, "", now)?;
     let where_sql = clauses.join(" AND ");
@@ -396,18 +461,36 @@ pub fn replayed_games(
     );
     let mut statement = db.prepare(&sql).sql()?;
     let mut rows = statement.query(params_from_iter(params.iter())).sql()?;
-    let mut replays = Replays::default();
+    let mut read = Vec::new();
     while let Some(row) = rows.next().sql()? {
         let color: String = row.get(0).sql()?;
-        let sans: String = row.get(1).sql()?;
         let pgn: Option<String> = row.get(2).sql()?;
-        let result: String = row.get(3).sql()?;
-        let you = if color == "white" {
-            Color::White
-        } else {
-            Color::Black
-        };
-        replays.add(you, &result, replayed(pgn.as_deref(), &sans), tables)?;
+        read.push(ReplayRow {
+            you: if color == "white" {
+                Color::White
+            } else {
+                Color::Black
+            },
+            result: row.get(3).sql()?,
+            fen: pgn.as_deref().and_then(setup_fen).map(str::to_string),
+            sans: row.get(1).sql()?,
+        });
+    }
+    Ok(Some(read))
+}
+
+/// The endgames and structures of `rows` (none for a variant), as `tables` decide them.
+pub fn replay(
+    rows: Option<&[ReplayRow]>,
+    tables: Option<&Tablebase<Chess>>,
+) -> Result<(Option<EndgameReport>, Option<StructureReport>)> {
+    let Some(rows) = rows else {
+        return Ok((None, None));
+    };
+    let mut replays = Replays::default();
+    for row in rows {
+        let replayed = replayed(row.fen.as_deref(), &row.sans);
+        replays.add(row.you, &row.result, replayed, tables)?;
     }
     Ok(replays.report(tables.is_some()))
 }
@@ -521,14 +604,16 @@ impl Replays {
     }
 }
 
-/// A synced game's start, its PGN's `FEN` or the usual one, and its moves (`sans`) from there.
-fn replayed(pgn: Option<&str>, sans: &str) -> Option<(Chess, Vec<Move>)> {
-    let fen = pgn.and_then(|pgn| {
-        pgn.lines()
-            .map(str::trim)
-            .take_while(|line| line.starts_with('['))
-            .find_map(|line| line.strip_prefix("[FEN \"")?.strip_suffix("\"]"))
-    });
+/// The FEN a game's PGN was set up from, if its headers give one.
+fn setup_fen(pgn: &str) -> Option<&str> {
+    pgn.lines()
+        .map(str::trim)
+        .take_while(|line| line.starts_with('['))
+        .find_map(|line| line.strip_prefix("[FEN \"")?.strip_suffix("\"]"))
+}
+
+/// A synced game's start, its `fen` or the usual one, and its moves (`sans`) from there.
+fn replayed(fen: Option<&str>, sans: &str) -> Option<(Chess, Vec<Move>)> {
     let mut pos: Chess = match fen {
         Some(fen) => fen
             .parse::<Fen>()
@@ -875,5 +960,49 @@ fn count_of(value: Option<&Value>) -> f64 {
     match value {
         None | Some(Value::Null) => 0.0,
         other => js::to_number(other),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A report of a period holds until its oldest game is older than the period; one of every
+    /// game, or of a period with no game, until the games change.
+    #[test]
+    fn a_report_of_a_period_holds_until_its_oldest_game_leaves_it() {
+        crate::store::in_memory(|ctx| {
+            ctx.db
+                .execute_batch(
+                    "INSERT INTO accounts (username, connected) VALUES ('Alice', 1);
+                     INSERT INTO games (account, id, createdAt, lastMoveAt, rated, speed, perf,
+                       status, color, opponent, moves)
+                     VALUES ('Alice', 'old', 1000, 1000, 1, 'blitz', 'blitz', 'mate', 'white',
+                       'X', ''),
+                       ('Alice', 'new', 5000, 5000, 1, 'blitz', 'blitz', 'mate', 'white', 'X', '');",
+                )
+                .unwrap();
+            let query = |days| InsightsQuery {
+                account: "Alice".into(),
+                speed: None,
+                rated: None,
+                days,
+                variant: None,
+            };
+            let now = 2.0 * DAY_MS;
+            assert_eq!(
+                unchanged_until(ctx.db, &query(Some(2)), now).unwrap(),
+                1000.0 + 2.0 * DAY_MS
+            );
+            assert_eq!(
+                unchanged_until(ctx.db, &query(None), now).unwrap(),
+                f64::INFINITY
+            );
+            assert_eq!(
+                unchanged_until(ctx.db, &query(Some(1)), 10.0 * DAY_MS).unwrap(),
+                f64::INFINITY,
+                "no game is in the period"
+            );
+        });
     }
 }

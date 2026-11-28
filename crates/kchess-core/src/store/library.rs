@@ -147,7 +147,7 @@ pub(crate) fn encode_session(kind: &str, session: &Value) -> Value {
 pub use super::documents::read_document;
 pub(crate) use super::documents::{assert_replaceable, write_document};
 pub use super::json_codec::{clean_name, js_json};
-pub use super::library_import::{cached_library, library};
+pub use super::library_import::{cached_library, library, with_library};
 pub(crate) use super::library_import::{
     read_joined, read_misses, read_mistakes, read_schedule_lines, read_session,
 };
@@ -160,18 +160,20 @@ fn archive_overhead() -> i64 {
     utf16_len(&js_json(&json!({ "version": 1, "games": [] }))) as i64
 }
 
+/// The other games' count and size, read from their index alone: a move's save never reads every
+/// game's text.
+const ARCHIVE_SIZE: &str = "SELECT COUNT(*) AS count, COALESCE(SUM(length(body)), 0) AS bytes
+     FROM archived_games INDEXED BY idx_archived_games_size WHERE id != ?1";
+
 /// Add or replace a game; it becomes the most recent.
 pub fn write_game(db: &Connection, game: &PlayedGame) -> Result<()> {
     let id = game.id.as_str();
     let body =
         js_json(&serde_json::to_value(game).map_err(|cause| CoreError::new(cause.to_string()))?);
     let (count, bytes): (i64, i64) = db
-        .query_row(
-            "SELECT COUNT(*) AS count, COALESCE(SUM(length(body)), 0) AS bytes
-             FROM archived_games WHERE id != ?1",
-            params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
+        .query_row(ARCHIVE_SIZE, params![id], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
         .sql()?;
     // Never silently discard older games to make room for a new one.
     let size = archive_overhead() + bytes + count + utf16_len(&body) as i64;
@@ -1623,6 +1625,52 @@ mod tests {
             .collect()
     }
 
+    /// A move's save checks the archive's limit from the games' size index, never their text,
+    /// and counts as the archive always did: characters, any language.
+    #[test]
+    fn a_played_game_is_saved_without_reading_the_others_and_the_limit_is_kept() {
+        let db = drills_db();
+        let plan: Vec<String> = db
+            .prepare(&format!("EXPLAIN QUERY PLAN {ARCHIVE_SIZE}"))
+            .expect("plan")
+            .query_map(params!["one"], |row| row.get(3))
+            .expect("plan")
+            .collect::<std::result::Result<_, _>>()
+            .expect("plan");
+        assert_eq!(
+            plan,
+            ["SCAN archived_games USING COVERING INDEX idx_archived_games_size"]
+        );
+
+        let game = |id: &str, white: &str| {
+            let mut game = played(id);
+            game["white"] = json!(white);
+            kchess_domain::library::decode_archived_game(&game).expect("a played game")
+        };
+        write_game(&db, &game("one", "Žofie ♞ 🏆")).expect("save");
+        write_game(&db, &game("two", "A")).expect("save");
+        let sizes = |sql: &str| -> (i64, i64) {
+            db.query_row(sql, ["two"], |row| Ok((row.get(0)?, row.get(1)?)))
+                .expect("sizes")
+        };
+        assert_eq!(
+            sizes(ARCHIVE_SIZE),
+            sizes(
+                "SELECT COUNT(*), COALESCE(SUM(length(body)), 0) FROM archived_games
+                 WHERE id != ?1"
+            )
+        );
+
+        for index in 2..MAX_ARCHIVED_GAMES {
+            write_game(&db, &game(&format!("game{index}"), "A")).expect("room");
+        }
+        assert_eq!(
+            write_game(&db, &game("over", "A")).map_err(|cause| cause.message),
+            Err(GAMES_FULL.to_string())
+        );
+        write_game(&db, &game("one", "B")).expect("a saved game is replaced in place");
+    }
+
     /// Reading the library replays every played game, and the app read it three times to start:
     /// a read again is the snapshot kept from the last, until any write changes a row, whichever
     /// storage method (or none, as here) writes it.
@@ -1644,12 +1692,9 @@ mod tests {
         )
         .expect("save");
         assert_eq!(game_ids(&read()), ["one"]);
-        let changes = db.total_changes();
-        assert!(cache.library(changes).is_some(), "the read is kept");
-        assert!(
-            cache.library(changes + 1).is_none(),
-            "and stale after a write"
-        );
+        assert!(cache.library(&db).is_some(), "the read is kept");
+        save_session(&db, "local", json!({ "x": 1 })).ok();
+        assert!(cache.library(&db).is_none(), "and stale after a write");
         assert_eq!(game_ids(&read()), ["one"]);
 
         write_game(
@@ -1670,12 +1715,9 @@ mod tests {
         .expect("damage");
         assert!(game_ids(&read()).is_empty());
 
-        cache.remember_library(db.total_changes(), &Default::default());
-        cache.forget_library();
-        assert!(cache.library(db.total_changes()).is_none());
-        cache.remember_library(db.total_changes(), &Default::default());
+        cache.remember_library(&db, Default::default());
         cache.clear();
-        assert!(cache.library(db.total_changes()).is_none());
+        assert!(cache.library(&db).is_none());
     }
 
     /// The kept snapshot holds every joined tournament: each read leaves out those ended by its

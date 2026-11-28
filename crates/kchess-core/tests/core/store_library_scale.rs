@@ -147,6 +147,22 @@ fn reads() -> Vec<(&'static str, Read)> {
             }),
         ),
         (
+            "insights replay",
+            Box::new(|store: &Store| {
+                let query = insights_query(&json!({ "account": "Alice" }));
+                store
+                    .read_direct(|c| {
+                        insights::replayed_games(
+                            c.db,
+                            &query,
+                            kchess_core::time::now_ms() as f64,
+                            None,
+                        )
+                    })
+                    .expect("replay")
+            }),
+        ),
+        (
             "gamesToReview",
             Box::new(|store: &Store| {
                 let accounts = ["Alice".to_string(), "Bob".to_string()];
@@ -204,7 +220,7 @@ fn a_full_library_answers_every_read_with_a_bounded_response() {
         json!(total)
     );
     // What the app's pages transfer at 50,000 games, never the library itself.
-    let budgets: [(&str, usize); 11] = [
+    let budgets: [(&str, usize); 12] = [
         ("loadData", 4 * 1024),
         ("gamePage all", 64 * 1024),
         ("gamePage all, deep", 64 * 1024),
@@ -214,6 +230,7 @@ fn a_full_library_answers_every_read_with_a_bounded_response() {
         ("gameLibraryOverview", 4 * 1024),
         ("gameRatingHistory", 32 * 1024),
         ("insights", 16 * 1024),
+        ("insights replay", 16 * 1024),
         // A review pass reads its 300 candidates with their PGN: bounded by its limit.
         ("gamesToReview", 1024 * 1024),
         ("usageReport", 4 * 1024),

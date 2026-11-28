@@ -714,11 +714,11 @@ impl ComputerPage {
 
     /// The position after the first `ply` moves.
     fn position_at(&self, ply: usize) -> Option<shakmaty::variant::VariantPosition> {
-        view::position_at(self.game.setup(), &self.moves(), ply)
+        view::board_position_at(self.game.board(), ply)
     }
 
     fn sans(&self) -> Vec<String> {
-        view::sans(self.game.setup(), &self.moves())
+        self.game.board().sans().to_vec()
     }
 
     /// The player may move now: it is their turn at the latest position, and not before the

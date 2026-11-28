@@ -1,6 +1,6 @@
 //! How long the store's reads take over a full profile: the library (its maximum of played games,
 //! studies and mistakes, which every frontend reads to start) and pages of synced games from the
-//! newest to the oldest. Not part of `check`; it prints the figures:
+//! newest to the oldest; and a move's save of a played game into a full Game history. Not part of `check`; it prints the figures:
 //! `cargo test --release -p kchess-core --test store_speed -- --ignored --nocapture`
 
 use kchess_contracts::types::GamePageQuery;
@@ -201,4 +201,30 @@ fn game_pages_from_newest_to_oldest() {
         }
         println!("gamePage, {label}, {total} games: {}", figures.join(", "));
     }
+}
+
+#[test]
+#[ignore = "a benchmark: run with --ignored --nocapture"]
+fn a_moves_save_into_a_full_game_history() {
+    let dir = tempfile::tempdir().expect("dir");
+    let db = store::open(&dir.path().join("kchess.db"), &QUIET).expect("open");
+    let cache = StoreCache::default();
+    full_library(&db, &cache, 499, 0);
+    let mut rng = Rng(7);
+    let moves = random_game(&mut rng, 80);
+    let fen = shakmaty::fen::Fen::from_position(&Chess::default(), shakmaty::EnPassantMode::Legal)
+        .to_string();
+    let mut ply = 0;
+    let save = median(41, || {
+        ply = ply % moves.len() + 1;
+        let game = json!({
+            "id": "playing", "source": "computer", "startedAt": 0, "updatedAt": ply,
+            "white": "You", "black": "Stockfish", "result": "*", "reason": "Unfinished",
+            "timeControl": "-", "finished": false, "setup": { "variant": "standard", "fen": fen },
+            "moves": moves[..ply],
+        });
+        let game = kchess_domain::library::decode_archived_game(&game).expect("a played game");
+        run(&db, &cache, |c| library::write_game(c.db, &game));
+    });
+    println!("a move's save beside 499 played games: {}", ms(save));
 }

@@ -411,12 +411,11 @@ impl StudyLibrary {
         cx.spawn(async move |this, cx| {
             let _ = sent.await;
             let Ok(library) = this.update(cx, |_, cx| {
-                cx.global::<AppCore>().request(calls::Library {})
+                cx.global::<AppCore>().request(calls::Studies {})
             }) else {
                 return;
             };
-            if let Some(library) = library.await.warn_on_err() {
-                let items = library.studies;
+            if let Some(items) = library.await.warn_on_err() {
                 this.update(cx, |this, cx| match this.reads.answer(read) {
                     Answer::Show => {
                         this.items = items;

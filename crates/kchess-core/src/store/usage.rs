@@ -98,7 +98,7 @@ pub fn usage_report(ctx: &StoreContext) -> Result<UsageReport> {
 /// PGN included, so the sums are kept until the games change; `octet_length` reads each value's
 /// size from its row header instead of decoding the text.
 fn game_storage(ctx: &StoreContext) -> Result<Vec<(String, i64, i64)>> {
-    if let Some(rows) = ctx.cache.storage() {
+    if let Some(rows) = ctx.cache.storage(ctx.db) {
         return Ok(rows);
     }
     let mut statement = ctx
@@ -116,6 +116,6 @@ fn game_storage(ctx: &StoreContext) -> Result<Vec<(String, i64, i64)>> {
         .sql()?
         .collect::<std::result::Result<Vec<(String, i64, i64)>, _>>()
         .sql()?;
-    ctx.cache.remember_storage(&rows);
+    ctx.cache.remember_storage(ctx.db, &rows);
     Ok(rows)
 }

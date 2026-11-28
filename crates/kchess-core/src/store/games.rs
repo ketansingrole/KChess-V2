@@ -423,7 +423,7 @@ pub fn game_page(ctx: &StoreContext, query: &GamePageQuery) -> Result<GamePage> 
             .map_or("any".to_string(), |rated| rated.to_string()),
         query.search.as_deref().unwrap_or("")
     );
-    let total: i64 = match ctx.cache.count(&count_key) {
+    let total: i64 = match ctx.cache.count(db, &count_key) {
         Some(total) => total,
         None => {
             let total = db
@@ -433,7 +433,7 @@ pub fn game_page(ctx: &StoreContext, query: &GamePageQuery) -> Result<GamePage> 
                     |row| row.get(0),
                 )
                 .sql()?;
-            ctx.cache.remember_count(count_key, total);
+            ctx.cache.remember_count(db, count_key, total);
             total
         }
     };
@@ -477,7 +477,7 @@ fn game_records(db: &Connection, sql: &str) -> Result<BTreeMap<String, GameRecor
 }
 
 pub fn game_library_overview(ctx: &StoreContext) -> Result<GameLibraryOverview> {
-    if let Some(cached) = ctx.cache.overview() {
+    if let Some(cached) = ctx.cache.overview(ctx.db) {
         return Ok(cached);
     }
     let db = ctx.db;
@@ -506,7 +506,7 @@ pub fn game_library_overview(ctx: &StoreContext) -> Result<GameLibraryOverview> 
             ),
         )?,
     };
-    ctx.cache.remember_overview(&overview);
+    ctx.cache.remember_overview(db, &overview);
     Ok(overview)
 }
 

@@ -36,6 +36,7 @@ The board editor sets up well-known openings and endgames in one click, and Gues
 - Over the board leaves whose turn it is to the board, and speaks up for a check or a paused clock.
 - Insights looks like the rest of KChess: its figures and breakdowns sit in cards, and its filters match the other pages.
 - While a page loads, it shows the outline of what's coming, such as Insights' cards or a list of games, instead of a spinner, so nothing jumps when it arrives.
+- Insights opens at once when you come back to it with the same filters, and Game history, Studies and Home open faster.
 - A game or run with no clock shows ∞ where it said Untimed or No clock.
 - Settings → Storage shows what KChess keeps on your computer in a bar and a list, largest first, each in its own colour, with Update or Delete beside what you downloaded. Your disk's free space is shown with what you can still download.
 - A mark you give a move on the Analysis board, such as ?? or !?, shows on the board beside the move, ahead of the review's own.

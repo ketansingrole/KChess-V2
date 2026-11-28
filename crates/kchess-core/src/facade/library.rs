@@ -7,8 +7,8 @@ use kchess_contracts::check::{
 use kchess_contracts::core_api::LibraryApi;
 use kchess_contracts::types::{
     ClearedMisses, Drill, JoinedTournament, Library, MistakeGame, MistakesAdded, NotificationEntry,
-    NotificationInput, RepertoireMisses, RepertoireSchedule, SessionDocument, SessionKind,
-    StudyCommand, StudyCommandResult,
+    NotificationInput, PlayedGame, RepertoireMisses, RepertoireSchedule, SessionDocument,
+    SessionKind, Study, StudyCommand, StudyCommandResult,
 };
 use kchess_domain::misc::documents;
 use kchess_domain::misc::value::J;
@@ -115,6 +115,33 @@ impl LibraryApi for Core {
     async fn mistakes(&self) -> Result<Vec<Drill>> {
         self.database
             .read_async(|ctx| library_import::read_mistakes(ctx.db))
+            .await
+    }
+
+    async fn played_games(&self) -> Result<Vec<PlayedGame>> {
+        self.database
+            .read_async(|ctx| library::with_library(ctx, |library| library.games.clone()))
+            .await
+    }
+
+    async fn studies(&self) -> Result<Vec<Study>> {
+        self.database
+            .read_async(|ctx| library::with_library(ctx, |library| library.studies.clone()))
+            .await
+    }
+
+    async fn practice_library(&self) -> Result<Library> {
+        self.database
+            .read_async(|ctx| {
+                library::with_library(ctx, |library| Library {
+                    studies: library.studies.clone(),
+                    mistakes: library.mistakes.clone(),
+                    repertoire_misses: library.repertoire_misses.clone(),
+                    repertoire_schedule: library.repertoire_schedule.clone(),
+                    study_error: library.study_error.clone(),
+                    ..Library::default()
+                })
+            })
             .await
     }
 

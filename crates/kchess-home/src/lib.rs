@@ -553,7 +553,7 @@ impl HomePage {
         let turn = self.today_read.start();
         let core = cx.global::<AppCore>().clone();
         let (library, missed) = (
-            core.request(calls::Library {}),
+            core.request(calls::PracticeLibrary {}),
             core.request(calls::RunSchedule {
                 kind: kchess_contracts::types::RunKind::Endgame,
             }),
