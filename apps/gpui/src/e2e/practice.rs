@@ -1690,8 +1690,10 @@ fn only_the_latest_read_of_the_repertoire_misses_counts(cx: &mut gpui_kit::TestA
     let before = read(&mut app);
     app.cx
         .update(|cx| trainer.update(cx, |t, cx| t.miss_at(fen.to_string(), cx)));
-    app.cx.run_until_parked();
-    assert_eq!(count(&mut app), 1, "the miss recorded here");
+    // Shown at once beside the two read above; the core's answer has the profile's one alone.
+    app.wait_for("the core's answer to the miss", |_, cx| {
+        trainer.read(cx).missed_repertoires() == 1
+    });
     answer(&mut app, before, missed(&[]));
     assert_eq!(count(&mut app), 1, "a read from before the miss");
 }
