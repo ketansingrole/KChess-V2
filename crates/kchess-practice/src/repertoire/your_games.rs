@@ -87,6 +87,8 @@ pub fn open(
 }
 
 pub struct YourGamesCheck {
+    /// The scroll of the list inside it, kept to the list (`widgets::nested_scroll`).
+    list_scroll: ScrollHandle,
     steps: Vec<Step>,
     target: Target,
     color: Color,
@@ -127,6 +129,7 @@ impl YourGamesCheck {
             }
         };
         let mut this = YourGamesCheck {
+            list_scroll: ScrollHandle::new(),
             steps,
             target,
             color,
@@ -262,12 +265,12 @@ impl Render for YourGamesCheck {
                 ),
             )
             .child(
-                v_flex()
-                    .id("repertoire-games-moves")
-                    .max_h(px(440.))
-                    .overflow_y_scroll()
-                    .gap(px(2.))
-                    .children(rows),
+                widgets::nested_scroll(
+                    v_flex().id("repertoire-games-moves").max_h(px(440.)),
+                    &self.list_scroll,
+                )
+                .gap(px(2.))
+                .children(rows),
             )
     }
 }

@@ -850,6 +850,23 @@ fn move_in_view(window: &mut gpui_kit::Window, index: usize) -> bool {
     list.top() <= cell.top() && cell.bottom() <= list.bottom()
 }
 
+/// Each move as it is played comes into view: White's too, which starts a new row. The list
+/// followed Black's moves only, leaving White's on the row below the list's edge.
+#[gpui_kit::test]
+fn each_move_comes_into_view_as_it_is_played(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::local::LocalPage;
+    let mut app = board(cx);
+    for (index, uci) in OPERA.split_whitespace().enumerate() {
+        app.with_window(|_, cx| {
+            let local = crate::shell::view::<LocalPage>(cx).expect("the page");
+            local.update(cx, |local, cx| local.play(uci, cx));
+        });
+        app.wait_for(&format!("move {index} in view"), |window, _| {
+            move_in_view(window, index)
+        });
+    }
+}
+
 /// The move list stayed scrolled at move 1 as a long game went on, the board at the last move
 /// and the list showing the first ones until scrolled by hand (2026.11.10): it keeps the move on
 /// the board in view, the newest as it is played.

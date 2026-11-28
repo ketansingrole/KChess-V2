@@ -4,6 +4,8 @@ use super::*;
 
 /// The players the connected accounts follow on Lichess, to add.
 pub struct ImportDialog {
+    /// The scroll of the list inside it, kept to the list (`widgets::nested_scroll`).
+    list_scroll: ScrollHandle,
     report: Option<FollowingReport>,
     loading: Loading,
     selected: HashSet<String>,
@@ -21,6 +23,7 @@ impl ImportDialog {
             }
         })];
         let mut dialog = ImportDialog {
+            list_scroll: ScrollHandle::new(),
             report: None,
             loading: Loading::default(),
             selected: HashSet::new(),
@@ -144,71 +147,73 @@ impl Render for ImportDialog {
                         )
                         .into_any_element()
                     } else {
-                        v_flex()
-                            .id("import-list")
-                            .max_h(px(320.))
-                            .overflow_y_scroll()
-                            .children(candidates.iter().enumerate().map(|(index, user)| {
-                                let name = user.username.clone();
-                                let checked = self.selected.contains(&name);
-                                let mut ratings = Vec::new();
-                                if let Some(blitz) = user.ratings.blitz {
-                                    ratings.push(format!("Blitz {blitz}"));
-                                }
-                                if let Some(rapid) = user.ratings.rapid {
-                                    ratings.push(format!("Rapid {rapid}"));
-                                }
-                                let via: Vec<String> = user
-                                    .followed_by
-                                    .iter()
-                                    .map(|name| format!("@{name}"))
-                                    .collect();
-                                let toggled = name.clone();
-                                h_flex()
-                                    .gap(px(8.))
-                                    .py(px(6.))
-                                    .child(
-                                        Checkbox::new(("import-user", index))
-                                            .checked(checked)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                if !this.selected.remove(&toggled) {
-                                                    this.selected.insert(toggled.clone());
-                                                }
-                                                cx.notify();
-                                            })),
-                                    )
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child(format!("@{name}")),
-                                    )
-                                    .children(user.title.clone().map(|title| {
+                        widgets::nested_scroll(
+                            v_flex().id("import-list").max_h(px(320.)),
+                            &self.list_scroll,
+                        )
+                        .children(candidates.iter().enumerate().map(|(index, user)| {
+                            let name = user.username.clone();
+                            let checked = self.selected.contains(&name);
+                            let mut ratings = Vec::new();
+                            if let Some(blitz) = user.ratings.blitz {
+                                ratings.push(format!("Blitz {blitz}"));
+                            }
+                            if let Some(rapid) = user.ratings.rapid {
+                                ratings.push(format!("Rapid {rapid}"));
+                            }
+                            let via: Vec<String> = user
+                                .followed_by
+                                .iter()
+                                .map(|name| format!("@{name}"))
+                                .collect();
+                            let toggled = name.clone();
+                            h_flex()
+                                .gap(px(8.))
+                                .py(px(6.))
+                                .child(
+                                    Checkbox::new(("import-user", index))
+                                        .checked(checked)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            if !this.selected.remove(&toggled) {
+                                                this.selected.insert(toggled.clone());
+                                            }
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(format!("@{name}")),
+                                )
+                                .children(
+                                    user.title.clone().map(|title| {
                                         widgets::badge(title, Look::Primary, &palette)
-                                    }))
-                                    .when(user.dismissed, |row| {
-                                        row.child(widgets::badge(
-                                            "Removed before",
-                                            Look::NeutralSoft,
-                                            &palette,
-                                        ))
-                                    })
-                                    .child(div().flex_1())
-                                    .child(
+                                    }),
+                                )
+                                .when(user.dismissed, |row| {
+                                    row.child(widgets::badge(
+                                        "Removed before",
+                                        Look::NeutralSoft,
+                                        &palette,
+                                    ))
+                                })
+                                .child(div().flex_1())
+                                .child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(palette.text_muted)
+                                        .child(ratings.join(" · ")),
+                                )
+                                .when(several, |row| {
+                                    row.child(
                                         div()
                                             .text_size(px(12.))
                                             .text_color(palette.text_muted)
-                                            .child(ratings.join(" · ")),
+                                            .child(format!("via {}", via.join(", "))),
                                     )
-                                    .when(several, |row| {
-                                        row.child(
-                                            div()
-                                                .text_size(px(12.))
-                                                .text_color(palette.text_muted)
-                                                .child(format!("via {}", via.join(", "))),
-                                        )
-                                    })
-                            }))
-                            .into_any_element()
+                                })
+                        }))
+                        .into_any_element()
                     })
                     .child(
                         h_flex()
