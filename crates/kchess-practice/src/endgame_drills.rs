@@ -609,7 +609,7 @@ impl Render for EndgameDrills {
             .w(board_size)
             .flex_none()
             .gap(widgets::STACK_GAP)
-            .child(crate::board::cached(&self.board))
+            .child(crate::board::resizable(&self.board))
             .child(widgets::input_row(entry, voice))
             .children(voice_line)
             .children(self.move_box.message(&palette));

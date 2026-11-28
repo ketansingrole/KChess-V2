@@ -17,6 +17,7 @@ The board editor sets up well-known openings and endgames in one click, and Gues
 - Guess the move lists 22 famous games by era, from McDonnell against La Bourdonnais in 1834 to Kasparov's Immortal in 1999.
 - Guess the move can take a game from your databases. Search for a player and you guess the moves as them.
 - Clean up in Settings → Storage removes the files earlier versions of KChess left behind, which nothing uses any more.
+- Drag the corner of the board to make it smaller, and every board page keeps that size. Double-click the corner to make the board as large as fits again.
 
 ### Changed
 

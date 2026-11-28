@@ -124,7 +124,7 @@ impl Render for LocalPage {
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(line(!orientation, None))
-            .child(crate::board::cached(&self.board))
+            .child(crate::board::resizable(&self.board))
             .child(line(orientation, Some(widgets::move_row(entry, voice))))
             .children(voice_line)
             .children(self.moves.message(&palette))

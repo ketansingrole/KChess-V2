@@ -9,6 +9,7 @@ pub mod looks;
 mod paint;
 mod pocket;
 pub mod previews;
+pub mod size;
 mod state;
 mod view;
 
@@ -18,6 +19,7 @@ pub use previews::Previews;
 pub use state::*;
 
 pub use pocket::{PieceGhost, pocket};
+pub use size::resizable;
 
 use std::cell::Cell;
 use std::collections::HashMap;

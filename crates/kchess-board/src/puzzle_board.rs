@@ -701,7 +701,7 @@ impl Render for PuzzleBoard {
                 gpui_kit::transparent_black()
             })
             .m(px(-3.))
-            .child(crate::board::cached(&self.board));
+            .child(crate::board::resizable(&self.board));
         // Crazyhouse drills (a mistake from a Crazyhouse game) show the pockets to drop from.
         let [top_pocket, bottom_pocket] =
             [!orientation, orientation].map(|color| crate::board::pocket(&self.board, color, cx));

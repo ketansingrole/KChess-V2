@@ -610,7 +610,7 @@ impl Render for Visualise {
         let board_column = under_board::column(
             "visualise-column",
             board_size,
-            crate::board::cached(&self.board),
+            crate::board::resizable(&self.board),
             row,
             None,
         );

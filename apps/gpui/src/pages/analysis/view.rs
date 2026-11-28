@@ -602,7 +602,7 @@ impl Render for AnalysisPage {
                                 MouseButton::Left,
                                 cx.listener(|this, _, window, cx| window.focus(&this.focus, cx)),
                             )
-                            .child(crate::board::cached(&self.board)),
+                            .child(crate::board::resizable(&self.board)),
                     ),
             )
             .children(bottom_pocket)

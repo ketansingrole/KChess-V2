@@ -1505,7 +1505,7 @@ impl Render for Repertoire {
                 cx,
             );
             board_column
-                .child(crate::board::cached(&self.board))
+                .child(crate::board::resizable(&self.board))
                 .child(widgets::input_row(entry, voice))
                 .children(voice_line)
                 .children(self.move_box.message(&palette))

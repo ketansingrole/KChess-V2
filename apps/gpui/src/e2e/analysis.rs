@@ -2185,3 +2185,45 @@ fn a_session_that_cannot_be_read_is_not_saved_over(cx: &mut gpui_kit::TestAppCon
     });
     assert!(!app.shows(("analysis-problem", 0usize)));
 }
+
+/// The board's side as drawn.
+fn board_side(app: &mut Harness) -> f32 {
+    f32::from(app.find("chess-board").bounds().size.width)
+}
+
+/// Dragging the board's corner handle sizes the board, and every board page draws it at the
+/// size kept; a double click makes it as large as fits again, keeping nothing. A board page
+/// sizes its board from the window alone, so a size the page did not read would leave the
+/// other pages' boards as they were.
+#[gpui_kit::test]
+fn the_board_is_as_large_as_its_handle_leaves_it(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_board::board::size::KEY;
+    let mut app = analysis(cx);
+    let fit = board_side(&mut app);
+    let handle = app.find("board-resize").bounds().center();
+    let to = handle - gpui_kit::point(gpui_kit::px(120.), gpui_kit::px(120.));
+    app.with_window(|window, cx| window.drag(handle, to, cx));
+    app.settle();
+    let kept: Option<f32> = app.cx.update(|cx| crate::prefs::get(cx, KEY, None));
+    let kept = kept.expect("the size is kept");
+    // The board keeps whole squares, so it may be a few pixels smaller than the size kept.
+    let side = board_side(&mut app);
+    assert!((fit - 120. - kept).abs() < 2., "kept {kept} of {fit}");
+    assert!(
+        side <= kept && kept - side < 8.,
+        "drawn {side}, kept {kept}"
+    );
+
+    // Another board page draws its board at the size kept.
+    app.open("Board editor");
+    app.find("chess-board");
+    assert_eq!(board_side(&mut app), side, "the editor's board");
+
+    app.with_window(|window, cx| window.double_click("board-resize", cx));
+    app.settle();
+    let kept: Option<f32> = app.cx.update(|cx| crate::prefs::get(cx, KEY, None));
+    assert_eq!(kept, None, "nothing kept");
+    app.open("Analysis board");
+    app.find("chess-board");
+    assert_eq!(board_side(&mut app), fit, "as large as fits again");
+}

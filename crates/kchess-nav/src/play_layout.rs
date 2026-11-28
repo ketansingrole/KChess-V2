@@ -10,6 +10,8 @@ use std::rc::Rc;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 
+use kchess_board::board;
+
 use crate::page::PageTab;
 use crate::widgets;
 
@@ -63,12 +65,14 @@ thread_local! {
 }
 
 /// Put in the shell's page area, which every page fills, so a page opens laid out for the area
-/// it opens in.
+/// it opens in, with the board at the size chosen for it (`board::size`).
 pub fn page_area_probe() -> impl IntoElement {
     canvas(
-        |area, window, _| {
+        |area, window, cx| {
             let id = window.window_handle().window_id();
             PAGE_AREAS.with_borrow_mut(|areas| areas.insert(id, area.size));
+            // The board's chosen size, which another app on the profile may have changed.
+            board::size::read(cx);
         },
         |_, _, _, _| {},
     )
@@ -254,7 +258,7 @@ impl PlayLayout {
 
     /// The board's side: the height left after the page's padding and the player
     /// lines, or the width left beside a 344px panel, between 260px and the largest board
-    /// size.
+    /// size; smaller when the player chose a smaller board (`board::size`).
     pub fn board_size(&self, window: &Window) -> Pixels {
         self.board_size_beside(px(0.), window)
     }
@@ -345,13 +349,11 @@ impl PlayLayout {
         let portrait = viewport.height > viewport.width;
         if page_width <= px(STACK_WIDTH) || (portrait && page_width <= px(PORTRAIT_STACK_WIDTH)) {
             let floor = if portrait { px(260.) } else { px(0.) };
-            let size = whole_squares(
-                (width - side_padding(window) * 2.)
-                    .min((viewport.height - px(STACKED_CHROME)).max(floor))
-                    .min(px(STACKED_BOARD_MAX))
-                    .max(px(160.)),
-                window.scale_factor(),
-            );
+            let fit = (width - side_padding(window) * 2.)
+                .min((viewport.height - px(STACKED_CHROME)).max(floor))
+                .min(px(STACKED_BOARD_MAX))
+                .max(px(160.));
+            let size = whole_squares(board::size::fitted(fit), window.scale_factor());
             self.stacked.set(Some(size + extra_width));
             return size;
         }
@@ -359,10 +361,8 @@ impl PlayLayout {
         let chrome = PAGE_TOP + PAGE_BOTTOM + around;
         let by_height = height - chrome;
         let by_width = width - side_padding(window) * 2. - px(344.);
-        whole_squares(
-            by_height.min(by_width).max(px(260.)).min(px(1200.)),
-            window.scale_factor(),
-        )
+        let fit = by_height.min(by_width).max(px(260.)).min(px(1200.));
+        whole_squares(board::size::fitted(fit), window.scale_factor())
     }
 
     /// The panel goes under the board on this page now.

@@ -390,7 +390,7 @@ impl OpeningsPage {
             .w(board_size)
             .flex_none()
             .gap(widgets::STACK_GAP)
-            .child(crate::board::cached(&self.board))
+            .child(crate::board::resizable(&self.board))
             .child(self.move_box.lone(true, palette));
         let figurine = crate::notation::figurine(cx);
         let moves = h_flex()

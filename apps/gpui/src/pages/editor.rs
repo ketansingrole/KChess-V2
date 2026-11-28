@@ -929,7 +929,7 @@ impl Render for EditorPage {
             .flex_none()
             .gap(px(8.))
             .child(self.render_spares(top, &set, board_size, cx, &palette))
-            .child(crate::board::cached(&self.board))
+            .child(crate::board::resizable(&self.board))
             .child(self.render_spares(bottom, &set, board_size, cx, &palette))
             // Voice sits at the end of its row.
             .child(
