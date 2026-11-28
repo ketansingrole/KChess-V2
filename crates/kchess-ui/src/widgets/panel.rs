@@ -101,6 +101,58 @@ pub fn loading(text: impl Into<SharedString>, palette: &Palette) -> Div {
         .child(text.into())
 }
 
+/// A page loading its cards: `columns` columns of placeholder cards, each a heading and result
+/// rows in the kit's pulsing skeleton, so the page keeps its shape until they come. Read as a
+/// status named `text` ("Loading insights…").
+pub fn loading_cards(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    columns: usize,
+    palette: &Palette,
+) -> impl IntoElement {
+    use gpui_kit::component::skeleton::Skeleton;
+    // Rows per card, varied so the columns read as cards of different lengths.
+    const ROWS: [usize; 6] = [2, 4, 3, 5, 3, 4];
+    let columns = columns.max(1);
+    let card = |rows: usize| {
+        card(palette)
+            .w_full()
+            .gap(px(12.))
+            .child(
+                Skeleton::new()
+                    .w(px(120.))
+                    .h(px(14.))
+                    .rounded(radii::BOX)
+                    .mb(px(4.)),
+            )
+            .children((0..rows).map(|row| {
+                v_flex()
+                    .gap(px(6.))
+                    .child(
+                        Skeleton::new()
+                            .w(relative(if row % 2 == 0 { 0.45 } else { 0.6 }))
+                            .h(px(10.))
+                            .rounded(radii::BOX),
+                    )
+                    .child(Skeleton::new().secondary().h(px(8.)).rounded(radii::BOX))
+            }))
+    };
+    h_flex()
+        .id(id)
+        .test_support()
+        .role(Role::Status)
+        .aria_label(text.into())
+        .items_start()
+        .gap(px(16.))
+        .children((0..columns).map(|column| {
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap(px(16.))
+                .children((0..2).map(|n| card(ROWS[(column * 2 + n) % ROWS.len()])))
+        }))
+}
+
 /// "Move 3 · You play White · Your move": parts joined by middle dots that wrap whole, so a
 /// line never ends on a dot or breaks inside a part.
 pub fn dotted(parts: impl IntoIterator<Item = impl Into<SharedString>>) -> Div {
