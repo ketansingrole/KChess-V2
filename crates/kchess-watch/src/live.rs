@@ -978,7 +978,7 @@ impl WatchPage {
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(line(!orientation, 0))
-            .child(crate::board::cached(&self.live.board))
+            .child(crate::board::resizable(&self.live.board))
             .child(line(orientation, 1));
         let board_column = crate::game::surface::wheel(board_column, cx);
 

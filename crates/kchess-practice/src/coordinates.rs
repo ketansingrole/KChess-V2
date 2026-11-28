@@ -626,7 +626,7 @@ impl Render for Coordinates {
             board_size,
             div()
                 .relative()
-                .child(crate::board::cached(&self.board))
+                .child(crate::board::resizable(&self.board))
                 .children(prompt),
             row,
             voice_line,

@@ -740,6 +740,8 @@ impl Repertoire {
 
     fn play(&mut self, uci: &str, cx: &mut Context<Self>) {
         let Some((root, path)) = self.at.clone() else {
+            // No line to drill yet: the board played the move at once, and it goes back.
+            self.board.update(cx, |board, cx| board.undo_move(cx));
             return;
         };
         if !self.your_turn(cx) {
@@ -1505,7 +1507,7 @@ impl Render for Repertoire {
                 cx,
             );
             board_column
-                .child(crate::board::cached(&self.board))
+                .child(crate::board::resizable(&self.board))
                 .child(widgets::input_row(entry, voice))
                 .children(voice_line)
                 .children(self.move_box.message(&palette))

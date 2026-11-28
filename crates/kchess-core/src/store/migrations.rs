@@ -283,6 +283,10 @@ pub const MIGRATIONS: &[&str] = &[
   );"#,
     // What's new before an update installs: the notes of the release it brings.
     r#"ALTER TABLE settings ADD COLUMN updateShowNotes INTEGER NOT NULL DEFAULT 1;"#,
+    // Lichess's Highlight setting: the last move, a check and a dragged piece's square marked.
+    r#"ALTER TABLE settings ADD COLUMN highlightMoves INTEGER NOT NULL DEFAULT 1;"#,
+    // Several premoves in a line, each played as its turn comes: off, as on Lichess.
+    r#"ALTER TABLE settings ADD COLUMN premoveQueue INTEGER NOT NULL DEFAULT 0;"#,
 ];
 
 /// Apply every migration newer than the database's `user_version`, each in its own transaction.

@@ -252,6 +252,30 @@ pub fn samples() -> Vec<Sample> {
             },
         },
         Sample {
+            group: "Status",
+            name: "A card loading its rows",
+            draw: |palette| {
+                widgets::card(palette)
+                    .gap(px(8.))
+                    .child(widgets::heading("Recent games", palette))
+                    .child(widgets::loading_rows(
+                        "gallery-loading-rows",
+                        "Loading games…",
+                        3,
+                        palette,
+                    ))
+                    .into_any_element()
+            },
+        },
+        Sample {
+            group: "Status",
+            name: "A page loading its cards",
+            draw: |palette| {
+                widgets::loading_cards("gallery-loading-cards", "Loading insights…", 2, palette)
+                    .into_any_element()
+            },
+        },
+        Sample {
             group: "Surfaces",
             name: "Card and side panel",
             draw: |palette| {
@@ -352,6 +376,27 @@ mod tests {
                 assert!(window.try_find(("group", index)).is_some(), "group {index}");
             }
             assert!(window.try_find(("group", groups.len())).is_none());
+        })
+        .unwrap();
+    }
+
+    /// A page's placeholder cards, and a card's placeholder rows, are one status named for what
+    /// loads, so a screen reader hears "Loading insights…" as it did from the spinner's line.
+    #[gpui_kit::test]
+    fn placeholders_read_as_their_loading_status(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        cx.update(|cx| cx.set_global(Palette::of(&colors("kchess", &[], false), false)));
+        let window = cx.add_window(|_, _| Gallery::new(samples()));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let cards = window.find("gallery-loading-cards");
+            assert_eq!(cards.role(), Some(gpui_kit::Role::Status));
+            assert_eq!(cards.label(), Some("Loading insights…"));
+            assert!(cards.bounds().size.height > px(100.), "cards, not a line");
+            let rows = window.find("gallery-loading-rows");
+            assert_eq!(rows.role(), Some(gpui_kit::Role::Status));
+            assert_eq!(rows.label(), Some("Loading games…"));
+            assert!(rows.bounds().size.height > px(60.), "rows, not a line");
         })
         .unwrap();
     }

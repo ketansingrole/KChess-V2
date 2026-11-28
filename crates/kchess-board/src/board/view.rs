@@ -197,6 +197,10 @@ impl ChessBoard {
 
     /// The promotion picker; while the board has the keys, the piece they would take is ringed
     /// and is the one a screen reader reads.
+    /// Lichess's picker: the pieces in a column on the pawn's file, from the last rank, each a
+    /// grey disc the size of a square with its piece a little smaller, over the board dimmed
+    /// behind; pointed at, a disc turns square and orange and its piece full size. A press
+    /// anywhere else closes it.
     fn render_promotion(
         &self,
         set: &str,
@@ -210,23 +214,43 @@ impl ChessBoard {
         } else {
             Color::Black
         };
-        let theme = cx.theme();
-        let (elevated, border, background) = (theme.muted, theme.border, theme.background);
-        let palette = *cx.global::<crate::theme::Palette>();
+        let (column, _) = self.cell(to);
+        let from_top = color == self.state.orientation;
+        let side = self.square_size();
+        let unit = side / 64.;
+        let disc = |blur: f32, spread: f32, color: u32| {
+            vec![BoxShadow {
+                color: rgb(color).into(),
+                offset: point(px(0.), px(0.)),
+                blur_radius: unit * blur,
+                spread_radius: unit * spread,
+                inset: true,
+            }]
+        };
+        let pointed = disc(48., 8., 0xd64f00);
         let marked = self.promotion_choice % keyboard::PROMOTION.len();
+        let dim = cx.theme().background.opacity(0.7);
         Some(
             div()
                 .id("promotion")
                 .absolute()
                 .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
                 .map(|overlay| rounded(overlay, &self.state.corners))
-                .bg(hsla(0., 0., 0., 0.5))
+                .bg(dim)
                 .on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(|this, _, _, cx| this.cancel_promotion(cx)),
+                    // Closing the picker presses nothing under it.
+                    cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.cancel_promotion(cx)
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.cancel_promotion(cx)
+                    }),
                 )
                 .child(
                     div()
@@ -234,40 +258,42 @@ impl ChessBoard {
                         .test_support()
                         .role(gpui_kit::Role::Dialog)
                         .aria_label("Choose promotion piece")
-                        .flex()
-                        .gap(px(8.))
-                        .p(px(8.))
-                        .rounded(radii::BOX)
-                        .bg(elevated)
-                        .border_1()
-                        .border_color(border)
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .absolute()
+                        .inset_0()
                         .children(keyboard::PROMOTION.into_iter().enumerate().map(
                             |(index, (role, label))| {
+                                let row = if from_top { index } else { 7 - index };
+                                let lit = focused && index == marked;
+                                let group = SharedString::new_static(PROMOTION_GROUPS[index]);
                                 div()
                                     .id(label)
                                     .test_support()
+                                    .group(group.clone())
                                     .role(gpui_kit::Role::Button)
                                     .aria_label(label)
                                     .aria_selected(index == marked)
                                     .when(index == marked, |choice| choice.aria_active_descendant())
-                                    .size(px(60.))
-                                    .p(px(4.))
-                                    // A step under the picker, whose corner sits 8px further out.
-                                    .rounded(radii::SMALL)
-                                    .bg(background)
-                                    .border_1()
-                                    .border_color(border)
+                                    .absolute()
+                                    .left(relative(column as f32 / 8.))
+                                    .top(relative(row as f32 / 8.))
+                                    .size(relative(0.125))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
                                     .cursor_pointer()
-                                    .pressable_fill(elevated, &palette)
-                                    .when(focused && index == marked, |choice| {
-                                        choice.shadow(vec![BoxShadow {
-                                            color: ring,
-                                            offset: point(px(0.), px(0.)),
-                                            blur_radius: px(0.),
-                                            spread_radius: px(2.),
-                                            inset: false,
-                                        }])
+                                    .bg(rgb(0xb0b0b0))
+                                    .when(!lit, |choice| {
+                                        choice.rounded_full().shadow(disc(25., 3., 0x808080))
+                                    })
+                                    .when(lit, |choice| {
+                                        choice.shadow(pointed.clone()).border_2().border_color(ring)
+                                    })
+                                    .hover({
+                                        let pointed = pointed.clone();
+                                        move |style| style.rounded_none().shadow(pointed)
+                                    })
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
                                     })
                                     .tooltip(move |window, cx| {
                                         Tooltip::new(label).build(window, cx)
@@ -280,7 +306,8 @@ impl ChessBoard {
                                             set,
                                             Piece { color, role },
                                         )))
-                                        .size_full(),
+                                        .size(relative(if lit { 1. } else { 0.8 }))
+                                        .group_hover(group, |style| style.size_full()),
                                     )
                             },
                         )),
@@ -357,16 +384,22 @@ impl Render for ChessBoard {
             .as_ref()
             .filter(|drag| drag.moved)
             .map(|drag| drag.from);
-        let hovered = self
-            .drag
-            .as_ref()
-            .filter(|drag| drag.moved)
-            .and_then(|drag| self.square_at(drag.position));
+        // The square under the dragged piece, or under the pointer while a piece is selected:
+        // a destination there fills, as Chessground's `move-dest:hover` does.
+        let hovered = match &self.drag {
+            Some(drag) if drag.moved => self.square_at(drag.position),
+            Some(_) => None,
+            None => self.hover,
+        };
         let mut shown = self.state.clone();
-        let preview = self
-            .drawing
-            .and_then(|(from, brush, to)| to.map(|to| Drawn { from, to, brush }));
-        for shape in self.drawn.iter().chain(preview.iter()) {
+        // Highlight off, as on Lichess: no last move, no check and no ghost are drawn; a screen
+        // reader still hears them.
+        let highlight = frontend.highlight_moves;
+        if !highlight {
+            shown.last_move = None;
+            shown.check = None;
+        }
+        for shape in &self.drawn {
             if shape.from == shape.to {
                 shown.circles.push(Circle::brush(shape.brush, shape.from));
             } else {
@@ -375,16 +408,31 @@ impl Render for ChessBoard {
                     .push(Arrow::brush(shape.brush, shape.from, shape.to));
             }
         }
+        // The arrow being drawn is a little fainter and thinner, as Chessground's `current`.
+        if let Some(drawing) = self.drawing
+            && let Some(to) = drawing.to
+        {
+            if drawing.from == to {
+                shown.circles.push(Circle::brush(drawing.brush, to));
+            } else {
+                shown.arrows.push(Arrow {
+                    opacity: 0.9,
+                    width: 10. * 0.85,
+                    ..Arrow::brush(drawing.brush, drawing.from, to)
+                });
+            }
+        }
+        // With the premove queue the pieces stand where the premoves waiting leave them.
+        let planned = self.planned();
         let premove_dests = self
             .selected
             .filter(|&square| {
                 self.state.movable.is_none()
-                    && self
-                        .pieces
+                    && planned
                         .piece_at(square)
                         .is_some_and(|piece| Some(piece.color) == self.state.premove)
             })
-            .map(|square| premove_targets(&self.pieces, square))
+            .map(|square| self.premove_targets(square))
             .unwrap_or_default();
         let sliding: Vec<Square> = self
             .animation
@@ -393,13 +441,14 @@ impl Render for ChessBoard {
             .unwrap_or_default();
         let frame = Frame {
             state: shown,
-            pieces: self.pieces.clone(),
+            pieces: planned,
             selected: self.selected,
             lifted,
             hovered,
-            show_dests: frontend.show_legal_moves,
+            // Blindfold play keeps the dots to itself too, as Lichess does (`showDests`).
+            show_dests: frontend.show_legal_moves && !self.state.blindfold,
             set: set.clone(),
-            queued: self.queued,
+            queued: self.queued.clone(),
             premove_dests,
             drop_dests: self
                 .selected_drop
@@ -415,7 +464,7 @@ impl Render for ChessBoard {
 
         // The king in check sits in Chessground's radial gradient, clipped to its square: solid
         // red to a quarter of the way out, fading to nothing at 89% of the square's half-diagonal.
-        let check = self.state.check.map(|square| {
+        let check = self.state.check.filter(|_| highlight).map(|square| {
             let (column, row) = self.cell(square);
             div()
                 .absolute()
@@ -434,18 +483,66 @@ impl Render for ChessBoard {
                 }))
         });
         // The piece's own square keeps a faint ghost while it is dragged (Chessground's `ghost`).
-        let ghost = lifted.and_then(|square| {
-            let piece = self.pieces.piece_at(square)?;
-            let (column, row) = self.cell(square);
-            Some(
-                img(SharedString::from(looks::piece_path(&set, piece)))
+        let ghost = lifted
+            .filter(|_| highlight && !self.state.blindfold)
+            .and_then(|square| {
+                let piece = self.pieces.piece_at(square)?;
+                let (column, row) = self.cell(square);
+                Some(
+                    img(SharedString::from(looks::piece_path(&set, piece)))
+                        .id("board-ghost")
+                        .absolute()
+                        .left(relative(column as f32 / 8.))
+                        .top(relative(row as f32 / 8.))
+                        .size(relative(0.125))
+                        .opacity(0.3)
+                        .test_support(),
+                )
+            });
+        // The piece a promotion premove becomes waits faded on its square (lila's auto shape).
+        let pre_promotion = self
+            .pre_promotion
+            .first()
+            .copied()
+            // With the premove queue the board shows the piece itself, where the premoves leave it.
+            .filter(|&(from, to, _)| !self.queue_mode && self.queued.contains(&(from, to)))
+            .and_then(|(from, to, role)| {
+                let color = self.pieces.piece_at(from)?.color;
+                let (column, row) = self.cell(to);
+                Some(
+                    img(SharedString::from(looks::piece_path(
+                        &set,
+                        Piece { color, role },
+                    )))
                     .absolute()
                     .left(relative(column as f32 / 8.))
                     .top(relative(row as f32 / 8.))
                     .size(relative(0.125))
-                    .opacity(0.3),
-            )
-        });
+                    .opacity(0.6),
+                )
+            });
+        // Pieces taken stay faded on their squares while the taker slides in.
+        let fading: Vec<AnyElement> = self
+            .animation
+            .as_ref()
+            .filter(|_| !self.state.blindfold)
+            .map(|animation| {
+                animation
+                    .fadings
+                    .iter()
+                    .map(|(piece, square)| {
+                        let (column, row) = self.cell(*square);
+                        img(SharedString::from(looks::piece_path(&set, *piece)))
+                            .absolute()
+                            .left(relative(column as f32 / 8.))
+                            .top(relative(row as f32 / 8.))
+                            .size(relative(0.125))
+                            .opacity(0.5)
+                            .into_any_element()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         // Sliding pieces, between where they were and where they land.
         let sliding: Vec<AnyElement> = if self.state.blindfold {
             Vec::new()
@@ -480,17 +577,23 @@ impl Render for ChessBoard {
                 })
                 .unwrap_or_default()
         };
-        let held = self.drag.as_ref().filter(|drag| drag.moved).map(|drag| {
-            deferred(
-                img(SharedString::from(looks::piece_path(&set, drag.piece)))
-                    .absolute()
-                    .left(drag.position.x - origin.x - side / 2.)
-                    .top(drag.position.y - origin.y - side / 2.)
-                    .size(side)
-                    .cursor_grabbing(),
-            )
-            .with_priority(1)
-        });
+        let held = self
+            .drag
+            .as_ref()
+            .filter(|drag| drag.moved && !self.state.blindfold)
+            .map(|drag| {
+                deferred(
+                    img(SharedString::from(looks::piece_path(&set, drag.piece)))
+                        .id("board-held")
+                        .test_support()
+                        .absolute()
+                        .left(drag.position.x - origin.x - side / 2.)
+                        .top(drag.position.y - origin.y - side / 2.)
+                        .size(side)
+                        .cursor(CursorStyle::PointingHand),
+                )
+                .with_priority(1)
+            });
         let coordinate_mode = self.state.coordinates.unwrap_or(frontend.coordinates);
         let gutter = (!self.state.preview && coordinate_mode == CoordinateMode::Outside)
             .then_some(OUTSIDE_GUTTER);
@@ -599,7 +702,11 @@ impl Render for ChessBoard {
                                                         {
                                                             this.pointer_moved(event.position, cx)
                                                         } else {
-                                                            this.release(event.position, cx)
+                                                            {
+                                                                this.ctrl |=
+                                                                    event.modifiers.control;
+                                                                this.release(event.position, cx)
+                                                            }
                                                         }
                                                     })
                                                     .ok();
@@ -614,6 +721,7 @@ impl Render for ChessBoard {
                                             {
                                                 releasing
                                                     .update(cx, |this, cx| {
+                                                        this.ctrl |= event.modifiers.control;
                                                         this.release(event.position, cx)
                                                     })
                                                     .ok();
@@ -628,6 +736,8 @@ impl Render for ChessBoard {
                     )
                     .children(squares)
                     .children(ghost)
+                    .children(fading)
+                    .children(pre_promotion)
                     .children(sliding)
                     .children(coordinates)
                     .children(badge)
@@ -647,12 +757,18 @@ impl Render for ChessBoard {
                 MouseButton::Right,
                 cx.listener(|this, event, _, cx| {
                     cx.stop_propagation();
-                    this.start_drawing(event, cx)
+                    this.right_press(event, cx)
                 }),
             )
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
                 if this.drawing.is_some() {
                     this.draw_to(event.position, cx)
+                }
+                this.hover_at(Some(event.position), cx);
+            }))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !*hovered {
+                    this.hover_at(None, cx);
                 }
             }))
             .on_mouse_up(
@@ -670,11 +786,17 @@ impl Render for ChessBoard {
             // The press's own frame has no window-wide listeners yet: a quick release lands here.
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, event: &MouseUpEvent, _, cx| this.release(event.position, cx)),
+                cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    this.ctrl |= event.modifiers.control;
+                    this.release(event.position, cx)
+                }),
             )
             .on_mouse_up_out(
                 MouseButton::Left,
-                cx.listener(|this, event: &MouseUpEvent, _, cx| this.release(event.position, cx)),
+                cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    this.ctrl |= event.modifiers.control;
+                    this.release(event.position, cx)
+                }),
             )
             .on_drop(cx.listener(|this, spare: &SparePiece, window, cx| {
                 this.drop_spare(spare.0, window.mouse_position(), cx)
@@ -685,7 +807,9 @@ impl Render for ChessBoard {
             .cursor(match self.state.edit {
                 Some(EditTool::Place(_) | EditTool::Trash) => CursorStyle::Crosshair,
                 Some(EditTool::Pointer) => CursorStyle::PointingHand,
-                None if self.state.movable.is_some() => CursorStyle::PointingHand,
+                // A board the player can move on, or premove on, takes the pointing hand, as
+                // Chessground's `manipulable` board does, during a drag too.
+                None if self.interactive() => CursorStyle::PointingHand,
                 None => CursorStyle::Arrow,
             })
     }
@@ -699,6 +823,14 @@ fn rounded<E: Styled>(element: E, corners: &Corners<Pixels>) -> E {
         .rounded_br(corners.bottom_right)
         .rounded_bl(corners.bottom_left)
 }
+
+/// Each promotion choice's hover group, in `keyboard::PROMOTION`'s order.
+const PROMOTION_GROUPS: [&str; 4] = [
+    "promotion-Queen",
+    "promotion-Knight",
+    "promotion-Rook",
+    "promotion-Bishop",
+];
 
 #[cfg(test)]
 mod description_tests {

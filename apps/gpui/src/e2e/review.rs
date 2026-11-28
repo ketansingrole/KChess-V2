@@ -200,3 +200,67 @@ fn an_endgame_is_reviewed_by_the_tablebases(cx: &mut gpui_kit::TestAppContext) {
         "{said}"
     );
 }
+
+/// A wrong answer while practising a game's mistakes goes back off the board: the board plays a
+/// move the moment it is made, and the page, refusing it, showed the same position again, which
+/// left the piece where it was dropped.
+#[gpui_kit::test]
+fn a_wrong_answer_in_practice_goes_back_off_the_board(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_board::analysis::{Open, open};
+    let mut app = Harness::start(cx);
+    let moves = ["e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"];
+    let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    // The key a review of this game has, which practice keeps to while the game is on the board.
+    let key = kchess_domain::records::review::review_key(start, &moves.map(String::from), None);
+    // Black to move after 3.Bc4, where 3...Nf6 walked into mate and 3...g6 holds.
+    let game = kchess_contracts::types::MistakeGame {
+        key: key.clone(),
+        fen: start.into(),
+        moves: moves.map(String::from).to_vec(),
+        white: None,
+        black: None,
+        player: Some(shakmaty::Color::Black),
+        game_id: None,
+        account: None,
+        played_at: 0.,
+    };
+    let drill = kchess_domain::library::Drill {
+        id: format!("{key}:5"),
+        fen: "r1bqkbnr/pppp1ppp/2n5/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 3 3".into(),
+        solution: vec!["g7g6".into()],
+        judgment: "blunder".into(),
+        due_at: 0.into(),
+        streak: 0.into(),
+        attempts: 0.into(),
+        variant: None,
+    };
+    app.with_window(|window, cx| {
+        open(
+            Open::Practise {
+                game,
+                items: vec![drill],
+            },
+            window,
+            cx,
+        )
+    });
+    app.wait_for("practice to start", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find("practice-hint").is_some()
+    });
+    let squares = |app: &mut Harness| {
+        shakmaty::Square::ALL
+            .map(|square| app.square_name(&square.to_string()))
+            .to_vec()
+    };
+    let before = squares(&mut app);
+    assert_eq!(app.square_name("g8"), "g8, black knight", "{before:?}");
+    let white_at_bottom = app.white_at_bottom();
+    app.drag_square("g8", "f6", white_at_bottom);
+    app.settle();
+    assert!(
+        app.shows("practice-solution"),
+        "the answer was taken as wrong"
+    );
+    assert_eq!(squares(&mut app), before);
+}

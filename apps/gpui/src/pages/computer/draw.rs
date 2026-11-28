@@ -277,7 +277,7 @@ impl Render for ComputerPage {
             .gap(widgets::STACK_GAP)
             .child(top)
             .child(surface::wheel(
-                div().child(crate::board::cached(&self.board)),
+                div().child(crate::board::resizable(&self.board)),
                 cx,
             ))
             .child(bottom)

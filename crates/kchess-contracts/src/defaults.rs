@@ -78,6 +78,8 @@ pub fn default_settings() -> Result<Settings, String> {
             close_action: CloseAction::Default,
             show_tray_icon: true,
             update_show_notes: true,
+            highlight_moves: true,
+            premove_queue: false,
         },
     })
 }

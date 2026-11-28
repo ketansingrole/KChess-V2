@@ -4,6 +4,10 @@
 use super::*;
 
 /// What one frame paints in the canvas.
+/// A destination dot's width, of a square's: Chessground's `radial-gradient(… 19%, … 20%)` on a
+/// square, whose farthest corner is half its diagonal away.
+const DOT: f32 = 0.195 * std::f32::consts::SQRT_2;
+
 pub(super) struct Frame {
     pub(super) state: BoardState,
     pub(super) pieces: Board,
@@ -13,8 +17,8 @@ pub(super) struct Frame {
     pub(super) hovered: Option<Square>,
     pub(super) show_dests: bool,
     pub(super) set: String,
-    /// The queued premove's squares, and the targets of a piece picked for one.
-    pub(super) queued: Option<(Square, Square)>,
+    /// The queued premoves' squares, and the targets of a piece picked for one.
+    pub(super) queued: Vec<(Square, Square)>,
     pub(super) premove_dests: Vec<Square>,
     /// Where the picked pocket piece may be dropped.
     pub(super) drop_dests: Vec<Square>,
@@ -60,7 +64,7 @@ pub(super) fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Win
                 } else if frame.pieces.piece_at(to).is_some() {
                     paint_corners(window, cell, rounded(to), rgba(DEST_CORNER));
                 } else {
-                    let diameter = side * 0.311;
+                    let diameter = side * DOT;
                     let dot = Bounds::new(
                         point(
                             cell.center().x - diameter / 2.,
@@ -82,7 +86,7 @@ pub(super) fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Win
                 continue;
             }
             let cell = at(to);
-            let diameter = side * 0.311;
+            let diameter = side * DOT;
             let dot = Bounds::new(
                 point(
                     cell.center().x - diameter / 2.,
@@ -93,14 +97,22 @@ pub(super) fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Win
             window.paint_quad(gpui_kit::fill(dot, rgba(DEST_DOT)).corner_radii(diameter / 2.));
         }
     }
-    if let Some((from, to)) = frame.queued {
+    for &(from, to) in &frame.queued {
         fill(window, from, PREMOVE);
         fill(window, to, PREMOVE);
     }
     if frame.show_dests {
         for &to in &frame.premove_dests {
             let cell = at(to);
-            let diameter = side * 0.311;
+            if frame.hovered == Some(to) {
+                fill(window, to, PREMOVE_HOVER);
+                continue;
+            }
+            if frame.pieces.piece_at(to).is_some() {
+                paint_corners(window, cell, rounded(to), rgba(PREMOVE_CORNER));
+                continue;
+            }
+            let diameter = side * DOT;
             let dot = Bounds::new(
                 point(
                     cell.center().x - diameter / 2.,
@@ -154,6 +166,10 @@ fn paint_pieces(
     }
 }
 
+/// Lichess draws every arrow and circle a little see-through, so the pieces show under them
+/// (`.cg-shapes { opacity: 0.6 }`).
+const SHAPES: f32 = 0.6;
+
 /// Chessground's circle: a ring 4/64 of a square wide, 0.47 of a square from
 /// its centre.
 fn paint_circle(circle: &Circle, cell: Bounds<Pixels>, window: &mut Window) {
@@ -172,7 +188,7 @@ fn paint_circle(circle: &Circle, cell: Bounds<Pixels>, window: &mut Window) {
         )
         .corner_radii(outer)
         .border_widths(width)
-        .border_color(rgb(circle.color)),
+        .border_color(Hsla::from(rgb(circle.color)).opacity(SHAPES)),
     );
 }
 
@@ -268,7 +284,7 @@ fn paint_arrow(
     path.close();
     if let Ok(path) = path.build() {
         let mut color = rgba((arrow.color << 8) | 0xff);
-        color.a = arrow.opacity;
+        color.a = arrow.opacity * SHAPES;
         window.paint_path(path, color);
     }
 }

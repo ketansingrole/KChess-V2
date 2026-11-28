@@ -183,7 +183,7 @@ impl Render for GameReplay {
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(line(!orientation))
-            .child(board::cached(&self.board))
+            .child(board::resizable(&self.board))
             .child(line(orientation));
         let board_column = surface::wheel(board_column, cx);
 

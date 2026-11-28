@@ -711,6 +711,11 @@ fn result_rows(rows: Rows, palette: &Palette) -> Vec<AnyElement> {
 }
 
 /// One breakdown: its title and its rows.
+/// How many columns of cards fit `width`: one per 300 px and its gap, up to three.
+fn columns(width: Pixels) -> usize {
+    ((f32::from(width) + 16.) / 316.).floor().clamp(1., 3.) as usize
+}
+
 fn section(title: &'static str, rows: Vec<AnyElement>, palette: &Palette) -> Div {
     widgets::card(palette)
         .w_full()
@@ -968,7 +973,13 @@ impl Render for InsightsPage {
                 )
                 .into_any_element()
         } else if self.loading.busy() && report.is_none() {
-            widgets::loading("Loading insights…", &palette).into_any_element()
+            widgets::loading_cards(
+                "insights-loading",
+                "Loading insights…",
+                columns(self.area.size_in(window).width),
+                &palette,
+            )
+            .into_any_element()
         } else if report.is_some() && total <= 0. && self.player_database().is_some() {
             // A downloaded player's games come from the Database page, not History.
             widgets::card(&palette)
@@ -1125,7 +1136,7 @@ impl InsightsPage {
             .iter()
             .map(|(_, rows)| 70. + rows.len() as f32 * 34. + 16.)
             .collect();
-        let columns = ((f32::from(width) + 16.) / 316.).floor().clamp(1., 3.) as usize;
+        let columns = columns(width);
         let mut starts = balance(&heights, columns);
         starts.push(parts.len());
         let mut parts = parts.into_iter();

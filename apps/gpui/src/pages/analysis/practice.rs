@@ -235,6 +235,8 @@ impl AnalysisPage {
         practice.helped = true;
         practice.status = Status::Wrong;
         self.redraw(cx);
+        // The board played the move at once; a wrong answer goes back off it.
+        self.board.update(cx, |board, cx| board.undo_move(cx));
         Some(false)
     }
 

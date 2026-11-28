@@ -142,8 +142,8 @@
   "defaultBoard": "brown",
   "animationMs": {
     "none": 0,
-    "fast": 100,
-    "normal": 180,
-    "slow": 350
+    "fast": 120,
+    "normal": 250,
+    "slow": 500
   }
 }

@@ -549,7 +549,7 @@ impl Render for KnightPaths {
         let board_column = under_board::column(
             "knight-column",
             board_size,
-            crate::board::cached(&self.board),
+            crate::board::resizable(&self.board),
             row,
             voice_line,
         );

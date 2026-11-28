@@ -386,6 +386,8 @@ impl PuzzleBoard {
     fn on_move(&mut self, uci: &str, cx: &mut Context<Self>) {
         if !self.playing() {
             self.redraw(cx);
+            // With no puzzle on the board the redraw sends nothing, so the move goes back here.
+            self.board.update(cx, |board, cx| board.undo_move(cx));
             return;
         }
         let Some(board) = &mut self.on_board else {
@@ -701,7 +703,7 @@ impl Render for PuzzleBoard {
                 gpui_kit::transparent_black()
             })
             .m(px(-3.))
-            .child(crate::board::cached(&self.board));
+            .child(crate::board::resizable(&self.board));
         // Crazyhouse drills (a mistake from a Crazyhouse game) show the pockets to drop from.
         let [top_pocket, bottom_pocket] =
             [!orientation, orientation].map(|color| crate::board::pocket(&self.board, color, cx));

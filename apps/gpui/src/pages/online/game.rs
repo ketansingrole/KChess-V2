@@ -633,7 +633,7 @@ impl OnlinePage {
             .flex_none()
             .gap(widgets::STACK_GAP)
             .child(line(!orientation))
-            .child(crate::board::cached(&self.board))
+            .child(crate::board::resizable(&self.board))
             .child(line(orientation));
         let board_column = surface::wheel(board_column, cx);
 

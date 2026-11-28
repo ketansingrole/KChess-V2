@@ -101,6 +101,101 @@ pub fn loading(text: impl Into<SharedString>, palette: &Palette) -> Div {
         .child(text.into())
 }
 
+/// The skeleton's color for placeholders on a card. The kit's is the accented background, one
+/// step from a card's in light but too close to it in dark, where its bars all but vanished: dark
+/// takes the next step up.
+fn placeholder_color(palette: &Palette) -> Hsla {
+    if palette.dark {
+        palette.border_accented
+    } else {
+        palette.accented
+    }
+}
+
+/// `rows` placeholder result rows, a label over a line, in the kit's pulsing skeleton.
+fn placeholder_rows(rows: usize, palette: &Palette) -> impl Iterator<Item = Div> {
+    use gpui_kit::component::skeleton::Skeleton;
+    let bar = placeholder_color(palette);
+    (0..rows).map(move |row| {
+        v_flex()
+            .gap(px(6.))
+            .child(
+                Skeleton::new()
+                    .bg(bar)
+                    .w(relative(if row % 2 == 0 { 0.45 } else { 0.6 }))
+                    .h(px(10.))
+                    .rounded(radii::BOX),
+            )
+            .child(
+                Skeleton::new()
+                    .bg(bar.opacity(0.5))
+                    .h(px(8.))
+                    .rounded(radii::BOX),
+            )
+    })
+}
+
+/// A card's or list's rows loading: `rows` placeholder rows under the heading already shown, so
+/// the card keeps its shape until they come. Read as a status named `text` ("Loading games…").
+pub fn loading_rows(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    rows: usize,
+    palette: &Palette,
+) -> impl IntoElement {
+    v_flex()
+        .id(id)
+        .test_support()
+        .role(Role::Status)
+        .aria_label(text.into())
+        .w_full()
+        .gap(px(12.))
+        .children(placeholder_rows(rows, palette))
+}
+
+/// A page loading its cards: `columns` columns of placeholder cards, each a heading and result
+/// rows in the kit's pulsing skeleton, so the page keeps its shape until they come. Read as a
+/// status named `text` ("Loading insights…").
+pub fn loading_cards(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    columns: usize,
+    palette: &Palette,
+) -> impl IntoElement {
+    use gpui_kit::component::skeleton::Skeleton;
+    // Rows per card, varied so the columns read as cards of different lengths.
+    const ROWS: [usize; 6] = [2, 4, 3, 5, 3, 4];
+    let columns = columns.max(1);
+    let card = |rows: usize| {
+        card(palette)
+            .w_full()
+            .gap(px(12.))
+            .child(
+                Skeleton::new()
+                    .bg(placeholder_color(palette))
+                    .w(px(120.))
+                    .h(px(14.))
+                    .rounded(radii::BOX)
+                    .mb(px(4.)),
+            )
+            .children(placeholder_rows(rows, palette))
+    };
+    h_flex()
+        .id(id)
+        .test_support()
+        .role(Role::Status)
+        .aria_label(text.into())
+        .items_start()
+        .gap(px(16.))
+        .children((0..columns).map(|column| {
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap(px(16.))
+                .children((0..2).map(|n| card(ROWS[(column * 2 + n) % ROWS.len()])))
+        }))
+}
+
 /// "Move 3 · You play White · Your move": parts joined by middle dots that wrap whole, so a
 /// line never ends on a dot or breaks inside a part.
 pub fn dotted(parts: impl IntoIterator<Item = impl Into<SharedString>>) -> Div {
