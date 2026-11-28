@@ -13,7 +13,7 @@ pub(super) const FACE_GAP: Pixels = px(16.);
 /// what is in the board's place.
 pub(super) fn mode_tabs(mode: Mode, palette: &Palette, cx: &mut Context<LocalPage>) -> Div {
     let page = cx.entity().downgrade();
-    div().h(MODE_BAR).child(widgets::pills(
+    div().h(MODE_BAR).child(widgets::header_pills(
         "local-mode",
         [("users-round", "Shared board"), ("timer", "Chess clock")]
             .into_iter()
@@ -30,7 +30,6 @@ pub(super) fn mode_tabs(mode: Mode, palette: &Palette, cx: &mut Context<LocalPag
             crate::prefs::set(cx, MODE_KEY, mode);
             page.update(cx, |page, cx| page.after_change(cx)).ok();
         },
-        false,
         palette,
     ))
 }

@@ -833,7 +833,7 @@ impl Render for StudiesPage {
                     .pt(PAGE_TOP)
                     .pb(PAGE_BOTTOM)
                     .when(connected, |page| {
-                        page.child(div().mb(px(20.)).child(widgets::pills(
+                        page.child(div().mb(px(20.)).child(widgets::header_pills(
                             "studies-tabs",
                             vec![
                                 Pill {
@@ -867,7 +867,6 @@ impl Render for StudiesPage {
                                     window.refresh();
                                 }
                             },
-                            false,
                             &palette,
                         )))
                     })
