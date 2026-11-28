@@ -64,7 +64,7 @@ const fn quick(id: &'static str, icon: &'static str, keywords: &'static str) -> 
     })
 }
 
-pub(crate) static TOGGLES: [Toggle; 33] = [
+pub(crate) static TOGGLES: [Toggle; 34] = [
     Toggle {
         id: "legal-moves",
         title: "Show possible moves",
@@ -91,6 +91,15 @@ pub(crate) static TOGGLES: [Toggle; 33] = [
         on: |s| s.frontend.premove,
         set: |s, on| s.frontend.premove = on,
         quick: quick("premove", "fast-forward", "queue move"),
+    },
+    Toggle {
+        id: "premove-queue",
+        title: "Several premoves in a row",
+        hint: Some("Each premove adds to the line and plays on its turn; Lichess keeps one"),
+        section: Section::Gameplay,
+        on: |s| s.frontend.premove_queue,
+        set: |s, on| s.frontend.premove_queue = on,
+        quick: None,
     },
     Toggle {
         id: "confirm-move",

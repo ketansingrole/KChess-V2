@@ -192,6 +192,9 @@ pub struct FrontendPreferences {
     /// Mark the last move and a king in check on the board, and the square a dragged piece left
     /// (Lichess's Highlight setting).
     pub highlight_moves: bool,
+    /// Premoves line up, each played as its turn comes, instead of a new one replacing the last
+    /// as on Lichess.
+    pub premove_queue: bool,
 }
 
 /// Every setting: the core's preferences and the desktop's.

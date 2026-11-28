@@ -19,6 +19,7 @@ The board editor sets up well-known openings and endgames in one click, and Gues
 - Clean up in Settings → Storage removes the files earlier versions of KChess left behind, which nothing uses any more.
 - Drag the corner of the board to make it smaller, and every board page keeps that size. Double-click the corner to make the board as large as fits again.
 - Settings can turn off the highlight of the last move and of a king in check, as on Lichess.
+- Several premoves in a row, in Settings → Gameplay, lets you line up premoves that play one after another as each turn comes. It is off unless you turn it on, so a new premove replaces the last one as on Lichess.
 
 ### Changed
 

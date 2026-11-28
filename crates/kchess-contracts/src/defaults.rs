@@ -79,6 +79,7 @@ pub fn default_settings() -> Result<Settings, String> {
             show_tray_icon: true,
             update_show_notes: true,
             highlight_moves: true,
+            premove_queue: false,
         },
     })
 }

@@ -226,8 +226,11 @@ pub struct ChessBoard {
     drawn: Vec<Drawn>,
     /// A drawing under way.
     drawing: Option<input::Drawing>,
-    /// A move queued for the next turn (a premove).
-    queued: Option<(Square, Square)>,
+    /// The premoves waiting, first to play first: one, which a new premove replaces as on
+    /// Lichess, or a line of them with Settings' premove queue (`queue_mode`).
+    queued: Vec<(Square, Square)>,
+    /// Settings' premove queue was on when the player last pressed.
+    queue_mode: bool,
     /// Pieces sliding to where the new position put them.
     animation: Option<Animation>,
     _animating: Option<Task<()>>,
@@ -241,8 +244,8 @@ pub struct ChessBoard {
     promotion_pre: bool,
     /// The player's move the board played and the page has not answered yet.
     landed: Option<(Square, Square)>,
-    /// The piece a queued promotion premove becomes, chosen when it was queued.
-    pre_promotion: Option<(Square, Square, Role)>,
+    /// The pieces queued promotion premoves become, chosen when they were queued.
+    pre_promotion: Vec<(Square, Square, Role)>,
     /// Ctrl was held as the move was made: the picker asks, whatever Settings say (lila's
     /// `ctrlKey`).
     ctrl: bool,
@@ -278,7 +281,8 @@ impl ChessBoard {
             pieces: board_of(&state.fen),
             drawn: Vec::new(),
             drawing: None,
-            queued: None,
+            queued: Vec::new(),
+            queue_mode: false,
             animation: None,
             _animating: None,
             given: state.clone(),
@@ -290,7 +294,7 @@ impl ChessBoard {
             drag: None,
             promotion: None,
             promotion_pre: false,
-            pre_promotion: None,
+            pre_promotion: Vec::new(),
             landed: None,
             ctrl: false,
             promotion_choice: 0,
@@ -351,7 +355,7 @@ impl ChessBoard {
         // A premove's picker stays while its premove waits, until the position changes.
         if self.promotion.is_some_and(|(from, to)| {
             if self.promotion_pre {
-                self.queued != Some((from, to))
+                !self.queued.contains(&(from, to))
             } else {
                 !state.dests.contains_key(&from)
             }
@@ -429,20 +433,65 @@ impl ChessBoard {
         }));
     }
 
-    /// A queued premove plays once its side is to move and it is legal; otherwise it is dropped.
+    /// The first premove waiting plays once its side is to move and it is legal, and the rest
+    /// wait for their turns; one that can no longer be played drops it and all after it.
     fn play_queued(&mut self, cx: &mut Context<Self>) {
-        let Some((from, to)) = self.queued else {
+        let Some(&(from, to)) = self.queued.first() else {
             return;
         };
         let mine = self.pieces.piece_at(from).map(|piece| piece.color);
         if self.state.movable.is_some() && self.state.movable == mine {
-            self.queued = None;
+            self.queued.remove(0);
             if self.reaches(from, to) {
                 self.play_move(from, to, true, true, cx);
+            } else {
+                self.clear_queue();
             }
         } else if self.state.premove.is_none() || self.state.premove != mine {
-            self.queued = None;
+            self.clear_queue();
         }
+    }
+
+    /// Take back every premove waiting, and the pieces chosen for them.
+    fn clear_queue(&mut self) -> bool {
+        let had = !self.queued.is_empty();
+        self.queued.clear();
+        self.pre_promotion.clear();
+        had
+    }
+
+    /// Queue a premove: after the others with the premove queue, else in place of the one
+    /// waiting.
+    fn queue(&mut self, from: Square, to: Square) {
+        if !self.queue_mode {
+            self.clear_queue();
+        }
+        self.queued.push((from, to));
+    }
+
+    /// A pawn moving to the last rank.
+    fn promotes(board: &Board, from: Square, to: Square) -> bool {
+        board.piece_at(from).is_some_and(|piece| {
+            piece.role == Role::Pawn && matches!(to.rank(), Rank::First | Rank::Eighth)
+        })
+    }
+
+    /// The board as it will stand after the premoves waiting, where the next one is planned
+    /// with the premove queue on; the board as it stands without it.
+    fn planned(&self) -> Board {
+        let mut board = self.pieces.clone();
+        if self.queue_mode {
+            for &(from, to) in &self.queued {
+                let role = Self::promotes(&board, from, to).then(|| {
+                    self.pre_promotion
+                        .iter()
+                        .find(|&&(f, t, _)| (f, t) == (from, to))
+                        .map_or(Role::Queen, |&(_, _, role)| role)
+                });
+                apply_move(&mut board, from, to, role);
+            }
+        }
+        board
     }
 
     fn square_size(&self) -> Pixels {
@@ -477,21 +526,22 @@ impl ChessBoard {
         Some(Square::from_coords(File::new(file), Rank::new(rank)))
     }
 
-    /// Where the piece on `from` may be premoved, after the move just made.
+    /// Where the piece on `from` may be premoved, after the move just made (and, with the
+    /// premove queue, after the premoves waiting).
     fn premove_targets(&self, from: Square) -> Vec<Square> {
-        premove::targets(
-            &self.pieces,
-            from,
-            self.state.last_move,
-            self.state.premove_rules,
-        )
+        let last = if self.queue_mode {
+            self.queued.last().copied().or(self.state.last_move)
+        } else {
+            self.state.last_move
+        };
+        premove::targets(&self.planned(), from, last, self.state.premove_rules)
     }
 
     /// A premove from `from` to `to` can be queued.
     fn premoves_to(&self, from: Square, to: Square) -> bool {
         self.state.movable.is_none()
             && self
-                .pieces
+                .planned()
                 .piece_at(from)
                 .is_some_and(|piece| Some(piece.color) == self.state.premove)
             && self.premove_targets(from).contains(&to)

@@ -17,8 +17,8 @@ pub(super) struct Frame {
     pub(super) hovered: Option<Square>,
     pub(super) show_dests: bool,
     pub(super) set: String,
-    /// The queued premove's squares, and the targets of a piece picked for one.
-    pub(super) queued: Option<(Square, Square)>,
+    /// The queued premoves' squares, and the targets of a piece picked for one.
+    pub(super) queued: Vec<(Square, Square)>,
     pub(super) premove_dests: Vec<Square>,
     /// Where the picked pocket piece may be dropped.
     pub(super) drop_dests: Vec<Square>,
@@ -97,7 +97,7 @@ pub(super) fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Win
             window.paint_quad(gpui_kit::fill(dot, rgba(DEST_DOT)).corner_radii(diameter / 2.));
         }
     }
-    if let Some((from, to)) = frame.queued {
+    for &(from, to) in &frame.queued {
         fill(window, from, PREMOVE);
         fill(window, to, PREMOVE);
     }

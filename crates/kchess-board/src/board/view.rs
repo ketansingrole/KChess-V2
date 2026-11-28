@@ -422,12 +422,13 @@ impl Render for ChessBoard {
                 });
             }
         }
+        // With the premove queue the pieces stand where the premoves waiting leave them.
+        let planned = self.planned();
         let premove_dests = self
             .selected
             .filter(|&square| {
                 self.state.movable.is_none()
-                    && self
-                        .pieces
+                    && planned
                         .piece_at(square)
                         .is_some_and(|piece| Some(piece.color) == self.state.premove)
             })
@@ -440,14 +441,14 @@ impl Render for ChessBoard {
             .unwrap_or_default();
         let frame = Frame {
             state: shown,
-            pieces: self.pieces.clone(),
+            pieces: planned,
             selected: self.selected,
             lifted,
             hovered,
             // Blindfold play keeps the dots to itself too, as Lichess does (`showDests`).
             show_dests: frontend.show_legal_moves && !self.state.blindfold,
             set: set.clone(),
-            queued: self.queued,
+            queued: self.queued.clone(),
             premove_dests,
             drop_dests: self
                 .selected_drop
@@ -501,7 +502,10 @@ impl Render for ChessBoard {
         // The piece a promotion premove becomes waits faded on its square (lila's auto shape).
         let pre_promotion = self
             .pre_promotion
-            .filter(|&(from, to, _)| self.queued == Some((from, to)))
+            .first()
+            .copied()
+            // With the premove queue the board shows the piece itself, where the premoves leave it.
+            .filter(|&(from, to, _)| !self.queue_mode && self.queued.contains(&(from, to)))
             .and_then(|(from, to, role)| {
                 let color = self.pieces.piece_at(from)?.color;
                 let (column, row) = self.cell(to);

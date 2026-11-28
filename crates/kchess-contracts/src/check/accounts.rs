@@ -130,7 +130,7 @@ fn settings_messages(keys: &[&str]) -> Msg {
         ["soundEnabled"] => "Invalid sound setting.",
         ["soundVolume"] => "Invalid sound volume.",
         ["enginePath"] => "Invalid engine path.",
-        ["premove"] => "Invalid premove setting.",
+        ["premove" | "premoveQueue"] => "Invalid premove setting.",
         ["promotion"] => "Invalid promotion setting.",
         ["showLegalMoves"] => "Invalid legal moves setting.",
         ["highlightMoves"] => "Invalid highlight setting.",
@@ -287,6 +287,8 @@ struct SentSettings {
     update_show_notes: bool,
     #[serde(default = "on")]
     highlight_moves: bool,
+    #[serde(default)]
+    premove_queue: bool,
 }
 
 fn on() -> bool {
@@ -377,6 +379,7 @@ impl Validate for Settings {
                 show_tray_icon: s.show_tray_icon,
                 update_show_notes: s.update_show_notes,
                 highlight_moves: s.highlight_moves,
+                premove_queue: s.premove_queue,
             },
         })
     }
@@ -632,6 +635,7 @@ mod tests {
             "showTrayIcon",
             "updateShowNotes",
             "highlightMoves",
+            "premoveQueue",
         ] {
             fields.push((flag, J::Bool(true)));
         }
@@ -686,6 +690,7 @@ mod tests {
             "showTrayIcon",
             "updateShowNotes",
             "highlightMoves",
+            "premoveQueue",
         ];
         let older: Vec<_> = settings()
             .into_iter()
@@ -700,6 +705,7 @@ mod tests {
         assert!(normalized.frontend.show_tray_icon);
         assert!(normalized.frontend.update_show_notes);
         assert!(normalized.frontend.highlight_moves);
+        assert!(!normalized.frontend.premove_queue, "off unless chosen");
         let sent = check::<Settings>(obj(settings())).unwrap();
         assert_eq!(sent.frontend.close_action, crate::types::CloseAction::Quit);
         assert!(sent.frontend.open_at_login);

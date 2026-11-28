@@ -128,6 +128,7 @@ impl ChessBoard {
             return;
         }
         self.ctrl = event.modifiers.control;
+        self.queue_mode = crate::settings::frontend(cx).premove_queue;
         if event.modifiers.shift && self.state.edit.is_none() {
             return self.start_drawing(event, false, cx);
         }
@@ -163,7 +164,7 @@ impl ChessBoard {
                 });
             }
             // A premove clicked in counts as a click-to-move.
-            Press::Queued if self.queued.is_some() => {
+            Press::Queued if !self.queued.is_empty() => {
                 self.dragged = false;
                 self.ask_pre_promotion(cx);
             }
@@ -206,11 +207,17 @@ impl ChessBoard {
             }
             self.selected = None;
             if self.premoves_to(from, square) {
-                self.queued = Some((from, square));
+                self.queue(from, square);
                 return Press::Queued;
             }
         }
-        match self.pieces.piece_at(square) {
+        // While premoving with the queue, pieces are picked where the premoves left them.
+        let board = if self.state.movable.is_none() {
+            self.planned()
+        } else {
+            self.pieces.clone()
+        };
+        match board.piece_at(square) {
             Some(piece)
                 if Some(piece.color) == self.state.movable
                     || (Some(piece.color) == self.state.premove
@@ -224,7 +231,7 @@ impl ChessBoard {
             }
             _ => {
                 self.selected = None;
-                if self.queued.take().is_some() {
+                if self.clear_queue() {
                     Press::Queued
                 } else {
                     Press::Clear
@@ -249,7 +256,7 @@ impl ChessBoard {
             return;
         }
         if !event.modifiers.control {
-            self.queued = None;
+            self.clear_queue();
         }
         self.selected = None;
         self.selected_drop = None;
@@ -429,7 +436,10 @@ impl ChessBoard {
         // As Chessground's `end`: a premove waiting goes, and a drag that left its square moves
         // there, premoves there or lets go. The moves of a quick drag may all have come before
         // the board was listening.
-        self.queued = None;
+        // The premove queue keeps its line while a piece is picked up to add to it.
+        if !self.queue_mode {
+            self.clear_queue();
+        }
         let started = drag.moved || far(drag.start, position);
         if let Some(to) = target
             && started
@@ -441,7 +451,7 @@ impl ChessBoard {
                 self.play_move(drag.from, to, false, false, cx);
             } else if self.premoves_to(drag.from, to) {
                 self.dragged = true;
-                self.queued = Some((drag.from, to));
+                self.queue(drag.from, to);
                 self.ask_pre_promotion(cx);
             }
         }
@@ -472,9 +482,9 @@ impl ChessBoard {
             let mode = crate::settings::frontend(cx).promotion;
             let chosen = self
                 .pre_promotion
-                .take()
-                .filter(|&(f, t, _)| premove && (f, t) == (from, to))
-                .map(|(_, _, role)| role);
+                .iter()
+                .position(|&(f, t, _)| premove && (f, t) == (from, to))
+                .map(|index| self.pre_promotion.remove(index).2);
             let auto = !self.ctrl
                 && (mode == PromotionMode::Queen || (premove && mode == PromotionMode::Premove));
             if let Some(role) = chosen.or(auto.then_some(Role::Queen)) {
@@ -531,20 +541,25 @@ impl ChessBoard {
     /// A promotion premove just queued: it becomes a queen at once where Settings say so
     /// (unless Ctrl was held), or the picker asks now, while there is time.
     fn ask_pre_promotion(&mut self, cx: &mut Context<Self>) {
-        // A piece chosen for an earlier premove is not this one's.
-        self.pre_promotion = None;
-        let Some((from, to)) = self.queued else {
+        let Some(&(from, to)) = self.queued.last() else {
             return;
         };
-        let promotes = self.pieces.piece_at(from).is_some_and(|piece| {
-            piece.role == Role::Pawn && matches!(to.rank(), Rank::First | Rank::Eighth)
-        });
-        if !promotes {
+        // A piece chosen for an earlier premove on these squares is not this one's.
+        self.pre_promotion.retain(|&(f, t, _)| (f, t) != (from, to));
+        let before = self.queued.len() - 1;
+        let mut board = self.pieces.clone();
+        if self.queue_mode {
+            for &(f, t) in &self.queued[..before] {
+                let role = Self::promotes(&board, f, t).then_some(Role::Queen);
+                apply_move(&mut board, f, t, role);
+            }
+        }
+        if !Self::promotes(&board, from, to) {
             return;
         }
         let mode = crate::settings::frontend(cx).promotion;
         if !self.ctrl && mode != PromotionMode::Ask {
-            self.pre_promotion = Some((from, to, Role::Queen));
+            self.pre_promotion.push((from, to, Role::Queen));
         } else {
             self.promotion = Some((from, to));
             self.promotion_pre = true;
@@ -557,7 +572,7 @@ impl ChessBoard {
             return;
         };
         if self.promotion_pre {
-            self.pre_promotion = Some((from, to, role));
+            self.pre_promotion.push((from, to, role));
         } else {
             if let Some(pawn) = self.pieces.piece_at(to) {
                 self.pieces.set_piece_at(
@@ -579,8 +594,12 @@ impl ChessBoard {
             return;
         }
         if self.promotion_pre {
-            self.queued = None;
-            self.pre_promotion = None;
+            // The premove it asked about goes; with the queue, the ones before it stay.
+            if self.queue_mode {
+                self.queued.pop();
+            } else {
+                self.clear_queue();
+            }
             cx.notify();
         } else {
             self.undo_move(cx);
@@ -682,10 +701,12 @@ impl ChessBoard {
             self.edit_key(tool, square, cx);
             return true;
         }
-        let busy = self.selected.is_some() || self.selected_drop.is_some() || self.queued.is_some();
+        let busy =
+            self.selected.is_some() || self.selected_drop.is_some() || !self.queued.is_empty();
         cx.emit(BoardEvent::Select(square));
         // The keyboard holds no Ctrl.
         self.ctrl = false;
+        self.queue_mode = crate::settings::frontend(cx).premove_queue;
         let press = self.press_key(square);
         match press {
             Press::Drop(role) => self.drop_piece(role, square, cx),
@@ -693,7 +714,7 @@ impl ChessBoard {
                 self.dragged = false;
                 self.play_move(from, square, false, true, cx);
             }
-            Press::Queued if self.queued.is_some() => self.ask_pre_promotion(cx),
+            Press::Queued if !self.queued.is_empty() => self.ask_pre_promotion(cx),
             Press::Pick { .. } | Press::Queued | Press::Clear => {}
         }
         cx.notify();
@@ -706,7 +727,9 @@ impl ChessBoard {
         let press = self.decide(square);
         // A piece picked up ends a premove waiting, as a release does.
         if let Press::Pick { again, .. } = press {
-            self.queued = None;
+            if !self.queue_mode {
+                self.clear_queue();
+            }
             if again {
                 self.selected = None;
             }
@@ -740,7 +763,7 @@ impl ChessBoard {
     fn let_go(&mut self, cx: &mut Context<Self>) -> bool {
         let busy = self.selected.take().is_some()
             | self.selected_drop.take().is_some()
-            | self.queued.take().is_some();
+            | self.clear_queue();
         if busy {
             cx.notify();
         }
@@ -760,7 +783,7 @@ impl ChessBoard {
         } else if self.state.movable.is_some() {
             self.state.dests.get(&square).cloned().unwrap_or_default()
         } else if self
-            .pieces
+            .planned()
             .piece_at(square)
             .is_some_and(|piece| Some(piece.color) == self.state.premove)
         {
@@ -1008,7 +1031,7 @@ mod pointer_tests {
         );
         board.update(cx, |board, _| {
             assert_eq!(board.state.movable, None);
-            assert_eq!(board.queued, Some((Square::G1, Square::F3)));
+            assert_eq!(board.queued, [(Square::G1, Square::F3)]);
         });
     }
 
@@ -1023,7 +1046,7 @@ mod pointer_tests {
         click(&board, Square::F3, cx);
         click(&board, Square::B1, cx);
         board.update(cx, |board, _| {
-            assert_eq!(board.queued, None);
+            assert_eq!(board.queued, []);
             assert_eq!(board.selected, Some(Square::B1));
         });
     }
@@ -1087,12 +1110,12 @@ mod pointer_tests {
             board.finish_drawing(at(Square::A7), cx);
             assert_eq!(
                 board.queued,
-                Some((Square::G1, Square::F3)),
+                [(Square::G1, Square::F3)],
                 "Ctrl keeps the premove"
             );
             board.right_press(&right(Square::A7, false), cx);
             board.finish_drawing(at(Square::A7), cx);
-            assert_eq!(board.queued, None);
+            assert_eq!(board.queued, []);
         });
     }
 
@@ -1163,12 +1186,12 @@ mod pointer_tests {
             };
             board.press(&event, cx);
             board.release(at(Square::A8), cx);
-            assert_eq!(board.queued, Some((Square::A7, Square::A8)));
+            assert_eq!(board.queued, [(Square::A7, Square::A8)]);
             assert!(board.promotion_pre, "the picker asks for the premove");
             board.promote(Role::Knight, cx);
             assert_eq!(
                 board.queued,
-                Some((Square::A7, Square::A8)),
+                [(Square::A7, Square::A8)],
                 "the premove stays"
             );
             // Black answers, and the premove plays as the knight chosen.
@@ -1189,10 +1212,7 @@ mod pointer_tests {
         }
         board.update(cx, |board, _| {
             assert_eq!(board.promotion, None, "no picker without Ctrl");
-            assert_eq!(
-                board.pre_promotion,
-                Some((Square::A7, Square::A8, Role::Queen))
-            );
+            assert_eq!(board.pre_promotion, [(Square::A7, Square::A8, Role::Queen)]);
         });
         assert_eq!(*moves.borrow(), ["e1e2"]);
     }
@@ -1383,7 +1403,7 @@ mod pointer_tests {
             board.press(&event, cx);
             board.release(at(Square::A8), cx);
             assert!(board.promotion_pre, "the picker asks again");
-            assert_eq!(board.pre_promotion, None);
+            assert_eq!(board.pre_promotion, []);
         });
     }
 
@@ -1401,6 +1421,122 @@ mod pointer_tests {
             board.promotion_choice = 0;
             assert!(board.keyboard("down", cx));
             assert_eq!(board.promotion_choice, 1, "the knight, under the queen");
+        });
+    }
+
+    /// The page's position after `fen`, White playing and premoving.
+    fn answer(board: &Entity<ChessBoard>, fen: &str, cx: &mut TestAppContext) {
+        board.update(cx, |board, cx| {
+            let position =
+                kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, fen)
+                    .expect("a position");
+            let mut state = BoardState::of(&position, Color::White, Some(Color::White), None);
+            state.premove = Some(Color::White);
+            board.set_state(state, cx);
+        });
+    }
+
+    fn queue_on(cx: &mut TestAppContext) {
+        cx.update(|cx| kchess_app::settings::change(cx, |s| s.frontend.premove_queue = true));
+    }
+
+    /// With Settings' premove queue, premoves line up, each planned where the one before
+    /// leaves the pieces (the knight premoved to f3 goes on from there), and each plays as its
+    /// turn comes.
+    #[gpui_kit::test]
+    fn queued_premoves_play_one_a_turn(cx: &mut TestAppContext) {
+        let (board, moves) = board(cx, START);
+        queue_on(cx);
+        for square in [
+            Square::E2,
+            Square::E4,
+            Square::G1,
+            Square::F3,
+            Square::F3,
+            Square::G5,
+        ] {
+            click(&board, square, cx);
+        }
+        board.update(cx, |board, _| {
+            assert_eq!(
+                board.queued,
+                [(Square::G1, Square::F3), (Square::F3, Square::G5)]
+            );
+            assert!(
+                board.planned().piece_at(Square::G5).is_some(),
+                "the knight as planned"
+            );
+        });
+        answer(
+            &board,
+            "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+            cx,
+        );
+        board.update(cx, |board, _| {
+            assert_eq!(board.queued, [(Square::F3, Square::G5)])
+        });
+        answer(
+            &board,
+            "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+            cx,
+        );
+        assert_eq!(
+            *moves.borrow(),
+            ["e2e4", "g1f3"],
+            "the next waits for its turn"
+        );
+        answer(
+            &board,
+            "rnbqkbnr/ppp2ppp/3p4/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 3",
+            cx,
+        );
+        assert_eq!(*moves.borrow(), ["e2e4", "g1f3", "f3g5"]);
+        board.update(cx, |board, _| assert!(board.queued.is_empty()));
+    }
+
+    /// A queued premove the opponent's move made impossible goes, and every one after it, as
+    /// the line no longer stands.
+    #[gpui_kit::test]
+    fn a_premove_made_impossible_drops_the_rest(cx: &mut TestAppContext) {
+        let (board, moves) = board(cx, START);
+        queue_on(cx);
+        for square in [
+            Square::E2,
+            Square::E4,
+            Square::E4,
+            Square::E5,
+            Square::E5,
+            Square::E6,
+        ] {
+            click(&board, square, cx);
+        }
+        board.update(cx, |board, _| assert_eq!(board.queued.len(), 2));
+        // Black blocks the pawn.
+        answer(
+            &board,
+            "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+            cx,
+        );
+        assert_eq!(*moves.borrow(), ["e2e4"]);
+        board.update(cx, |board, _| assert!(board.queued.is_empty()));
+    }
+
+    /// Without the queue, as on Lichess, a new premove replaces the one waiting.
+    #[gpui_kit::test]
+    fn without_the_queue_a_premove_replaces_the_last(cx: &mut TestAppContext) {
+        let (board, _) = board(cx, START);
+        for square in [
+            Square::E2,
+            Square::E4,
+            Square::G1,
+            Square::F3,
+            Square::B1,
+            Square::C3,
+        ] {
+            click(&board, square, cx);
+        }
+        board.update(cx, |board, _| {
+            assert_eq!(board.queued, [(Square::B1, Square::C3)])
         });
     }
 
