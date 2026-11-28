@@ -8,6 +8,7 @@ mod keyboard;
 pub mod looks;
 mod paint;
 mod pocket;
+mod premove;
 pub mod previews;
 pub mod size;
 mod state;
@@ -208,46 +209,6 @@ fn apply_move(pieces: &mut Board, from: Square, to: Square, promotion: Option<Ro
         role,
     });
     pieces.set_piece_at(to, landed);
-}
-
-/// Where a piece could go next turn, whatever stands in the way (Chessground's `premove`).
-fn premove_targets(pieces: &Board, from: Square) -> Vec<Square> {
-    let Some(piece) = pieces.piece_at(from) else {
-        return Vec::new();
-    };
-    let (x1, y1) = (i32::from(from.file()), i32::from(from.rank()));
-    let forward = if piece.color == Color::White { 1 } else { -1 };
-    let start_rank = if piece.color == Color::White { 1 } else { 6 };
-    let fits = |x2: i32, y2: i32| -> bool {
-        let (dx, dy) = ((x2 - x1).abs(), (y2 - y1).abs());
-        match piece.role {
-            Role::Pawn => {
-                (dx == 0 && y2 - y1 == forward)
-                    || (dx == 0 && y1 == start_rank && y2 - y1 == 2 * forward)
-                    || (dx == 1 && y2 - y1 == forward)
-            }
-            Role::Knight => (dx == 1 && dy == 2) || (dx == 2 && dy == 1),
-            Role::Bishop => dx == dy,
-            Role::Rook => dx == 0 || dy == 0,
-            Role::Queen => dx == dy || dx == 0 || dy == 0,
-            Role::King => {
-                let home = if piece.color == Color::White { 0 } else { 7 };
-                let castling = y1 == home && y2 == home && x1 == 4 && (x2 == 2 || x2 == 6) && {
-                    let rook = if x2 == 6 { 7 } else { 0 };
-                    pieces.piece_at(Square::from_coords(File::new(rook), Rank::new(home as u32)))
-                        == Some(Piece {
-                            color: piece.color,
-                            role: Role::Rook,
-                        })
-                };
-                (dx <= 1 && dy <= 1) || castling
-            }
-        }
-    };
-    Square::ALL
-        .into_iter()
-        .filter(|&to| to != from && fits(i32::from(to.file()), i32::from(to.rank())))
-        .collect()
 }
 
 pub struct ChessBoard {
@@ -482,6 +443,16 @@ impl ChessBoard {
         Some(Square::from_coords(File::new(file), Rank::new(rank)))
     }
 
+    /// Where the piece on `from` may be premoved, after the move just made.
+    fn premove_targets(&self, from: Square) -> Vec<Square> {
+        premove::targets(
+            &self.pieces,
+            from,
+            self.state.last_move,
+            self.state.premove_rules,
+        )
+    }
+
     /// A premove from `from` to `to` can be queued.
     fn premoves_to(&self, from: Square, to: Square) -> bool {
         self.state.movable.is_none()
@@ -489,7 +460,7 @@ impl ChessBoard {
                 .pieces
                 .piece_at(from)
                 .is_some_and(|piece| Some(piece.color) == self.state.premove)
-            && premove_targets(&self.pieces, from).contains(&to)
+            && self.premove_targets(from).contains(&to)
     }
 
     fn reaches(&self, from: Square, to: Square) -> bool {
@@ -559,19 +530,8 @@ pub fn outside_gutter(cx: &App) -> Pixels {
 
 #[cfg(test)]
 mod premove_tests {
-    use super::{board_of, fadings, premove_targets, slides, slides_now};
+    use super::{board_of, fadings, slides, slides_now};
     use shakmaty::{Color, Piece, Role, Square};
-
-    #[test]
-    fn premoves_ignore_what_stands_in_the_way() {
-        let start = board_of("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-        let rook = premove_targets(&start, Square::A1);
-        assert!(rook.contains(&Square::A8) && rook.contains(&Square::H1));
-        let pawn = premove_targets(&start, Square::E2);
-        assert_eq!(pawn.len(), 4); // e3, e4, d3, f3
-        let king = premove_targets(&start, Square::E1);
-        assert!(king.contains(&Square::G1) && king.contains(&Square::C1));
-    }
 
     #[test]
     fn a_move_slides_its_piece_and_a_new_game_jumps() {
@@ -590,7 +550,13 @@ mod premove_tests {
         assert_eq!(moves.len(), 1);
         assert_eq!(
             fadings(&taken, &took, &moves),
-            [(Piece { color: Color::Black, role: Role::Pawn }, Square::D5)]
+            [(
+                Piece {
+                    color: Color::Black,
+                    role: Role::Pawn
+                },
+                Square::D5
+            )]
         );
         assert!(fadings(&before, &after, &slides(&before, &after)).is_empty());
         let empty = board_of("8/8/8/8/8/8/8/8 w - - 0 1");

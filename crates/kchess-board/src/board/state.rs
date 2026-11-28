@@ -163,6 +163,8 @@ pub struct BoardState {
     /// The side that may queue a move for its next turn while the other side is to move, set on
     /// both turns where premoves are on: the board passes the turn as soon as the player moves.
     pub premove: Option<Color>,
+    /// The variant's rules for where a piece may be premoved.
+    pub premove_rules: super::premove::PremoveRules,
     /// Crazyhouse: the pieces each side holds in hand.
     pub pockets: Option<ByColor<ByRole<u8>>>,
     /// Crazyhouse: where each piece in the mover's pocket may be dropped.
@@ -235,6 +237,7 @@ impl BoardState {
             edit: None,
             badge,
             premove: None,
+            premove_rules: super::premove::PremoveRules::of(position),
             pockets: position.pockets().copied(),
             drops,
             corners: Corners::all(radii::BOARD),

@@ -619,7 +619,7 @@ impl ChessBoard {
             .piece_at(square)
             .is_some_and(|piece| Some(piece.color) == self.state.premove)
         {
-            premove_targets(&self.pieces, square)
+            self.premove_targets(square)
         } else {
             Vec::new()
         }
@@ -711,7 +711,11 @@ mod drawing_tests {
             (&shift, false, "green"),
             (&both, false, "blue"),
         ] {
-            assert_eq!(drawing_brush(modifiers, right), brush, "{modifiers:?} {right}");
+            assert_eq!(
+                drawing_brush(modifiers, right),
+                brush,
+                "{modifiers:?} {right}"
+            );
         }
     }
 
@@ -778,7 +782,10 @@ mod pointer_tests {
 
     fn at(square: Square) -> Point<gpui_kit::Pixels> {
         let (file, rank) = (u32::from(square.file()), u32::from(square.rank()));
-        point(px(file as f32 * 100. + 50.), px((7 - rank) as f32 * 100. + 50.))
+        point(
+            px(file as f32 * 100. + 50.),
+            px((7 - rank) as f32 * 100. + 50.),
+        )
     }
 
     fn press(board: &Entity<ChessBoard>, square: Square, cx: &mut TestAppContext) {
@@ -833,7 +840,10 @@ mod pointer_tests {
         });
         press(&dragged, Square::G1, cx);
         dragged.update(cx, |board, _| {
-            assert!(board.drag.as_ref().is_some_and(|drag| drag.moved), "lifted at once");
+            assert!(
+                board.drag.as_ref().is_some_and(|drag| drag.moved),
+                "lifted at once"
+            );
         });
     }
 
@@ -846,7 +856,11 @@ mod pointer_tests {
         click(&board, Square::E4, cx);
         click(&board, Square::G1, cx);
         click(&board, Square::F3, cx);
-        assert_eq!(*moves.borrow(), ["e2e4"], "the knight's move waits for its turn");
+        assert_eq!(
+            *moves.borrow(),
+            ["e2e4"],
+            "the knight's move waits for its turn"
+        );
         board.update(cx, |board, _| {
             assert_eq!(board.state.movable, None);
             assert_eq!(board.queued, Some((Square::G1, Square::F3)));
@@ -898,8 +912,16 @@ mod pointer_tests {
         ] {
             let mut pieces = board_of(castles);
             apply_move(&mut pieces, Square::E1, to, None);
-            assert_eq!(pieces.piece_at(king).map(|p| p.role), Some(shakmaty::Role::King), "{to}");
-            assert_eq!(pieces.piece_at(rook).map(|p| p.role), Some(shakmaty::Role::Rook), "{to}");
+            assert_eq!(
+                pieces.piece_at(king).map(|p| p.role),
+                Some(shakmaty::Role::King),
+                "{to}"
+            );
+            assert_eq!(
+                pieces.piece_at(rook).map(|p| p.role),
+                Some(shakmaty::Role::Rook),
+                "{to}"
+            );
             assert_eq!(pieces.piece_at(empty), None, "{to}");
             assert_eq!(pieces.piece_at(Square::E1), None, "{to}");
         }

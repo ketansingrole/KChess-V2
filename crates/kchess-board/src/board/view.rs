@@ -386,7 +386,7 @@ impl Render for ChessBoard {
                         .piece_at(square)
                         .is_some_and(|piece| Some(piece.color) == self.state.premove)
             })
-            .map(|square| premove_targets(&self.pieces, square))
+            .map(|square| self.premove_targets(square))
             .unwrap_or_default();
         let sliding: Vec<Square> = self
             .animation
