@@ -65,11 +65,12 @@ impl GamesApi for Core {
         };
         let (rows, tables) = (read.rows.take(), read.tables.take());
         let pinned = tables.clone();
-        (read.report.endgames, read.report.structures) = tokio::task::spawn_blocking(move || {
-            insights::replay(rows.as_deref(), tables.as_deref())
-        })
-        .await
-        .map_err(|cause| CoreError::wrap("Insights replay failed", cause))??;
+        // On the core's tracker, so closing the core waits for a replay its caller left.
+        (read.report.endgames, read.report.structures) = self
+            .tracker
+            .spawn_blocking(move || insights::replay(rows.as_deref(), tables.as_deref()))
+            .await
+            .map_err(|cause| CoreError::wrap("Insights replay failed", cause))??;
         self.database.cache().remember_insights(
             read.stamp,
             read.key,
