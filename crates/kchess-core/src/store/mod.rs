@@ -46,9 +46,9 @@ use sql::{Lane, LaneMessages, Sql as _};
 /// (`library_import::cached_library`), and Insights reports, which replay up to 2,000 games.
 ///
 /// The connection tells [`StoreCache::watch`] of every row it changes, so a write to the settings
-/// keeps the library, and a played game's move keeps the synced games' totals. A change it is not
-/// told of (SQLite deletes a whole table without naming its rows) still counts in the
-/// connection's `total_changes`, and that makes every kept read stale. Each connection opened
+/// keeps the library, and a played game's move keeps the synced games' totals; it empties a table
+/// row by row too, naming each (`watch`). Any change it is still not told of counts in the
+/// connection's `total_changes`, and makes every kept read stale. Each connection opened
 /// starts a new count, so nothing read on an earlier one is taken for a read on it. A change made
 /// outside this connection (another process writing `kchess.db`) is not seen, as before any read
 /// was kept.
@@ -188,6 +188,37 @@ impl StoreCache {
         let changes = Arc::clone(&self.changes);
         db.update_hook(Some(move |action, _: &str, table: &str, rowid| {
             changes.told(action, table, rowid);
+        }))
+        .sql()?;
+        // SQLite empties a table by dropping its pages, naming no row to the hook, unless the
+        // delete is answered `Ignore` here; then it deletes row by row, naming each. A `DROP`
+        // asks to delete from SQLite's own table and from the table it drops, and does nothing
+        // when either is ignored: those are allowed.
+        let mut dropping = None::<String>;
+        db.authorizer(Some(move |context: rusqlite::hooks::AuthContext<'_>| {
+            use rusqlite::hooks::{AuthAction, Authorization};
+            match context.action {
+                AuthAction::DropTable { table_name }
+                | AuthAction::DropTempTable { table_name }
+                | AuthAction::DropView {
+                    view_name: table_name,
+                }
+                | AuthAction::DropTempView {
+                    view_name: table_name,
+                } => {
+                    dropping = Some(table_name.to_string());
+                    Authorization::Allow
+                }
+                AuthAction::Delete { table_name }
+                    if dropping.as_deref() == Some(table_name)
+                        || table_name.starts_with("sqlite_") =>
+                {
+                    dropping = None;
+                    Authorization::Allow
+                }
+                AuthAction::Delete { .. } => Authorization::Ignore,
+                _ => Authorization::Allow,
+            }
         }))
         .sql()
     }
@@ -605,8 +636,8 @@ mod tests {
     }
 
     /// A kept read lasts until a table it came from changes, whichever call changed it: a played
-    /// game's move keeps the synced games' totals, a setting keeps the library. A change SQLite
-    /// does not name row by row (a whole table emptied at once) drops every kept read.
+    /// game's move keeps the synced games' totals, a setting keeps the library, and a table of no
+    /// kept read emptied at once keeps them all, its rows named one by one.
     #[test]
     fn a_kept_read_lasts_until_a_table_it_came_from_changes() {
         type Change = fn(&StoreContext) -> Result<()>;
@@ -659,7 +690,7 @@ mod tests {
                 (true, false),
             ),
             (
-                "a whole table",
+                "a scratch table emptied",
                 |ctx| {
                     ctx.db
                         .execute_batch(
@@ -669,7 +700,7 @@ mod tests {
                         )
                         .sql()
                 },
-                (false, false),
+                (true, true),
             ),
         ];
         let (_dir, database) = database();
@@ -764,6 +795,62 @@ mod tests {
             database.write(write).expect(change);
             assert_eq!(kept("alice", 150.0), None, "after {change}");
         }
+    }
+
+    /// A failed statement names rows it then takes back, and an emptied table names none unless
+    /// told to: counted against each other, the two once left a library with a deleted study.
+    #[test]
+    fn an_emptied_table_after_a_failed_statement_drops_what_it_kept() {
+        let (_dir, database) = database();
+        database
+            .write(|ctx| {
+                let command = kchess_contracts::types::StudyCommand::Save {
+                    name: "Study".into(),
+                    pgn: "1. e4 *".into(),
+                    id: None,
+                    chapter_id: None,
+                };
+                library::run_study_command(ctx.db, command, 0.0, false, None).map(drop)
+            })
+            .expect("study");
+        let studies = |database: &Database| {
+            database
+                .read(|ctx| library::cached_library(ctx, 0.0).map(|library| library.studies.len()))
+                .expect("read")
+        };
+        assert_eq!(studies(&database), 1);
+        database
+            .write(|ctx| {
+                ctx.db
+                    .execute_batch(
+                        "CREATE TEMP TABLE once (x UNIQUE); INSERT INTO once VALUES (1);",
+                    )
+                    .sql()?;
+                let refused = ctx.db.execute("INSERT INTO once VALUES (2), (1)", []);
+                assert!(refused.is_err(), "the second row is refused");
+                ctx.db.execute_batch("DELETE FROM studies").sql()
+            })
+            .expect("write");
+        assert_eq!(studies(&database), 0);
+        // Its tables and indexes are still dropped: a drop deletes from SQLite's own table.
+        let left: i64 = database
+            .write(|ctx| {
+                ctx.db
+                    .execute_batch(
+                        "CREATE TABLE gone (x); CREATE INDEX gone_x ON gone (x);
+                         DROP INDEX gone_x; DROP TABLE gone;",
+                    )
+                    .sql()?;
+                ctx.db
+                    .query_row(
+                        "SELECT COUNT(*) FROM sqlite_schema WHERE name IN ('gone', 'gone_x')",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .sql()
+            })
+            .expect("drop");
+        assert_eq!(left, 0);
     }
 
     #[test]
