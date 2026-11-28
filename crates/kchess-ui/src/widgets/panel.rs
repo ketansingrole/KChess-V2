@@ -114,12 +114,20 @@ pub fn loading_cards(
     // Rows per card, varied so the columns read as cards of different lengths.
     const ROWS: [usize; 6] = [2, 4, 3, 5, 3, 4];
     let columns = columns.max(1);
+    // The kit's skeleton is the accented background, one step from a card's in light but too
+    // close to it in dark, where its bars all but vanished: dark takes the next step up.
+    let bar = if palette.dark {
+        palette.border_accented
+    } else {
+        palette.accented
+    };
     let card = |rows: usize| {
         card(palette)
             .w_full()
             .gap(px(12.))
             .child(
                 Skeleton::new()
+                    .bg(bar)
                     .w(px(120.))
                     .h(px(14.))
                     .rounded(radii::BOX)
@@ -130,11 +138,17 @@ pub fn loading_cards(
                     .gap(px(6.))
                     .child(
                         Skeleton::new()
+                            .bg(bar)
                             .w(relative(if row % 2 == 0 { 0.45 } else { 0.6 }))
                             .h(px(10.))
                             .rounded(radii::BOX),
                     )
-                    .child(Skeleton::new().secondary().h(px(8.)).rounded(radii::BOX))
+                    .child(
+                        Skeleton::new()
+                            .bg(bar.opacity(0.5))
+                            .h(px(8.))
+                            .rounded(radii::BOX),
+                    )
             }))
     };
     h_flex()
