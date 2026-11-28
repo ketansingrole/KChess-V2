@@ -64,6 +64,7 @@ impl GamesApi for Core {
             Insights::Kept(report) => return Ok(report),
         };
         let (rows, tables) = (read.rows.take(), read.tables.take());
+        let pinned = tables.clone();
         (read.report.endgames, read.report.structures) = tokio::task::spawn_blocking(move || {
             insights::replay(rows.as_deref(), tables.as_deref())
         })
@@ -72,6 +73,7 @@ impl GamesApi for Core {
         self.database.cache().remember_insights(
             read.stamp,
             read.key,
+            pinned.as_ref(),
             now,
             read.until,
             &read.report,

@@ -29,7 +29,10 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
+
+use shakmaty::Chess;
+use shakmaty_syzygy::Tablebase;
 
 use crate::host::{Config, Host};
 use crate::tasks::lock;
@@ -45,8 +48,10 @@ use sql::{Lane, LaneMessages, Sql as _};
 /// The connection tells [`StoreCache::watch`] of every row it changes, so a write to the settings
 /// keeps the library, and a played game's move keeps the synced games' totals. A change it is not
 /// told of (SQLite deletes a whole table without naming its rows) still counts in the
-/// connection's `total_changes`, and that makes every kept read stale; so does any change on a
-/// connection nobody watches.
+/// connection's `total_changes`, and that makes every kept read stale. Each connection opened
+/// starts a new count, so nothing read on an earlier one is taken for a read on it. A change made
+/// outside this connection (another process writing `kchess.db`) is not seen, as before any read
+/// was kept.
 #[derive(Default)]
 pub struct StoreCache {
     changes: Arc<Changes>,
@@ -61,6 +66,9 @@ pub struct StoreCache {
 struct KeptInsights {
     stamp: Stamp,
     key: String,
+    /// The tablebases the report was made with, whose address is in its key: held, if only
+    /// weakly, so tables opened later (after a download) cannot be given the same address.
+    _tables: Option<Weak<Tablebase<Chess>>>,
     made_at: f64,
     until: f64,
     report: InsightsReport,
@@ -95,6 +103,8 @@ enum Area {
 /// The changes the connection has told of since it opened.
 #[derive(Default)]
 struct Changes {
+    /// The connections watched so far: the one counting now is the last.
+    opened: AtomicU64,
     /// Every row told of: whatever `total_changes` counts beyond them, nobody was told of.
     told: AtomicU64,
     games: AtomicU64,
@@ -104,8 +114,9 @@ struct Changes {
     documents: Mutex<Vec<i64>>,
 }
 
-/// When a kept read was made: its area's changes then, and the changes nobody was told of.
-type Stamp = (u64, u64);
+/// When a kept read was made: the connection it was read on, its area's changes then, and the
+/// changes nobody was told of.
+type Stamp = (u64, u64, u64);
 
 /// The most written documents remembered before the library counts as changed.
 const DOCUMENTS_KEPT: usize = 64;
@@ -150,7 +161,7 @@ impl Changes {
         let untold = db
             .total_changes()
             .wrapping_sub(self.told.load(Ordering::Relaxed));
-        (changes, untold)
+        (self.opened.load(Ordering::Relaxed), changes, untold)
     }
 
     /// Counts the library as changed when a document written since is any but the view
@@ -173,6 +184,7 @@ impl Changes {
 impl StoreCache {
     /// Tells this cache of every row `db` changes from now on.
     pub fn watch(&self, db: &mut Connection) -> Result<()> {
+        self.changes.opened.fetch_add(1, Ordering::Relaxed);
         let changes = Arc::clone(&self.changes);
         db.update_hook(Some(move |action, _: &str, table: &str, rowid| {
             changes.told(action, table, rowid);
@@ -250,11 +262,12 @@ impl StoreCache {
         InsightsStamp(self.changes.stamp(db, Area::Insights))
     }
 
-    /// Keeps `report`, read at `stamp` and `now` for `key`, until `until`.
+    /// Keeps `report`, read at `stamp` and `now` for `key` with `tables`, until `until`.
     pub fn remember_insights(
         &self,
         stamp: InsightsStamp,
         key: String,
+        tables: Option<&Arc<Tablebase<Chess>>>,
         now: f64,
         until: f64,
         report: &InsightsReport,
@@ -268,6 +281,7 @@ impl StoreCache {
         kept.push(KeptInsights {
             stamp,
             key,
+            _tables: tables.map(Arc::downgrade),
             made_at: now,
             until,
             report: report.clone(),
@@ -693,7 +707,7 @@ mod tests {
                 .read(|ctx| {
                     let stamp = ctx.cache.insights_stamp(ctx.db);
                     ctx.cache
-                        .remember_insights(stamp, "alice".into(), 100.0, 200.0, &report);
+                        .remember_insights(stamp, "alice".into(), None, 100.0, 200.0, &report);
                     Ok(())
                 })
                 .expect("keep")
@@ -750,6 +764,22 @@ mod tests {
             database.write(write).expect(change);
             assert_eq!(kept("alice", 150.0), None, "after {change}");
         }
+    }
+
+    #[test]
+    fn a_report_read_before_the_database_was_opened_again_is_not_kept() {
+        let cache = StoreCache::default();
+        let report = InsightsReport::default();
+        let mut first = Connection::open_in_memory().expect("open");
+        cache.watch(&mut first).expect("watch");
+        let stamp = cache.insights_stamp(&first);
+        // Opened again while the report was worked out: the new connection has made as many
+        // changes as the old one had, none.
+        let mut second = Connection::open_in_memory().expect("open");
+        cache.clear();
+        cache.watch(&mut second).expect("watch");
+        cache.remember_insights(stamp, "alice".into(), None, 100.0, 200.0, &report);
+        assert_eq!(cache.insights(&second, "alice", 150.0), None);
     }
 
     #[tokio::test]
