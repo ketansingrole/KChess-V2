@@ -29,7 +29,7 @@ use crate::theme::{Palette, judgment_color, radii};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
-pub use kchess_board::analysis::{Opening, classification_look};
+pub use kchess_board::analysis::{Opening, classification_look, glyph_look};
 
 /// The NAG of a review's judgment: ?! dubious, ? mistake, ?? blunder.
 fn tried_nag(judgment: Judgment) -> i64 {

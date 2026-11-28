@@ -525,6 +525,9 @@ impl Render for ChessBoard {
                 };
                 let y = if row == 0 { px(0.) } else { -diameter * 0.32 };
                 div()
+                    .id("board-badge")
+                    .test_support()
+                    .aria_label(badge.glyph)
                     .absolute()
                     .left(side * column as f32 + x)
                     .top(side * row as f32 + y)

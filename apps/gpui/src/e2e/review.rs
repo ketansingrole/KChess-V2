@@ -31,6 +31,39 @@ fn a_game_is_reviewed_to_its_end(cx: &mut gpui_kit::TestAppContext) {
     wait_for_review(&mut app);
 }
 
+/// The glyph you give a move is the one the board shows on it, over the review's label; taken off
+/// again, the review's is back.
+#[gpui_kit::test]
+fn your_glyph_on_a_move_is_shown_over_the_reviews(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = scholars_mate(cx);
+    app.click("review-start");
+    wait_for_review(&mut app);
+    // The game's last move, Qxf7#.
+    app.click("analysis-end");
+    // The moves and their glyphs are under Moves; the review opened its own tab.
+    app.click("Moves");
+    let reviews = app
+        .find("board-badge")
+        .label()
+        .map(str::to_string)
+        .expect("the review's label on the move");
+    assert_ne!(reviews, "!?");
+    app.click("glyph-5");
+    app.wait_for("your glyph on the board", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("board-badge")
+            .is_some_and(|badge| badge.label() == Some("!?"))
+    });
+    app.click("glyph-5");
+    app.wait_for("the review's label back", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("board-badge")
+            .is_some_and(|badge| badge.label() == Some(reviews.as_str()))
+    });
+}
+
 /// 2026-11-21: the board reopened its game at launch without looking up the game's review, so
 /// the kept review showed only when something else looked: the review queue's first report, 10 s
 /// after launch. The board finds it before the queue has said anything.

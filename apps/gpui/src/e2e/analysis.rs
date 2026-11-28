@@ -373,14 +373,18 @@ fn a_comment_and_an_annotation_stay_with_the_move(cx: &mut gpui_kit::TestAppCont
         Some("Keep this annotation.")
     );
     assert_eq!(app.find("glyph-2").checked(), Some(true));
+    // The board marks the move with it too, on the square it went to.
+    assert_eq!(app.find("board-badge").label(), Some("?"));
 
     // The same glyph again takes it off; another replaces it.
     app.click("glyph-2");
     assert_eq!(app.find("glyph-2").checked(), Some(false));
+    app.wait_gone("board-badge");
     app.click("glyph-1");
     app.click("glyph-4");
     assert_eq!(app.find("glyph-1").checked(), Some(false));
     assert_eq!(app.find("glyph-4").checked(), Some(true));
+    assert_eq!(app.find("board-badge").label(), Some("??"));
 }
 
 /// ⌘Z and ⇧⌘Z (Ctrl+Z, Ctrl+Y) undo and redo the tree's edits, a comment's typing as one step,

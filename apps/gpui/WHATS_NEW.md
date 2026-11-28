@@ -31,6 +31,7 @@ The board editor sets up well-known openings and endgames in one click, and Gues
 - Over the board leaves whose turn it is to the board, and speaks up for a check or a paused clock.
 - Insights looks like the rest of KChess: its figures and breakdowns sit in cards, and its filters match the other pages.
 - A game or run with no clock shows ∞ where it said Untimed or No clock.
+- A mark you give a move on the Analysis board, such as ?? or !?, shows on the board beside the move, ahead of the review's own.
 
 ### Fixed
 
