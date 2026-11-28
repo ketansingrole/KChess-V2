@@ -11,7 +11,7 @@ exclude = ["fuzz", "vendor/gpui-pre", "vendor/gpui-pre-apple", "vendor/gpui-pre-
 version = "2026.11.10"
 edition = "2024"
 # Matches rust-toolchain.toml so `cargo` warns on older toolchains.
-rust-version = "1.100.0"
+rust-version = "1.100.1"
 license = "GPL-3.0-or-later"
 publish = false
 
