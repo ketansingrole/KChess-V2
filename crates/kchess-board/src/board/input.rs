@@ -11,6 +11,40 @@ pub(super) struct Drawn {
     pub(super) brush: &'static str,
 }
 
+/// A drawing under way: where it started, its brush, the square it ends on so far, and whether
+/// that square snaps to the nearest one on a queen or knight line from the start, as Lichess's
+/// does until the pointer leaves the board.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Drawing {
+    pub(super) from: Square,
+    pub(super) brush: &'static str,
+    pub(super) to: Option<Square>,
+    snap: bool,
+}
+
+/// The square on a queen or knight line from `from` (or `from` itself) whose centre is nearest
+/// `point`, in board cells from the top left (Chessground's `getSnappedKeyAtDomPos`).
+fn snapped(from: (f32, f32), point: (f32, f32)) -> (i32, i32) {
+    let (fx, fy) = (from.0 as i32, from.1 as i32);
+    let mut best = ((fx, fy), f32::MAX);
+    for x in 0..8 {
+        for y in 0..8 {
+            let (dx, dy) = ((x - fx).abs(), (y - fy).abs());
+            let line = dx == 0 || dy == 0 || dx == dy;
+            let knight = (dx == 1 && dy == 2) || (dx == 2 && dy == 1);
+            if !(line || knight) {
+                continue;
+            }
+            let (cx, cy) = (x as f32 + 0.5 - point.0, y as f32 + 0.5 - point.1);
+            let distance = cx * cx + cy * cy;
+            if distance < best.1 {
+                best = ((x, y), distance);
+            }
+        }
+    }
+    best.0
+}
+
 /// Chessground's brush for a drawing (`eventBrush`): with the right button Shift or Ctrl red, Alt
 /// or ⌘ blue, both yellow, else green; a Shift-drag of the left button draws green, or blue with
 /// Alt or ⌘.
@@ -204,36 +238,71 @@ impl ChessBoard {
     }
 
     /// Start a drawing on a square (the right button, or Shift with the left). As on Lichess it
-    /// takes back a queued premove and lets go of the piece picked (`cancelMove`).
+    /// takes back a queued premove and lets go of the piece picked (`cancelMove`); with Ctrl it
+    /// only lets go of the piece.
     fn start_drawing(&mut self, event: &MouseDownEvent, right: bool, cx: &mut Context<Self>) {
         if self.state.preview || self.state.edit.is_some() {
             return;
         }
-        self.queued = None;
+        if !event.modifiers.control {
+            self.queued = None;
+        }
         self.selected = None;
         self.selected_drop = None;
         if let Some(square) = self.square_at(event.position) {
-            self.drawing = Some((square, drawing_brush(&event.modifiers, right), Some(square)));
+            self.drawing = Some(Drawing {
+                from: square,
+                brush: drawing_brush(&event.modifiers, right),
+                to: Some(square),
+                snap: true,
+            });
         }
         cx.notify();
     }
 
     pub(super) fn draw_to(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let square = self.square_at(position);
-        if let Some((_, _, current)) = &mut self.drawing
-            && *current != square
-        {
-            *current = square;
+        let Some(mut drawing) = self.drawing else {
+            return;
+        };
+        let under = self.square_at(position);
+        if under.is_none() {
+            drawing.snap = false;
+        }
+        let to = if drawing.snap {
+            let side = self.square_size();
+            let origin = self.bounds.get().origin;
+            let (column, row) = self.cell(drawing.from);
+            let point = (
+                (position.x - origin.x) / side,
+                (position.y - origin.y) / side,
+            );
+            let (x, y) = snapped((column as f32, row as f32), point);
+            self.square_at(gpui_kit::point(
+                origin.x + side * (x as f32 + 0.5),
+                origin.y + side * (y as f32 + 0.5),
+            ))
+        } else {
+            under
+        };
+        let changed = to != drawing.to;
+        drawing.to = to;
+        self.drawing = Some(drawing);
+        if changed {
             cx.notify();
         }
     }
 
-    /// Letting go draws the arrow (or the circle, on the same square), or takes it off.
+    /// Letting go draws the arrow (or the circle, on the same square) to the square it reached,
+    /// or takes it off.
     pub(super) fn finish_drawing(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some((from, brush, _)) = self.drawing.take() else {
+        self.draw_to(position, cx);
+        let Some(Drawing {
+            from, brush, to, ..
+        }) = self.drawing.take()
+        else {
             return;
         };
-        if let Some(to) = self.square_at(position) {
+        if let Some(to) = to {
             toggle_shape(&mut self.drawn, Drawn { from, to, brush });
         }
         cx.notify();
@@ -897,6 +966,58 @@ mod pointer_tests {
         click(&board, Square::E2, cx);
         board.update(cx, |board, _| assert_eq!(board.selected, None));
         assert!(moves.borrow().is_empty());
+    }
+
+    /// An arrow drawn toward a square off every line from its start ends on the nearest square
+    /// that is on one (`getSnappedKeyAtDomPos`); once the pointer has left the board it ends
+    /// where it is let go. Ctrl keeps a queued premove while drawing.
+    #[gpui_kit::test]
+    fn an_arrow_snaps_to_a_line_from_its_square(cx: &mut TestAppContext) {
+        let (board, _) = board(cx, START);
+        let right = |square: Square, control: bool| MouseDownEvent {
+            button: gpui_kit::MouseButton::Right,
+            position: at(square),
+            modifiers: gpui_kit::Modifiers {
+                control,
+                ..Default::default()
+            },
+            click_count: 1,
+            ..MouseDownEvent::default()
+        };
+        // g5, nudged toward h5: no line from e2 reaches g5, and h5 is the nearest that does.
+        let near_g5 = at(Square::G5) + point(px(20.), px(-20.));
+        board.update(cx, |board, cx| {
+            board.right_press(&right(Square::E2, false), cx);
+            board.draw_to(near_g5, cx);
+            board.finish_drawing(near_g5, cx);
+            assert_eq!(
+                board.drawn.last().map(|d| (d.from, d.to)),
+                Some((Square::E2, Square::H5))
+            );
+            board.right_press(&right(Square::E2, false), cx);
+            board.draw_to(point(px(900.), px(900.)), cx);
+            board.finish_drawing(near_g5, cx);
+            assert_eq!(
+                board.drawn.last().map(|d| (d.from, d.to)),
+                Some((Square::E2, Square::G5))
+            );
+        });
+        click(&board, Square::E2, cx);
+        click(&board, Square::E4, cx);
+        click(&board, Square::G1, cx);
+        click(&board, Square::F3, cx);
+        board.update(cx, |board, cx| {
+            board.right_press(&right(Square::A7, true), cx);
+            board.finish_drawing(at(Square::A7), cx);
+            assert_eq!(
+                board.queued,
+                Some((Square::G1, Square::F3)),
+                "Ctrl keeps the premove"
+            );
+            board.right_press(&right(Square::A7, false), cx);
+            board.finish_drawing(at(Square::A7), cx);
+            assert_eq!(board.queued, None);
+        });
     }
 
     /// Castling put the rook beside the king, the king dragged onto its rook castled too, and a

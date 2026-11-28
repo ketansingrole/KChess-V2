@@ -225,8 +225,8 @@ pub struct ChessBoard {
     pieces: Board,
     /// The player's right-button drawings, until a left click clears them.
     drawn: Vec<Drawn>,
-    /// A drawing under way: where it started, its brush, and the square under the pointer.
-    drawing: Option<(Square, &'static str, Option<Square>)>,
+    /// A drawing under way.
+    drawing: Option<input::Drawing>,
     /// A move queued for the next turn (a premove).
     queued: Option<(Square, Square)>,
     /// Pieces sliding to where the new position put them.

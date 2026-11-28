@@ -365,16 +365,27 @@ impl Render for ChessBoard {
             None => self.hover,
         };
         let mut shown = self.state.clone();
-        let preview = self
-            .drawing
-            .and_then(|(from, brush, to)| to.map(|to| Drawn { from, to, brush }));
-        for shape in self.drawn.iter().chain(preview.iter()) {
+        for shape in &self.drawn {
             if shape.from == shape.to {
                 shown.circles.push(Circle::brush(shape.brush, shape.from));
             } else {
                 shown
                     .arrows
                     .push(Arrow::brush(shape.brush, shape.from, shape.to));
+            }
+        }
+        // The arrow being drawn is a little fainter and thinner, as Chessground's `current`.
+        if let Some(drawing) = self.drawing
+            && let Some(to) = drawing.to
+        {
+            if drawing.from == to {
+                shown.circles.push(Circle::brush(drawing.brush, to));
+            } else {
+                shown.arrows.push(Arrow {
+                    opacity: 0.9,
+                    width: 10. * 0.85,
+                    ..Arrow::brush(drawing.brush, drawing.from, to)
+                });
             }
         }
         let premove_dests = self

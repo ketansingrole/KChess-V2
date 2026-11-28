@@ -166,6 +166,10 @@ fn paint_pieces(
     }
 }
 
+/// Lichess draws every arrow and circle a little see-through, so the pieces show under them
+/// (`.cg-shapes { opacity: 0.6 }`).
+const SHAPES: f32 = 0.6;
+
 /// Chessground's circle: a ring 4/64 of a square wide, 0.47 of a square from
 /// its centre.
 fn paint_circle(circle: &Circle, cell: Bounds<Pixels>, window: &mut Window) {
@@ -184,7 +188,7 @@ fn paint_circle(circle: &Circle, cell: Bounds<Pixels>, window: &mut Window) {
         )
         .corner_radii(outer)
         .border_widths(width)
-        .border_color(rgb(circle.color)),
+        .border_color(Hsla::from(rgb(circle.color)).opacity(SHAPES)),
     );
 }
 
@@ -280,7 +284,7 @@ fn paint_arrow(
     path.close();
     if let Ok(path) = path.build() {
         let mut color = rgba((arrow.color << 8) | 0xff);
-        color.a = arrow.opacity;
+        color.a = arrow.opacity * SHAPES;
         window.paint_path(path, color);
     }
 }
