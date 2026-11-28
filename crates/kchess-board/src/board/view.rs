@@ -197,6 +197,10 @@ impl ChessBoard {
 
     /// The promotion picker; while the board has the keys, the piece they would take is ringed
     /// and is the one a screen reader reads.
+    /// Lichess's picker: the pieces in a column on the pawn's file, from the last rank, each a
+    /// grey disc the size of a square with its piece a little smaller, over the board dimmed
+    /// behind; pointed at, a disc turns square and orange and its piece full size. A press
+    /// anywhere else closes it.
     fn render_promotion(
         &self,
         set: &str,
@@ -210,23 +214,39 @@ impl ChessBoard {
         } else {
             Color::Black
         };
-        let theme = cx.theme();
-        let (elevated, border, background) = (theme.muted, theme.border, theme.background);
-        let palette = *cx.global::<crate::theme::Palette>();
+        let (column, _) = self.cell(to);
+        let from_top = color == self.state.orientation;
+        let side = self.square_size();
+        let unit = side / 64.;
+        let disc = |blur: f32, spread: f32, color: u32| {
+            vec![BoxShadow {
+                color: rgb(color).into(),
+                offset: point(px(0.), px(0.)),
+                blur_radius: unit * blur,
+                spread_radius: unit * spread,
+                inset: true,
+            }]
+        };
+        let pointed = disc(48., 8., 0xd64f00);
         let marked = self.promotion_choice % keyboard::PROMOTION.len();
+        let dim = cx.theme().background.opacity(0.7);
         Some(
             div()
                 .id("promotion")
                 .absolute()
                 .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
                 .map(|overlay| rounded(overlay, &self.state.corners))
-                .bg(hsla(0., 0., 0., 0.5))
+                .bg(dim)
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _, _, cx| this.cancel_promotion(cx)),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.cancel_promotion(cx)
+                    }),
                 )
                 .child(
                     div()
@@ -234,40 +254,42 @@ impl ChessBoard {
                         .test_support()
                         .role(gpui_kit::Role::Dialog)
                         .aria_label("Choose promotion piece")
-                        .flex()
-                        .gap(px(8.))
-                        .p(px(8.))
-                        .rounded(radii::BOX)
-                        .bg(elevated)
-                        .border_1()
-                        .border_color(border)
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .absolute()
+                        .inset_0()
                         .children(keyboard::PROMOTION.into_iter().enumerate().map(
                             |(index, (role, label))| {
+                                let row = if from_top { index } else { 7 - index };
+                                let lit = focused && index == marked;
+                                let group = SharedString::from(format!("promotion-{label}"));
                                 div()
                                     .id(label)
                                     .test_support()
+                                    .group(group.clone())
                                     .role(gpui_kit::Role::Button)
                                     .aria_label(label)
                                     .aria_selected(index == marked)
                                     .when(index == marked, |choice| choice.aria_active_descendant())
-                                    .size(px(60.))
-                                    .p(px(4.))
-                                    // A step under the picker, whose corner sits 8px further out.
-                                    .rounded(radii::SMALL)
-                                    .bg(background)
-                                    .border_1()
-                                    .border_color(border)
+                                    .absolute()
+                                    .left(relative(column as f32 / 8.))
+                                    .top(relative(row as f32 / 8.))
+                                    .size(relative(0.125))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
                                     .cursor_pointer()
-                                    .pressable_fill(elevated, &palette)
-                                    .when(focused && index == marked, |choice| {
-                                        choice.shadow(vec![BoxShadow {
-                                            color: ring,
-                                            offset: point(px(0.), px(0.)),
-                                            blur_radius: px(0.),
-                                            spread_radius: px(2.),
-                                            inset: false,
-                                        }])
+                                    .bg(rgb(0xb0b0b0))
+                                    .when(!lit, |choice| {
+                                        choice.rounded_full().shadow(disc(25., 3., 0x808080))
+                                    })
+                                    .when(lit, |choice| {
+                                        choice.shadow(pointed.clone()).border_2().border_color(ring)
+                                    })
+                                    .hover({
+                                        let pointed = pointed.clone();
+                                        move |style| style.rounded_none().shadow(pointed)
+                                    })
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
                                     })
                                     .tooltip(move |window, cx| {
                                         Tooltip::new(label).build(window, cx)
@@ -280,7 +302,8 @@ impl ChessBoard {
                                             set,
                                             Piece { color, role },
                                         )))
-                                        .size_full(),
+                                        .size(relative(if lit { 1. } else { 0.8 }))
+                                        .group_hover(group, |style| style.size_full()),
                                     )
                             },
                         )),
@@ -459,6 +482,25 @@ impl Render for ChessBoard {
                     .opacity(0.3),
             )
         });
+        // The piece a promotion premove becomes waits faded on its square (lila's auto shape).
+        let pre_promotion = self
+            .pre_promotion
+            .filter(|&(from, to, _)| self.queued == Some((from, to)))
+            .and_then(|(from, to, role)| {
+                let color = self.pieces.piece_at(from)?.color;
+                let (column, row) = self.cell(to);
+                Some(
+                    img(SharedString::from(looks::piece_path(
+                        &set,
+                        Piece { color, role },
+                    )))
+                    .absolute()
+                    .left(relative(column as f32 / 8.))
+                    .top(relative(row as f32 / 8.))
+                    .size(relative(0.125))
+                    .opacity(0.6),
+                )
+            });
         // Pieces taken stay faded on their squares while the taker slides in.
         let fading: Vec<AnyElement> = self
             .animation
@@ -634,7 +676,11 @@ impl Render for ChessBoard {
                                                         {
                                                             this.pointer_moved(event.position, cx)
                                                         } else {
-                                                            this.release(event.position, cx)
+                                                            {
+                                                                this.ctrl |=
+                                                                    event.modifiers.control;
+                                                                this.release(event.position, cx)
+                                                            }
                                                         }
                                                     })
                                                     .ok();
@@ -649,6 +695,7 @@ impl Render for ChessBoard {
                                             {
                                                 releasing
                                                     .update(cx, |this, cx| {
+                                                        this.ctrl |= event.modifiers.control;
                                                         this.release(event.position, cx)
                                                     })
                                                     .ok();
@@ -664,6 +711,7 @@ impl Render for ChessBoard {
                     .children(squares)
                     .children(ghost)
                     .children(fading)
+                    .children(pre_promotion)
                     .children(sliding)
                     .children(coordinates)
                     .children(badge)
@@ -712,11 +760,17 @@ impl Render for ChessBoard {
             // The press's own frame has no window-wide listeners yet: a quick release lands here.
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, event: &MouseUpEvent, _, cx| this.release(event.position, cx)),
+                cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    this.ctrl |= event.modifiers.control;
+                    this.release(event.position, cx)
+                }),
             )
             .on_mouse_up_out(
                 MouseButton::Left,
-                cx.listener(|this, event: &MouseUpEvent, _, cx| this.release(event.position, cx)),
+                cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    this.ctrl |= event.modifiers.control;
+                    this.release(event.position, cx)
+                }),
             )
             .on_drop(cx.listener(|this, spare: &SparePiece, window, cx| {
                 this.drop_spare(spare.0, window.mouse_position(), cx)

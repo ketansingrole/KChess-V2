@@ -37,7 +37,6 @@ use shakmaty::{Board, ByColor, ByRole, Color, File, Piece, Position as _, Rank, 
 
 use crate::settings::SettingsHandle;
 use crate::theme::radii;
-use crate::widgets::Pressable as _;
 
 /// Chessground's square colors.
 const LAST_MOVE: u32 = 0x9bc70069; // rgba(155, 199, 0, 0.41)
@@ -236,8 +235,15 @@ pub struct ChessBoard {
     /// A Crazyhouse pocket piece picked to be dropped.
     selected_drop: Option<Role>,
     drag: Option<Drag>,
-    /// A pawn move waiting for its promotion piece.
+    /// A pawn move waiting for its promotion piece: the pawn stands on the last rank meanwhile,
+    /// or, for a premove (`promotion_pre`), the piece chosen waits with the premove.
     promotion: Option<(Square, Square)>,
+    promotion_pre: bool,
+    /// The piece a queued promotion premove becomes, chosen when it was queued.
+    pre_promotion: Option<(Square, Square, Role)>,
+    /// Ctrl was held as the move was made: the picker asks, whatever Settings say (lila's
+    /// `ctrlKey`).
+    ctrl: bool,
     /// The promotion piece the keyboard has marked (`keyboard::PROMOTION`).
     promotion_choice: usize,
     bounds: Rc<Cell<Bounds<Pixels>>>,
@@ -281,6 +287,9 @@ impl ChessBoard {
             selected_drop: None,
             drag: None,
             promotion: None,
+            promotion_pre: false,
+            pre_promotion: None,
+            ctrl: false,
             promotion_choice: 0,
             bounds: Rc::new(Cell::new(Bounds::default())),
             focus: None,
@@ -321,10 +330,14 @@ impl ChessBoard {
         {
             self.selected = None;
         }
-        if self
-            .promotion
-            .is_some_and(|(from, _)| !state.dests.contains_key(&from))
-        {
+        // A premove's picker stays while its premove waits.
+        if self.promotion.is_some_and(|(from, to)| {
+            if self.promotion_pre {
+                self.queued != Some((from, to))
+            } else {
+                !state.dests.contains_key(&from)
+            }
+        }) {
             self.promotion = None;
         }
         if self
@@ -685,7 +698,7 @@ mod keyboard_tests {
         );
         assert_eq!(
             keyboard::promotion_key(3, "enter"),
-            Some(keyboard::PromotionKey::Pick(Role::Knight))
+            Some(keyboard::PromotionKey::Pick(Role::Bishop))
         );
     }
 

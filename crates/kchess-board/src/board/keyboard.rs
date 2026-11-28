@@ -8,12 +8,12 @@ use shakmaty::{Color, File, Piece, Rank, Role, Square};
 /// The key context the board's element carries while it has the keys.
 pub(super) const CONTEXT: &str = "ChessBoard";
 
-/// The promotion picker's pieces, in the order it shows them.
+/// The promotion picker's pieces, in the order it shows them from the last rank (lila's).
 pub(super) const PROMOTION: [(Role, &str); 4] = [
     (Role::Queen, "Queen"),
+    (Role::Knight, "Knight"),
     (Role::Rook, "Rook"),
     (Role::Bishop, "Bishop"),
-    (Role::Knight, "Knight"),
 ];
 
 /// Where an arrow key takes the cursor from `square`, on a board seen from `orientation`'s side;
@@ -185,7 +185,7 @@ mod tests {
         assert_eq!(promotion_key(3, "down"), Some(PromotionKey::Highlight(0)));
         assert_eq!(
             promotion_key(3, "enter"),
-            Some(PromotionKey::Pick(Role::Knight))
+            Some(PromotionKey::Pick(Role::Bishop))
         );
         assert_eq!(
             promotion_key(0, "space"),
